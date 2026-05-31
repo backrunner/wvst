@@ -1,0 +1,3 @@
+display_name: WVST Engineering
+short_description: Build WVST with Rust-first realtime audio, WebAudio/WASM bridge design, VST3 host isolation, and strict performance standards.
+default_prompt: Follow the WVST engineering skill and read the relevant .agents documents before changing WVST code or architecture.
