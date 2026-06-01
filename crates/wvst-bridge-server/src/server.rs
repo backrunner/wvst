@@ -169,7 +169,9 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> Option<Vec<u8
         return None;
     }
 
-    let instance = state.instances.find_by_stream_id(header.stream_id.get())?;
+    let instance = state
+        .instances
+        .find_open_by_stream_id(header.stream_id.get())?;
     let processed = match state
         .workers
         .process_audio_frame(instance.instance_id, payload.to_vec())

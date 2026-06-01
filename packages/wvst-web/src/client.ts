@@ -9,6 +9,7 @@ import type {
   InstanceRestartResult,
   InstanceStatusOptions,
   InstanceStatusResult,
+  StreamLifecycleOptions,
 } from "./instances.js";
 import type {
   PluginApi,
@@ -100,6 +101,10 @@ export class WVSTClient {
         this.request<InstanceRestartResult>("instance.restart", options),
       destroy: (options: InstanceDestroyOptions) =>
         this.request<InstanceDestroyResult>("instance.destroy", options),
+      openStream: (options: StreamLifecycleOptions) =>
+        this.request<InstanceDescriptor>("stream.open", options),
+      closeStream: (options: StreamLifecycleOptions) =>
+        this.request<InstanceDescriptor>("stream.close", options),
     };
     this.plugins = {
       scan: (options?: PluginScanOptions) =>

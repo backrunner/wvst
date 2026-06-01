@@ -22,6 +22,7 @@ export interface InstanceDescriptor {
   outputChannels: number;
   state: "allocated" | "ready" | "failed";
   workerState: "not-started" | "ready" | "failed";
+  streamState: "open" | "closed";
 }
 
 export interface InstanceStatusOptions {
@@ -55,10 +56,16 @@ export interface InstanceDestroyResult {
   state: "destroyed";
 }
 
+export interface StreamLifecycleOptions {
+  instanceId: number;
+}
+
 export interface InstanceApi {
   create(options: InstanceCreateOptions): Promise<InstanceDescriptor>;
   list(): Promise<InstanceDescriptor[]>;
   status(options: InstanceStatusOptions): Promise<InstanceStatusResult>;
   restart(options: InstanceRestartOptions): Promise<InstanceRestartResult>;
   destroy(options: InstanceDestroyOptions): Promise<InstanceDestroyResult>;
+  openStream(options: StreamLifecycleOptions): Promise<InstanceDescriptor>;
+  closeStream(options: StreamLifecycleOptions): Promise<InstanceDescriptor>;
 }

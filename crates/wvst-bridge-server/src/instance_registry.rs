@@ -45,6 +45,12 @@ pub struct InstanceRestartParams {
     pub instance_id: u64,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamLifecycleParams {
+    pub instance_id: u64,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceRecord {
@@ -60,6 +66,7 @@ pub struct InstanceRecord {
     pub output_channels: u16,
     pub state: InstanceState,
     pub worker_state: WorkerState,
+    pub stream_state: StreamState,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -77,6 +84,13 @@ pub enum WorkerState {
     NotStarted,
     Ready,
     Failed,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StreamState {
+    Open,
+    Closed,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -138,6 +152,7 @@ impl InstanceRegistry {
             output_channels: params.output_channels,
             state: InstanceState::Allocated,
             worker_state: WorkerState::NotStarted,
+            stream_state: StreamState::Open,
         };
 
         let mut records = self
@@ -172,6 +187,31 @@ impl InstanceRegistry {
             .values()
             .find(|record| record.stream_id == stream_id)
             .cloned()
+    }
+
+    pub fn find_open_by_stream_id(&self, stream_id: u64) -> Option<InstanceRecord> {
+        self.records
+            .lock()
+            .ok()?
+            .values()
+            .find(|record| {
+                record.stream_id == stream_id && record.stream_state == StreamState::Open
+            })
+            .cloned()
+    }
+
+    pub fn open_stream(
+        &self,
+        params: StreamLifecycleParams,
+    ) -> Result<InstanceRecord, InstanceError> {
+        self.set_stream_state(params.instance_id, StreamState::Open)
+    }
+
+    pub fn close_stream(
+        &self,
+        params: StreamLifecycleParams,
+    ) -> Result<InstanceRecord, InstanceError> {
+        self.set_stream_state(params.instance_id, StreamState::Closed)
     }
 
     pub fn mark_worker_ready(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
@@ -221,6 +261,24 @@ impl InstanceRegistry {
             stream_id: record.stream_id,
             state: InstanceState::Destroyed,
         })
+    }
+
+    fn set_stream_state(
+        &self,
+        instance_id: u64,
+        stream_state: StreamState,
+    ) -> Result<InstanceRecord, InstanceError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?;
+        let record = records
+            .get_mut(&instance_id)
+            .ok_or(InstanceError::InstanceNotFound(instance_id))?;
+
+        record.stream_state = stream_state;
+
+        Ok(record.clone())
     }
 }
 
@@ -375,6 +433,35 @@ mod tests {
 
         assert_eq!(ready.state, InstanceState::Ready);
         assert_eq!(ready.worker_state, WorkerState::Ready);
+    }
+
+    #[test]
+    fn opens_and_closes_stream() {
+        let registry = InstanceRegistry::new();
+        let plugin = plugin();
+        let record = registry.create(create_params(), &plugin).expect("instance");
+
+        let closed = registry
+            .close_stream(StreamLifecycleParams {
+                instance_id: record.instance_id,
+            })
+            .expect("closed");
+        assert_eq!(closed.stream_state, StreamState::Closed);
+        assert!(registry.find_open_by_stream_id(record.stream_id).is_none());
+
+        let open = registry
+            .open_stream(StreamLifecycleParams {
+                instance_id: record.instance_id,
+            })
+            .expect("open");
+        assert_eq!(open.stream_state, StreamState::Open);
+        assert_eq!(
+            registry
+                .find_open_by_stream_id(record.stream_id)
+                .expect("stream")
+                .instance_id,
+            record.instance_id
+        );
     }
 
     #[test]

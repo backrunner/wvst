@@ -49,6 +49,7 @@ async fn creates_lists_and_destroys_instance() {
 
     assert_eq!(create_value["result"]["state"], "ready");
     assert_eq!(create_value["result"]["workerState"], "ready");
+    assert_eq!(create_value["result"]["streamState"], "open");
 
     let list_value = request_json(
         r#"{"id":2,"method":"instance.list","params":{}}"#,
@@ -82,8 +83,44 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(status_value["result"]["worker"]["ipcVersion"], 1);
     assert_eq!(status_value["result"]["worker"]["instances"], 1);
 
-    let destroy_request = serde_json::json!({
+    let close_stream_request = serde_json::json!({
         "id": 4,
+        "method": "stream.close",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let close_stream_value = request_json(
+        &close_stream_request,
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    assert_eq!(close_stream_value["result"]["streamState"], "closed");
+
+    let open_stream_request = serde_json::json!({
+        "id": 5,
+        "method": "stream.open",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let open_stream_value = request_json(
+        &open_stream_request,
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    assert_eq!(open_stream_value["result"]["streamState"], "open");
+
+    let destroy_request = serde_json::json!({
+        "id": 6,
         "method": "instance.destroy",
         "params": { "instanceId": instance_id }
     })

@@ -6,7 +6,7 @@ use super::{
 };
 use crate::instance_registry::{
     InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceRestartParams,
-    InstanceStatusParams,
+    InstanceStatusParams, StreamLifecycleParams,
 };
 
 pub async fn handle_instance_create(
@@ -143,5 +143,33 @@ pub async fn handle_instance_status(
             let _ = context.instances.mark_worker_failed(params.instance_id);
             response_worker_supervisor_error(id, error)
         }
+    }
+}
+
+pub fn handle_stream_open(id: Value, params: Value, context: ControlContext<'_>) -> String {
+    let params = match serde_json::from_value::<StreamLifecycleParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(id, -32602, format!("invalid stream open params: {error}"));
+        }
+    };
+
+    match context.instances.open_stream(params) {
+        Ok(record) => response_result(id, json!(record)),
+        Err(error) => response_instance_error(id, error),
+    }
+}
+
+pub fn handle_stream_close(id: Value, params: Value, context: ControlContext<'_>) -> String {
+    let params = match serde_json::from_value::<StreamLifecycleParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(id, -32602, format!("invalid stream close params: {error}"));
+        }
+    };
+
+    match context.instances.close_stream(params) {
+        Ok(record) => response_result(id, json!(record)),
+        Err(error) => response_instance_error(id, error),
     }
 }

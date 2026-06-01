@@ -1,5 +1,5 @@
 use super::*;
-use crate::instance_registry::{InstanceState, WorkerState};
+use crate::instance_registry::{InstanceState, StreamState, WorkerState};
 
 #[tokio::test]
 async fn quarantines_plugin_after_repeated_start_failures() {
@@ -67,6 +67,7 @@ fn record() -> InstanceRecord {
         output_channels: 2,
         state: InstanceState::Allocated,
         worker_state: WorkerState::NotStarted,
+        stream_state: StreamState::Open,
     }
 }
 

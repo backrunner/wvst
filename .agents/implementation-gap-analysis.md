@@ -20,6 +20,7 @@
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion`、`instanceLifecycle` 和 `binaryAudioProcess` capability，避免 Bridge 与不兼容 worker 继续创建实例。
 - Bridge 二进制音频帧已能按 `streamId` 路由到对应 worker 的独立二进制 audio IPC，并回传 worker 处理后的 F32 frame；未匹配实例或非法帧暂时保留 echo fallback。
 - Bridge metrics 已区分二进制帧总量、成功路由音频帧、fallback echo 和音频路由失败，便于后续接入 drop/late/underflow/overflow 统计。
+- Bridge/Web SDK 已提供 `stream.open` / `stream.close` 控制 API，实例记录包含 `streamState`，Bridge 只将 open stream 的音频帧路由到 worker。
 
 ## 距离完整能力的主要差距
 
@@ -61,7 +62,7 @@
 
 仍缺少：
 
-- stream open/close。
+- stream open/close 已有首版控制 API；仍缺少 end-of-stream 帧语义、close 后 drain 策略和 WebAudio 端自动重开策略。
 - Web Worker 从 SAB 取音频块并编码发送。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；仍缺少共享内存/预分配 buffer、背压语义和错误帧语义完善。
 - worker 到真实 VST `process()` 的预分配 buffer 路径。

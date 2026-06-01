@@ -6,6 +6,8 @@ use tokio::sync::oneshot;
 use tokio_tungstenite::connect_async;
 use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId};
 
+use crate::instance_registry::StreamLifecycleParams;
+
 #[tokio::test]
 async fn responds_to_hello_and_echoes_binary_frames() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
@@ -121,6 +123,24 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
     assert_eq!(metrics.audio_frame_fallbacks, 1);
     assert_eq!(metrics.audio_frames_routed, 1);
     assert_eq!(metrics.audio_frame_route_failures, 0);
+
+    state
+        .instances
+        .close_stream(StreamLifecycleParams {
+            instance_id: create_value["result"]["instanceId"]
+                .as_u64()
+                .expect("instance id"),
+        })
+        .expect("stream closed");
+    let closed_stream_response = process_binary_payload(audio_frame(stream_id), &state).await;
+    assert_eq!(
+        read_f32_payload(&closed_stream_response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
+        vec![0.25, 0.5, -0.25, -0.5]
+    );
+    let metrics = state.metrics.snapshot();
+    assert_eq!(metrics.binary_frames, 3);
+    assert_eq!(metrics.audio_frame_fallbacks, 2);
+    assert_eq!(metrics.audio_frames_routed, 1);
 
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));

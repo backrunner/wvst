@@ -161,6 +161,14 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             control_instances::handle_instance_destroy(request.id, request.params, context).await,
             session_authorized,
         ),
+        "stream.open" => ControlResponse::new(
+            control_instances::handle_stream_open(request.id, request.params, context),
+            session_authorized,
+        ),
+        "stream.close" => ControlResponse::new(
+            control_instances::handle_stream_close(request.id, request.params, context),
+            session_authorized,
+        ),
         _ => ControlResponse::new(
             response_error(
                 request.id,
