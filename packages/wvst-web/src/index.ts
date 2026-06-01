@@ -15,6 +15,11 @@ export {
   type RpcTransport,
 } from "./transport.js";
 export {
+  WVSTBridgeWorkerClient,
+  type BridgeWorkerAudioStreamOptions,
+  type BridgeWorkerClientOptions,
+} from "./worker-client.js";
+export {
   LoopbackCounter,
   configureLoopbackAudioWorkletNode,
   createLoopbackAudioWorkletNode,

@@ -23,6 +23,7 @@
 - Bridge/Web SDK 已提供 `stream.open` / `stream.close` 控制 API，实例记录包含 `streamState`，Bridge 只将 open stream 的音频帧路由到 worker。
 - 对于已知 stream 的关闭或处理失败场景，Bridge 会返回带 `silence` / `end-of-stream` / `process-error` flag 的诊断静音音频帧，避免把异常伪装成正常 echo。
 - Web `bridge-worker` 已具备从 SAB 读取最新 input quantum、编码 WVST binary audio frame、发送 Bridge 并写回 output SAB 的基础 audio pump；AudioWorklet processor 已支持通过 SAB 输入/输出和计数器交换音频块。
+- Web SDK 已提供 `WVSTBridgeWorkerClient`，封装 bridge worker 的 connect/request/sendBinary/startAudioStream/stopAudioStream 命令，避免应用侧手写 worker message protocol。
 
 ## 距离完整能力的主要差距
 
