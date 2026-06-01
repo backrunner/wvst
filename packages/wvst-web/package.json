@@ -1,0 +1,21 @@
+{
+  "name": "@wvst/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WebAudio client SDK skeleton for WVST.",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && rollup -c",
+    "check": "tsc -p tsconfig.json --noEmit"
+  }
+}
+

@@ -1,0 +1,17 @@
+[package]
+name = "wvst-protocol"
+description = "Versioned WVST control and binary audio frame protocol."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+wvst-core = { path = "../wvst-core" }
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

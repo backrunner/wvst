@@ -1,0 +1,18 @@
+[package]
+name = "wvst-testkit"
+description = "Reusable WVST protocol and audio fixtures for tests and examples."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+wvst-core = { path = "../wvst-core" }
+wvst-protocol = { path = "../wvst-protocol" }
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

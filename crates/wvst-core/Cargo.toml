@@ -1,0 +1,14 @@
+[package]
+name = "wvst-core"
+description = "Core WVST identifiers, audio primitives, versions, and errors."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

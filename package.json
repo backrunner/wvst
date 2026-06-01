@@ -1,0 +1,19 @@
+{
+  "name": "wvst",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build:web": "npm --workspace @wvst/web run build",
+    "check": "cargo test --all && npm run check:web",
+    "check:web": "npm --workspace @wvst/web run check"
+  },
+  "devDependencies": {
+    "rollup": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+

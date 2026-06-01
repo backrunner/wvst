@@ -1,0 +1,12 @@
+{
+  "streamId": "42",
+  "sequence": "7",
+  "sentFrameTime": "1024",
+  "sampleRate": 48000,
+  "payloadBytes": 512,
+  "frames": 64,
+  "channels": 2,
+  "format": 1,
+  "flags": 1,
+  "eventCount": 0
+}
