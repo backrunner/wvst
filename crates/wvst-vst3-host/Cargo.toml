@@ -8,12 +8,12 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+libloading = "0.8"
 serde = { version = "1", features = ["derive"] }
 wvst-scanner = { path = "../wvst-scanner" }
 
 [lib]
 path = "src/lib.rs"
 
-[lints]
-workspace = true
-
+[lints.rust]
+unsafe_code = "allow"
