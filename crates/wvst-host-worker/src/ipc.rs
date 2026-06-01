@@ -113,9 +113,10 @@ impl WorkerBackend {
         }
 
         match create_vst3_component_probe(&params.plugin_path, class_id) {
-            Ok(_) => Ok(Self {
+            Ok(probe) if probe.audio_processor => Ok(Self {
                 kind: WorkerBackendKind::Vst3ComponentProbe,
             }),
+            Ok(_) => Err("VST3 component does not expose IAudioProcessor".to_string()),
             Err(wvst_vst3_host::HostError::InvalidClassId(_)) => Ok(Self::passthrough()),
             Err(error) => Err(error.to_string()),
         }
@@ -338,6 +339,7 @@ fn worker_hello() -> Value {
             "fakePassthrough": true,
             "binaryAudioProcess": true,
             "vst3CreateInstance": true,
+            "vst3AudioProcessorProbe": true,
             "sampleRateValidation": true
         }
     })

@@ -21,6 +21,12 @@ pub enum HostError {
         interface_id: String,
     },
     InvalidClassId(String),
+    InvalidLifecycleTransition {
+        from: &'static str,
+        action: &'static str,
+    },
+    InvalidMaxBlockFrames(u16),
+    InvalidSampleRate(u32),
     MissingSymbol(&'static str),
     ModuleLoadFailed(String),
     UnsupportedPlatform(&'static str),
@@ -68,6 +74,18 @@ impl Display for HostError {
             }
             Self::InvalidClassId(class_id) => {
                 write!(formatter, "invalid VST3 class id: {class_id}")
+            }
+            Self::InvalidLifecycleTransition { from, action } => {
+                write!(
+                    formatter,
+                    "invalid VST3 lifecycle transition: cannot {action} from {from}"
+                )
+            }
+            Self::InvalidMaxBlockFrames(value) => {
+                write!(formatter, "invalid VST3 max block frame count: {value}")
+            }
+            Self::InvalidSampleRate(value) => {
+                write!(formatter, "invalid VST3 sample rate: {value}")
             }
             Self::MissingSymbol(symbol) => write!(formatter, "missing VST3 symbol: {symbol}"),
             Self::ModuleLoadFailed(message) => write!(formatter, "module load failed: {message}"),

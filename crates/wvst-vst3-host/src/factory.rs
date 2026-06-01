@@ -27,6 +27,7 @@ pub struct Vst3ComponentProbe {
     pub bundle_path: String,
     pub class_id: String,
     pub interface_id: String,
+    pub audio_processor: bool,
     pub created: bool,
 }
 
@@ -67,7 +68,8 @@ mod platform {
 
     use super::{Vst3FactoryClass, Vst3FactoryInfo};
     use crate::vst3_abi::{
-        FUnknown, IPluginFactory, K_RESULT_OK, PClassInfo, PFactoryInfo, fixed_string, tuid_hex,
+        FUnknown, IPluginFactory, K_RESULT_OK, PClassInfo, PFactoryInfo,
+        VST3_I_AUDIO_PROCESSOR_IID, fixed_string, tuid_hex,
     };
     use crate::{HostError, HostResult};
 
@@ -95,12 +97,14 @@ mod platform {
 
         let factory = bundle.plugin_factory()?;
         let instance = factory.create_instance(class_id, interface_id)?;
+        let audio_processor = instance.supports_interface(VST3_I_AUDIO_PROCESSOR_IID)?;
         drop(instance);
 
         Ok(super::Vst3ComponentProbe {
             bundle_path: bundle_path.to_string_lossy().into_owned(),
             class_id: class_id.to_string(),
             interface_id: interface_id.to_string(),
+            audio_processor,
             created: true,
         })
     }
@@ -371,18 +375,52 @@ mod platform {
 
     impl Drop for Vst3UnknownInstance {
         fn drop(&mut self) {
-            if self.object.is_null() {
-                return;
+            release_unknown(self.object);
+        }
+    }
+
+    impl Vst3UnknownInstance {
+        fn supports_interface(&self, interface_id: &str) -> HostResult<bool> {
+            let interface_id_string = CString::new(interface_id)
+                .map_err(|error| HostError::ModuleLoadFailed(error.to_string()))?;
+            let mut object: *mut c_void = std::ptr::null_mut();
+
+            // SAFETY: `self.object` is a live FUnknown-derived interface pointer.
+            // `object` points to writable stack storage and is released below if
+            // queryInterface returns a referenced object.
+            let vtable = unsafe { (*self.object).vtable };
+            if vtable.is_null() {
+                return Ok(false);
+            }
+            // SAFETY: The vtable belongs to the live FUnknown object above. The
+            // interface id is a NUL-terminated FUID string.
+            let result = unsafe {
+                ((*vtable).query_interface)(self.object, interface_id_string.as_ptr(), &mut object)
+            };
+
+            if result != K_RESULT_OK || object.is_null() {
+                return Ok(false);
             }
 
-            // SAFETY: `object` was returned by IPluginFactory::createInstance for
-            // an interface derived from FUnknown. VST3 interfaces expose release
-            // as the third FUnknown vtable entry. Null vtables are ignored.
-            let vtable = unsafe { (*self.object).vtable };
-            if !vtable.is_null() {
-                // SAFETY: release balances the reference returned by createInstance.
-                let _ = unsafe { ((*vtable).release)(self.object) };
-            }
+            release_unknown(object.cast());
+            Ok(true)
+        }
+    }
+
+    fn release_unknown(object: *mut FUnknown) {
+        if object.is_null() {
+            return;
+        }
+
+        // SAFETY: `object` was returned by IPluginFactory::createInstance or
+        // queryInterface for an interface derived from FUnknown. VST3 interfaces
+        // expose release as the third FUnknown vtable entry. Null vtables are
+        // ignored because there is nothing safe to release.
+        let vtable = unsafe { (*object).vtable };
+        if !vtable.is_null() {
+            // SAFETY: release balances the reference returned by createInstance
+            // or queryInterface.
+            let _ = unsafe { ((*vtable).release)(object) };
         }
     }
 

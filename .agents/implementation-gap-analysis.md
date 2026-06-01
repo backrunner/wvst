@@ -29,7 +29,9 @@
 - Web `bridge-worker` 已具备从 SAB input ring 读取 quantum、编码 WVST binary audio frame、发送 Bridge 并写回 output ring 的基础 audio pump；AudioWorklet processor 已支持通过 SAB ring 和计数器交换音频块。
 - Web SDK 已提供 `WVSTBridgeWorkerClient`，封装 bridge worker 的 connect/request/sendBinary/startAudioStream/stopAudioStream 命令，避免应用侧手写 worker message protocol。
 - `wvst-vst3-host` 已增加 VST3 FUID 规范化、`IPluginFactory::createInstance` ABI skeleton 和 macOS `create_vst3_component_probe()` safe facade；`wvst-host-worker component-probe <plugin.vst3> <class-id>` 可在隔离 worker 内验证 component 创建并释放。
-- `wvst-host-worker serve` 已能在 instance create 时对有效 VST3 class id 尝试 component createInstance probe；真实 VST3 音频处理尚未启用时会保持和 passthrough 后端清晰区分。
+- VST3 ABI 边界已补入 `IPluginBase`、`IComponent`、`IAudioProcessor`、`ProcessSetup`、`AudioBusBuffers` 和 `ProcessData` 的 Rust repr(C) skeleton，后续真实 process path 可以继续在 `wvst-vst3-host` 内收敛 unsafe。
+- `create_vst3_component_probe()` 现在会通过 `queryInterface` 验证 component 是否暴露 `IAudioProcessor`；`wvst-host-worker serve` 在 instance create 时只把可音频处理的 component 标记为 VST3 probe 后端，否则返回明确错误或回退 passthrough。
+- `wvst-vst3-host` 已加入纯 Rust `Vst3Lifecycle` 状态机和 `Vst3ProcessingConfig`，覆盖 `created -> initialized -> setup-done -> activated -> processing -> stopped -> terminated` 的合法顺序和非法转移测试。
 
 ## 距离完整能力的主要差距
 
@@ -56,12 +58,12 @@
 
 ### 3. 真实 VST3 component/controller lifecycle
 
-当前已完成 factory info 读取和 `IPluginFactory::createInstance` component probe，尚未进入完整 component/controller 运行态。
+当前已完成 factory info 读取、`IPluginFactory::createInstance` component probe、`IAudioProcessor` 接口探测、基础 ABI skeleton 和纯 Rust lifecycle 状态机，尚未进入完整 component/controller 运行态。
 
 仍缺少：
 
 - 持久持有 component/controller 对象的 worker 内状态模型。
-- component/controller 初始化、host context、bus arrangement、sample rate、max block size。
+- 将 `Vst3Lifecycle` 状态机绑定到真实 component/controller 调用，包括 host context、bus arrangement、sample rate、max block size。
 - `setProcessing`、`process`、latency/tail 查询。
 - 参数、state、program list、unit metadata。
 
@@ -96,7 +98,7 @@
 
 ## 建议下一阶段
 
-1. 在 `createInstance` probe 之后实现持久 VST3 component/controller holder，并补齐初始化、bus arrangement、setupProcessing 和 setProcessing 状态机。
+1. 在 `createInstance` / `IAudioProcessor` probe 之后实现持久 VST3 component/controller holder，并把 `Vst3Lifecycle` 绑定到真实 initialize、bus arrangement、setupProcessing 和 setProcessing 调用。
 2. 将 worker passthrough audio buffer path 替换为真实 VST3 2-in/2-out effect `process()` 预分配 buffer path，并用 fake ABI fixture 覆盖 CI。
 3. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
 4. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。

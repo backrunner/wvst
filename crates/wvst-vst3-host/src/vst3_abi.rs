@@ -1,7 +1,21 @@
+#![allow(dead_code)]
+// Raw VST3 ABI declarations are exposed to this crate incrementally through
+// safe facades; not every vtable slot is called in the same milestone.
+
 use std::ffi::{c_char, c_void};
 
 pub const K_RESULT_OK: i32 = 0;
+pub const VST3_I_PLUGIN_BASE_IID: &str = "22888DDB156E45AE8358B34808190625";
 pub const VST3_I_COMPONENT_IID: &str = "E831FF31F2D54301928EBBEE25697802";
+pub const VST3_I_AUDIO_PROCESSOR_IID: &str = "42043F99B7DA453CA569E79D9AAEC33D";
+pub const VST3_PROCESS_MODE_REALTIME: i32 = 0;
+pub const VST3_SAMPLE_32: i32 = 0;
+pub const VST3_SPEAKER_STEREO: SpeakerArrangement = 0x03;
+
+pub type TBool = u8;
+pub type TUid = [u8; 16];
+pub type SampleRate = f64;
+pub type SpeakerArrangement = u64;
 
 #[repr(C)]
 pub struct FUnknown {
@@ -17,6 +31,108 @@ pub struct FUnknownVTable {
     ) -> i32,
     pub add_ref: unsafe extern "system" fn(this: *mut FUnknown) -> u32,
     pub release: unsafe extern "system" fn(this: *mut FUnknown) -> u32,
+}
+
+#[repr(C)]
+pub struct IPluginBase {
+    pub vtable: *const IPluginBaseVTable,
+}
+
+#[repr(C)]
+pub struct IPluginBaseVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IPluginBase,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IPluginBase) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IPluginBase) -> u32,
+    pub initialize:
+        unsafe extern "system" fn(this: *mut IPluginBase, context: *mut FUnknown) -> i32,
+    pub terminate: unsafe extern "system" fn(this: *mut IPluginBase) -> i32,
+}
+
+#[repr(C)]
+pub struct IComponent {
+    pub vtable: *const IComponentVTable,
+}
+
+#[repr(C)]
+pub struct IComponentVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IComponent,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IComponent) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IComponent) -> u32,
+    pub initialize: unsafe extern "system" fn(this: *mut IComponent, context: *mut FUnknown) -> i32,
+    pub terminate: unsafe extern "system" fn(this: *mut IComponent) -> i32,
+    pub get_controller_class_id:
+        unsafe extern "system" fn(this: *mut IComponent, class_id: *mut TUid) -> i32,
+    pub set_io_mode: unsafe extern "system" fn(this: *mut IComponent, mode: i32) -> i32,
+    pub get_bus_count:
+        unsafe extern "system" fn(this: *mut IComponent, media_type: i32, direction: i32) -> i32,
+    pub get_bus_info: unsafe extern "system" fn(
+        this: *mut IComponent,
+        media_type: i32,
+        direction: i32,
+        index: i32,
+        bus: *mut c_void,
+    ) -> i32,
+    pub get_routing_info: unsafe extern "system" fn(
+        this: *mut IComponent,
+        input: *mut c_void,
+        output: *mut c_void,
+    ) -> i32,
+    pub activate_bus: unsafe extern "system" fn(
+        this: *mut IComponent,
+        media_type: i32,
+        direction: i32,
+        index: i32,
+        state: TBool,
+    ) -> i32,
+    pub set_active: unsafe extern "system" fn(this: *mut IComponent, state: TBool) -> i32,
+    pub set_state: unsafe extern "system" fn(this: *mut IComponent, state: *mut c_void) -> i32,
+    pub get_state: unsafe extern "system" fn(this: *mut IComponent, state: *mut c_void) -> i32,
+}
+
+#[repr(C)]
+pub struct IAudioProcessor {
+    pub vtable: *const IAudioProcessorVTable,
+}
+
+#[repr(C)]
+pub struct IAudioProcessorVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IAudioProcessor,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IAudioProcessor) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IAudioProcessor) -> u32,
+    pub set_bus_arrangements: unsafe extern "system" fn(
+        this: *mut IAudioProcessor,
+        inputs: *mut SpeakerArrangement,
+        input_count: i32,
+        outputs: *mut SpeakerArrangement,
+        output_count: i32,
+    ) -> i32,
+    pub get_bus_arrangement: unsafe extern "system" fn(
+        this: *mut IAudioProcessor,
+        direction: i32,
+        index: i32,
+        arrangement: *mut SpeakerArrangement,
+    ) -> i32,
+    pub can_process_sample_size:
+        unsafe extern "system" fn(this: *mut IAudioProcessor, sample_size: i32) -> i32,
+    pub get_latency_samples: unsafe extern "system" fn(this: *mut IAudioProcessor) -> u32,
+    pub setup_processing:
+        unsafe extern "system" fn(this: *mut IAudioProcessor, setup: *mut ProcessSetup) -> i32,
+    pub set_processing: unsafe extern "system" fn(this: *mut IAudioProcessor, state: TBool) -> i32,
+    pub process:
+        unsafe extern "system" fn(this: *mut IAudioProcessor, data: *mut ProcessData) -> i32,
+    pub get_tail_samples: unsafe extern "system" fn(this: *mut IAudioProcessor) -> u32,
 }
 
 #[repr(C)]
@@ -74,6 +190,51 @@ pub struct PClassInfo {
     pub cardinality: i32,
     pub category: [c_char; 32],
     pub name: [c_char; 64],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProcessSetup {
+    pub process_mode: i32,
+    pub symbolic_sample_size: i32,
+    pub max_samples_per_block: i32,
+    pub sample_rate: SampleRate,
+}
+
+impl ProcessSetup {
+    pub fn realtime_f32(max_samples_per_block: i32, sample_rate: SampleRate) -> Self {
+        Self {
+            process_mode: VST3_PROCESS_MODE_REALTIME,
+            symbolic_sample_size: VST3_SAMPLE_32,
+            max_samples_per_block,
+            sample_rate,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct AudioBusBuffers {
+    pub num_channels: i32,
+    pub silence_flags: u64,
+    pub channel_buffers32: *mut *mut f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessData {
+    pub process_mode: i32,
+    pub symbolic_sample_size: i32,
+    pub num_samples: i32,
+    pub num_inputs: i32,
+    pub num_outputs: i32,
+    pub inputs: *mut AudioBusBuffers,
+    pub outputs: *mut AudioBusBuffers,
+    pub input_parameter_changes: *mut c_void,
+    pub output_parameter_changes: *mut c_void,
+    pub input_events: *mut c_void,
+    pub output_events: *mut c_void,
+    pub process_context: *mut c_void,
 }
 
 impl Default for PClassInfo {
@@ -147,5 +308,18 @@ mod tests {
             Some(VST3_I_COMPONENT_IID)
         );
         assert!(normalize_fuid_string("class-a").is_none());
+    }
+
+    #[test]
+    fn creates_realtime_f32_process_setup() {
+        assert_eq!(
+            ProcessSetup::realtime_f32(128, 48_000.0),
+            ProcessSetup {
+                process_mode: VST3_PROCESS_MODE_REALTIME,
+                symbolic_sample_size: VST3_SAMPLE_32,
+                max_samples_per_block: 128,
+                sample_rate: 48_000.0,
+            }
+        );
     }
 }

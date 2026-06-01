@@ -1,5 +1,6 @@
 pub mod error;
 pub mod factory;
+pub mod lifecycle;
 pub mod metadata;
 pub mod module;
 pub mod processor;
@@ -10,6 +11,7 @@ pub use factory::{
     Vst3ComponentProbe, Vst3FactoryClass, Vst3FactoryInfo, create_vst3_component_probe,
     load_vst3_factory_info,
 };
+pub use lifecycle::{Vst3Lifecycle, Vst3LifecycleState, Vst3ProcessingConfig};
 pub use metadata::HeadlessPluginMetadata;
 pub use module::{Vst3ModuleProbe, Vst3ModuleSymbols, find_vst3_executable, probe_vst3_module};
 pub use processor::{HeadlessPluginInstance, ProcessStats};
