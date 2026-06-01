@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use wvst_scanner::{ScanReport, default_vst3_paths, scan_paths};
+use wvst_scanner::{PluginDescriptor, ScanReport, default_vst3_paths, scan_paths};
 
 #[derive(Debug, Default)]
 pub struct PluginRegistry {
@@ -18,6 +18,16 @@ impl PluginRegistry {
             .lock()
             .map(|report| report.clone())
             .unwrap_or_default()
+    }
+
+    pub fn find(&self, plugin_id: &str) -> Option<PluginDescriptor> {
+        self.report.lock().ok().and_then(|report| {
+            report
+                .plugins
+                .iter()
+                .find(|plugin| plugin.plugin_id == plugin_id)
+                .cloned()
+        })
     }
 
     pub fn scan_default_paths(&self) -> ScanReport {

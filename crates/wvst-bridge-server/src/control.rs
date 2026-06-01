@@ -5,12 +5,16 @@ use wvst_protocol::{AUDIO_FRAME_VERSION, negotiate_protocol};
 
 use crate::config::BridgeConfig;
 use crate::host_worker::{HostWorkerClient, HostWorkerError};
+use crate::instance_registry::{
+    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceRegistry,
+};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 
 pub struct ControlContext<'a> {
     pub config: &'a BridgeConfig,
     pub host_worker: &'a HostWorkerClient,
+    pub instances: &'a InstanceRegistry,
     pub metrics: &'a BridgeMetrics,
     pub plugins: &'a PluginRegistry,
     pub origin: Option<&'a str>,
@@ -137,6 +141,18 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             handle_plugin_factory_info(request.id, request.params, context).await,
             session_authorized,
         ),
+        "instance.create" => ControlResponse::new(
+            handle_instance_create(request.id, request.params, context),
+            session_authorized,
+        ),
+        "instance.list" => ControlResponse::new(
+            response_result(request.id, json!(context.instances.list())),
+            session_authorized,
+        ),
+        "instance.destroy" => ControlResponse::new(
+            handle_instance_destroy(request.id, request.params, context),
+            session_authorized,
+        ),
         _ => ControlResponse::new(
             response_error(
                 request.id,
@@ -145,6 +161,46 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             ),
             session_authorized,
         ),
+    }
+}
+
+fn handle_instance_create(id: Value, params: Value, context: ControlContext<'_>) -> String {
+    let params = match serde_json::from_value::<InstanceCreateParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid instance create params: {error}"),
+            );
+        }
+    };
+
+    let Some(plugin) = context.plugins.find(&params.plugin_id) else {
+        return response_instance_error(id, InstanceError::PluginNotFound(params.plugin_id));
+    };
+
+    match context.instances.create(params, &plugin) {
+        Ok(record) => response_result(id, json!(record)),
+        Err(error) => response_instance_error(id, error),
+    }
+}
+
+fn handle_instance_destroy(id: Value, params: Value, context: ControlContext<'_>) -> String {
+    let params = match serde_json::from_value::<InstanceDestroyParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid instance destroy params: {error}"),
+            );
+        }
+    };
+
+    match context.instances.destroy(params) {
+        Ok(result) => response_result(id, json!(result)),
+        Err(error) => response_instance_error(id, error),
     }
 }
 
@@ -303,13 +359,21 @@ fn response_error(id: Value, code: i64, message: impl Into<String>) -> String {
 }
 
 fn response_host_worker_error(id: Value, error: HostWorkerError) -> String {
+    response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
+}
+
+fn response_instance_error(id: Value, error: InstanceError) -> String {
+    response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
+}
+
+fn response_error_data(id: Value, code: i64, message: impl Into<String>, data: Value) -> String {
     serialize_json(json!({
         "jsonrpc": "2.0",
         "id": id,
         "error": {
-            "code": error.rpc_code(),
-            "message": error.rpc_message(),
-            "data": error.rpc_data()
+            "code": code,
+            "message": message.into(),
+            "data": data
         }
     }))
 }

@@ -12,6 +12,7 @@ use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
 use crate::error::BridgeResult;
 use crate::host_worker::HostWorkerClient;
+use crate::instance_registry::InstanceRegistry;
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 
@@ -19,6 +20,7 @@ use crate::plugin_registry::PluginRegistry;
 struct BridgeState {
     config: Arc<BridgeConfig>,
     host_worker: Arc<HostWorkerClient>,
+    instances: Arc<InstanceRegistry>,
     metrics: Arc<BridgeMetrics>,
     plugins: Arc<PluginRegistry>,
 }
@@ -37,6 +39,7 @@ impl BridgeServer {
             state: BridgeState {
                 config: Arc::new(config),
                 host_worker: Arc::new(HostWorkerClient::from_env()),
+                instances: Arc::new(InstanceRegistry::new()),
                 metrics: Arc::new(BridgeMetrics::new()),
                 plugins: Arc::new(PluginRegistry::new()),
             },
@@ -108,6 +111,7 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
                     ControlContext {
                         config: &state.config,
                         host_worker: &state.host_worker,
+                        instances: &state.instances,
                         metrics: &state.metrics,
                         plugins: &state.plugins,
                         origin: origin.as_deref(),

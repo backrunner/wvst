@@ -2,6 +2,7 @@ use super::*;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::instance_registry::InstanceRegistry;
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 
@@ -9,11 +10,13 @@ use crate::plugin_registry::PluginRegistry;
 async fn responds_to_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
+        instances: &instances,
         metrics: &metrics,
         plugins: &plugins,
         origin: Some("http://localhost:5173"),
@@ -36,11 +39,13 @@ async fn responds_to_hello() {
 async fn rejects_denied_origin() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
+        instances: &instances,
         metrics: &metrics,
         plugins: &plugins,
         origin: Some("https://example.com"),
@@ -62,11 +67,13 @@ async fn rejects_denied_origin() {
 async fn rejects_plugin_list_before_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
+        instances: &instances,
         metrics: &metrics,
         plugins: &plugins,
         origin: None,
@@ -84,11 +91,13 @@ async fn rejects_plugin_list_before_hello() {
 async fn lists_cached_plugins_after_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
+        instances: &instances,
         metrics: &metrics,
         plugins: &plugins,
         origin: None,
@@ -114,11 +123,13 @@ async fn routes_factory_info_to_host_worker() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let worker_path = factory_info_worker_script();
     let host_worker = HostWorkerClient::new_for_test(worker_path.clone(), Duration::from_secs(1));
+    let instances = InstanceRegistry::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
+        instances: &instances,
         metrics: &metrics,
         plugins: &plugins,
         origin: None,
@@ -138,11 +149,112 @@ async fn routes_factory_info_to_host_worker() {
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
 }
 
+#[tokio::test]
+async fn creates_lists_and_destroys_instance() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
+    let metrics = BridgeMetrics::new();
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+
+    let create_request = serde_json::json!({
+        "id": 1,
+        "method": "instance.create",
+        "params": {
+            "pluginId": plugin_id,
+            "classId": "class-a",
+            "sampleRate": 48000,
+            "maxBlockFrames": 128,
+            "inputChannels": 2,
+            "outputChannels": 2
+        }
+    })
+    .to_string();
+    let create = handle_control_text(
+        &create_request,
+        ControlContext {
+            config: &config,
+            host_worker: &host_worker,
+            instances: &instances,
+            metrics: &metrics,
+            plugins: &plugins,
+            origin: None,
+            session_authorized: true,
+        },
+    )
+    .await;
+    let create_value: Value = serde_json::from_str(&create.text).expect("valid create json");
+    let instance_id = create_value["result"]["instanceId"]
+        .as_u64()
+        .expect("instance id");
+
+    assert_eq!(create_value["result"]["state"], "allocated");
+    assert_eq!(create_value["result"]["workerState"], "not-started");
+
+    let list = handle_control_text(
+        r#"{"id":2,"method":"instance.list","params":{}}"#,
+        ControlContext {
+            config: &config,
+            host_worker: &host_worker,
+            instances: &instances,
+            metrics: &metrics,
+            plugins: &plugins,
+            origin: None,
+            session_authorized: true,
+        },
+    )
+    .await;
+    let list_value: Value = serde_json::from_str(&list.text).expect("valid list json");
+    assert_eq!(list_value["result"].as_array().expect("instances").len(), 1);
+
+    let destroy_request = serde_json::json!({
+        "id": 3,
+        "method": "instance.destroy",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let destroy = handle_control_text(
+        &destroy_request,
+        ControlContext {
+            config: &config,
+            host_worker: &host_worker,
+            instances: &instances,
+            metrics: &metrics,
+            plugins: &plugins,
+            origin: None,
+            session_authorized: true,
+        },
+    )
+    .await;
+    let destroy_value: Value = serde_json::from_str(&destroy.text).expect("valid destroy json");
+    assert_eq!(destroy_value["result"]["state"], "destroyed");
+    assert!(instances.list().is_empty());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 fn test_host_worker() -> HostWorkerClient {
     HostWorkerClient::new_for_test(
         PathBuf::from("missing-wvst-host-worker"),
         Duration::from_secs(1),
     )
+}
+
+fn scanned_plugin_registry() -> (PluginRegistry, PathBuf, String) {
+    let root = unique_temp_dir();
+    let bundle = root.join("Test.vst3").join("Contents");
+    std::fs::create_dir_all(&bundle).expect("bundle directory");
+    std::fs::write(
+        bundle.join("moduleinfo.json"),
+        r#"{"Name":"Test","Classes":[{"CID":"class-a","Name":"Test Class","Category":"Fx"}]}"#,
+    )
+    .expect("moduleinfo");
+
+    let plugins = PluginRegistry::new();
+    let report = plugins.scan_paths(vec![root.clone()]);
+    let plugin_id = report.plugins[0].plugin_id.clone();
+
+    (plugins, root, plugin_id)
 }
 
 #[cfg(unix)]
@@ -163,7 +275,6 @@ fn factory_info_worker_script() -> PathBuf {
     worker
 }
 
-#[cfg(unix)]
 fn unique_temp_dir() -> PathBuf {
     let suffix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

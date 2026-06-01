@@ -25,6 +25,13 @@ export {
   type LoopbackSharedBuffers,
 } from "./loopback.js";
 export {
+  type InstanceApi,
+  type InstanceCreateOptions,
+  type InstanceDescriptor,
+  type InstanceDestroyOptions,
+  type InstanceDestroyResult,
+} from "./instances.js";
+export {
   type PluginApi,
   type PluginClass,
   type PluginDescriptor,

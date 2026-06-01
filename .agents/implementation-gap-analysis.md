@@ -11,18 +11,19 @@
 - `wvst-host-worker` 已作为独立进程入口，支持 VST3 bundle 描述、module symbol probe、macOS factory info 读取和 passthrough probe。
 - Bridge 已通过 `plugin.factoryInfo` 将 factory metadata 请求路由到隔离 worker，Bridge 自身不加载第三方 VST。
 - Bridge 控制面已增加连接级会话门禁，除 `bridge.hello` 外的 API 需要先完成授权 hello。
+- Bridge/Web SDK 已提供 `instance.create` / `instance.list` / `instance.destroy` 控制面，能为已扫描插件分配独立 `instanceId` 与 `streamId`。
 
 ## 距离完整能力的主要差距
 
-### 1. 插件实例生命周期
+### 1. 插件实例运行态生命周期
 
 仍缺少：
 
-- `instance.create` / `instance.destroy` / `instance.list`。
-- 每个实例的独立 worker、instance id、stream id、状态机和资源释放。
-- 同一插件 N 个实例的隔离策略和调度策略。
+- `allocated` 之后的 worker-backed 状态迁移，例如 `starting`、`ready`、`processing`、`failed`。
+- 每个实例的独立 worker 进程、资源释放和 crash/restart 状态机。
+- 同一插件 N 个实例的实际 worker 隔离策略和调度策略。
 
-这是下一阶段最高优先级，因为后续 audio stream、参数和 MIDI 都依赖实例句柄。
+这是下一阶段最高优先级，因为当前实例句柄还没有绑定常驻 worker 和真实 VST 对象。
 
 ### 2. 持久 worker IPC
 
@@ -77,8 +78,8 @@
 
 ## 建议下一阶段
 
-1. 建立 `instance.create` / `instance.destroy` 控制面和 Bridge instance registry。
-2. 把 `wvst-host-worker` 扩展为常驻 JSON/frame IPC worker，先支持 fake passthrough instance。
+1. 把 `wvst-host-worker` 扩展为常驻 JSON/frame IPC worker，先支持 fake passthrough instance。
+2. 将 Bridge `allocated` 实例绑定到 worker 进程，补 `starting` / `ready` / `failed` 状态。
 3. 将 Bridge binary echo 改为按 `streamId` 路由到 worker passthrough，形成 WebAudio 到 worker 再返回的端到端闭环。
 4. 在 fake passthrough 稳定后，实现 VST3 `createInstance` 和 2-in/2-out effect processing。
 5. 增加 worker watchdog、超时 kill、restart metrics 和崩溃 quarantine。

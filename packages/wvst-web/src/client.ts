@@ -1,5 +1,12 @@
 import { AUDIO_FRAME_VERSION } from "./protocol.js";
 import type {
+  InstanceApi,
+  InstanceCreateOptions,
+  InstanceDescriptor,
+  InstanceDestroyOptions,
+  InstanceDestroyResult,
+} from "./instances.js";
+import type {
   PluginApi,
   PluginFactoryInfo,
   PluginFactoryInfoOptions,
@@ -69,6 +76,7 @@ export interface LowLatencyPrerequisites {
 const DEFAULT_ENDPOINT = "ws://127.0.0.1:35876";
 
 export class WVSTClient {
+  public readonly instances: InstanceApi;
   public readonly plugins: PluginApi;
 
   private constructor(
@@ -78,6 +86,13 @@ export class WVSTClient {
     private readonly transport: RpcTransport,
     public readonly hello: BridgeHelloResult,
   ) {
+    this.instances = {
+      create: (options: InstanceCreateOptions) =>
+        this.request<InstanceDescriptor>("instance.create", options),
+      list: () => this.request<InstanceDescriptor[]>("instance.list", {}),
+      destroy: (options: InstanceDestroyOptions) =>
+        this.request<InstanceDestroyResult>("instance.destroy", options),
+    };
     this.plugins = {
       scan: (options?: PluginScanOptions) =>
         this.request<PluginScanReport>("plugin.scan", options ?? {}),
