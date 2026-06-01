@@ -20,8 +20,8 @@ export interface InstanceDescriptor {
   maxBlockFrames: number;
   inputChannels: number;
   outputChannels: number;
-  state: "allocated" | "ready" | "failed";
-  workerState: "not-started" | "ready" | "failed";
+  state: "allocated" | "ready" | "processing" | "stopped" | "failed";
+  workerState: "not-started" | "ready" | "processing" | "stopped" | "failed";
   streamState: "open" | "closed";
 }
 
@@ -32,6 +32,7 @@ export interface InstanceStatusOptions {
 export interface InstanceWorkerMetrics {
   ipcVersion: number;
   instances: number;
+  processingInstances: number;
   [key: string]: JsonValue;
 }
 
@@ -45,6 +46,12 @@ export interface InstanceRestartOptions {
 }
 
 export type InstanceRestartResult = InstanceStatusResult;
+
+export interface InstanceProcessingOptions {
+  instanceId: number;
+}
+
+export type InstanceProcessingResult = InstanceStatusResult;
 
 export interface InstanceDestroyOptions {
   instanceId: number;
@@ -65,6 +72,8 @@ export interface InstanceApi {
   list(): Promise<InstanceDescriptor[]>;
   status(options: InstanceStatusOptions): Promise<InstanceStatusResult>;
   restart(options: InstanceRestartOptions): Promise<InstanceRestartResult>;
+  start(options: InstanceProcessingOptions): Promise<InstanceProcessingResult>;
+  stop(options: InstanceProcessingOptions): Promise<InstanceProcessingResult>;
   destroy(options: InstanceDestroyOptions): Promise<InstanceDestroyResult>;
   openStream(options: StreamLifecycleOptions): Promise<InstanceDescriptor>;
   closeStream(options: StreamLifecycleOptions): Promise<InstanceDescriptor>;

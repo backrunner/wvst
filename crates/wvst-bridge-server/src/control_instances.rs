@@ -5,8 +5,8 @@ use super::{
     response_worker_supervisor_error,
 };
 use crate::instance_registry::{
-    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceRestartParams,
-    InstanceStatusParams, StreamLifecycleParams,
+    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceProcessingParams,
+    InstanceRestartParams, InstanceStatusParams, StreamLifecycleParams,
 };
 
 pub async fn handle_instance_create(
@@ -108,6 +108,64 @@ pub async fn handle_instance_restart(
         Err(error) => {
             context.metrics.increment_worker_failures();
             let _ = context.instances.mark_worker_failed(record.instance_id);
+            response_worker_supervisor_error(id, error)
+        }
+    }
+}
+
+pub async fn handle_instance_start(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceProcessingParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid instance start params: {error}"),
+            );
+        }
+    };
+
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.workers.start_processing(params.instance_id).await {
+        Ok(worker) => match context.instances.mark_processing(params.instance_id) {
+            Ok(instance) => response_result(id, json!({ "instance": instance, "worker": worker })),
+            Err(error) => response_instance_error(id, error),
+        },
+        Err(error) => {
+            context.metrics.increment_worker_failures();
+            let _ = context.instances.mark_worker_failed(params.instance_id);
+            response_worker_supervisor_error(id, error)
+        }
+    }
+}
+
+pub async fn handle_instance_stop(id: Value, params: Value, context: ControlContext<'_>) -> String {
+    let params = match serde_json::from_value::<InstanceProcessingParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(id, -32602, format!("invalid instance stop params: {error}"));
+        }
+    };
+
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.workers.stop_processing(params.instance_id).await {
+        Ok(worker) => match context.instances.mark_stopped(params.instance_id) {
+            Ok(instance) => response_result(id, json!({ "instance": instance, "worker": worker })),
+            Err(error) => response_instance_error(id, error),
+        },
+        Err(error) => {
+            context.metrics.increment_worker_failures();
+            let _ = context.instances.mark_worker_failed(params.instance_id);
             response_worker_supervisor_error(id, error)
         }
     }

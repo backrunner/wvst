@@ -5,6 +5,8 @@ import type {
   InstanceDescriptor,
   InstanceDestroyOptions,
   InstanceDestroyResult,
+  InstanceProcessingOptions,
+  InstanceProcessingResult,
   InstanceRestartOptions,
   InstanceRestartResult,
   InstanceStatusOptions,
@@ -99,6 +101,10 @@ export class WVSTClient {
         this.request<InstanceStatusResult>("instance.status", options),
       restart: (options: InstanceRestartOptions) =>
         this.request<InstanceRestartResult>("instance.restart", options),
+      start: (options: InstanceProcessingOptions) =>
+        this.request<InstanceProcessingResult>("instance.start", options),
+      stop: (options: InstanceProcessingOptions) =>
+        this.request<InstanceProcessingResult>("instance.stop", options),
       destroy: (options: InstanceDestroyOptions) =>
         this.request<InstanceDestroyResult>("instance.destroy", options),
       openStream: (options: StreamLifecycleOptions) =>

@@ -21,6 +21,7 @@ struct WorkerInstance {
     stream_id: u64,
     input_channels: usize,
     output_channels: usize,
+    processing: bool,
     plugin: HeadlessPluginInstance,
 }
 
@@ -54,6 +55,12 @@ struct InstanceDestroyParams {
     instance_id: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceProcessingParams {
+    instance_id: u64,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceReady {
@@ -66,6 +73,8 @@ struct InstanceReady {
 #[serde(rename_all = "kebab-case")]
 enum WorkerState {
     Ready,
+    Processing,
+    Stopped,
     Destroyed,
 }
 
@@ -122,6 +131,12 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
         "worker.hello" => response_result(request.id, worker_hello()),
         "worker.metrics" => response_result(request.id, worker_metrics(state)),
         "instance.create" => handle_instance_create(request.id, request.params, state),
+        "instance.startProcessing" => {
+            handle_instance_processing(request.id, request.params, state, true)
+        }
+        "instance.stopProcessing" => {
+            handle_instance_processing(request.id, request.params, state, false)
+        }
         "instance.destroy" => handle_instance_destroy(request.id, request.params, state),
         _ => response_error(
             request.id,
@@ -168,6 +183,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
             stream_id: params.stream_id,
             input_channels: params.input_channels,
             output_channels: params.output_channels,
+            processing: false,
             plugin,
         },
     );
@@ -205,6 +221,46 @@ fn handle_instance_destroy(id: Value, params: Value, state: &mut WorkerIpcState)
     )
 }
 
+fn handle_instance_processing(
+    id: Value,
+    params: Value,
+    state: &mut WorkerIpcState,
+    processing: bool,
+) -> String {
+    let params = match serde_json::from_value::<InstanceProcessingParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid instance processing params: {error}"),
+            );
+        }
+    };
+
+    let Some(instance) = state.instances.get_mut(&params.instance_id) else {
+        return response_error(
+            id,
+            4040,
+            format!("instance not found: {}", params.instance_id),
+        );
+    };
+
+    instance.processing = processing;
+    response_result(
+        id,
+        json!({
+            "instanceId": params.instance_id,
+            "streamId": instance.stream_id,
+            "workerState": if processing {
+                WorkerState::Processing
+            } else {
+                WorkerState::Stopped
+            },
+        }),
+    )
+}
+
 fn worker_hello() -> Value {
     json!({
         "workerName": "wvst-host-worker",
@@ -223,6 +279,11 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
     json!({
         "ipcVersion": WORKER_IPC_VERSION,
         "instances": state.instances.len(),
+        "processingInstances": state
+            .instances
+            .values()
+            .filter(|instance| instance.processing)
+            .count(),
     })
 }
 
@@ -300,8 +361,22 @@ mod tests {
         let create_value: Value = serde_json::from_str(&create).expect("create json");
         assert_eq!(create_value["result"]["workerState"], "ready");
 
+        let start = handle_ipc_line(
+            r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,
+            &mut state,
+        );
+        let start_value: Value = serde_json::from_str(&start).expect("start json");
+        assert_eq!(start_value["result"]["workerState"], "processing");
+
+        let stop = handle_ipc_line(
+            r#"{"id":3,"method":"instance.stopProcessing","params":{"instanceId":7}}"#,
+            &mut state,
+        );
+        let stop_value: Value = serde_json::from_str(&stop).expect("stop json");
+        assert_eq!(stop_value["result"]["workerState"], "stopped");
+
         let destroy = handle_ipc_line(
-            r#"{"id":3,"method":"instance.destroy","params":{"instanceId":7}}"#,
+            r#"{"id":4,"method":"instance.destroy","params":{"instanceId":7}}"#,
             &mut state,
         );
         let destroy_value: Value = serde_json::from_str(&destroy).expect("destroy json");

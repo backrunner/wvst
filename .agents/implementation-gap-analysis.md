@@ -17,6 +17,7 @@
 - Bridge worker supervisor 已加入 stderr 摘要、启动失败计数和基础 quarantine，避免同一故障插件无限重启。
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
+- Bridge/Web SDK 已提供 `instance.start` / `instance.stop` 处理生命周期控制，实例状态可从 `ready` 切到 `processing` / `stopped`。
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion`、`instanceLifecycle` 和 `binaryAudioProcess` capability，避免 Bridge 与不兼容 worker 继续创建实例。
 - Bridge 二进制音频帧已能按 `streamId` 路由到对应 worker 的独立二进制 audio IPC，并回传 worker 处理后的 F32 frame；未匹配实例或非法帧暂时保留 echo fallback。
 - Bridge metrics 已区分二进制帧总量、成功路由音频帧、fallback echo 和音频路由失败，便于后续接入 drop/late/underflow/overflow 统计。
@@ -31,7 +32,7 @@
 
 仍缺少：
 
-- `ready` 之后的 `processing`、`stopping` 等更细生命周期，以及对启动中状态的显式暴露。
+- `ready` 之后的 `processing` / `stopped` 生命周期已有首版控制 API；仍缺少 `starting`、`stopping`、自动恢复中等瞬态状态和事件推送。
 - 每个实例的独立 worker 进程已具备原型，并支持手动 restart；仍缺少自动 restart 状态机、崩溃事件推送和策略化资源回收。
 - 同一插件 N 个实例的实际 worker 隔离策略和调度策略。
 

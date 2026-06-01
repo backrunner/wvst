@@ -119,8 +119,46 @@ async fn creates_lists_and_destroys_instance() {
     .await;
     assert_eq!(open_stream_value["result"]["streamState"], "open");
 
-    let destroy_request = serde_json::json!({
+    let start_request = serde_json::json!({
         "id": 6,
+        "method": "instance.start",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let start_value = request_json(
+        &start_request,
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    assert_eq!(start_value["result"]["instance"]["state"], "processing");
+    assert_eq!(start_value["result"]["worker"]["workerState"], "processing");
+
+    let stop_request = serde_json::json!({
+        "id": 7,
+        "method": "instance.stop",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let stop_value = request_json(
+        &stop_request,
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    assert_eq!(stop_value["result"]["instance"]["state"], "stopped");
+    assert_eq!(stop_value["result"]["worker"]["workerState"], "stopped");
+
+    let destroy_request = serde_json::json!({
+        "id": 8,
         "method": "instance.destroy",
         "params": { "instanceId": instance_id }
     })
@@ -383,6 +421,8 @@ while IFS= read -r line; do
   case "$line" in
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
     *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready"}}\n' "$id" ;;
+    *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
+    *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
     *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1}}\n' "$id" ;;
     *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
@@ -412,6 +452,8 @@ while IFS= read -r line; do
   case "$line" in
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
     *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready"}}\n' "$id" ;;
+    *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
+    *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
     *worker.metrics*) exit 0 ;;
     *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;

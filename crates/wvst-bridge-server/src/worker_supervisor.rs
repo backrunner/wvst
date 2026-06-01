@@ -24,6 +24,8 @@ mod worker_supervisor_audio;
 mod worker_supervisor_error;
 #[path = "worker_supervisor_hello.rs"]
 mod worker_supervisor_hello;
+#[path = "worker_supervisor_lifecycle.rs"]
+mod worker_supervisor_lifecycle;
 
 use worker_supervisor_audio::WorkerAudioConnection;
 

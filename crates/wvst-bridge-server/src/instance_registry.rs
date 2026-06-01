@@ -47,6 +47,12 @@ pub struct InstanceRestartParams {
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct InstanceProcessingParams {
+    pub instance_id: u64,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StreamLifecycleParams {
     pub instance_id: u64,
 }
@@ -74,6 +80,8 @@ pub struct InstanceRecord {
 pub enum InstanceState {
     Allocated,
     Ready,
+    Processing,
+    Stopped,
     Failed,
     Destroyed,
 }
@@ -83,6 +91,8 @@ pub enum InstanceState {
 pub enum WorkerState {
     NotStarted,
     Ready,
+    Processing,
+    Stopped,
     Failed,
 }
 
@@ -240,6 +250,36 @@ impl InstanceRegistry {
 
         record.state = InstanceState::Failed;
         record.worker_state = WorkerState::Failed;
+
+        Ok(record.clone())
+    }
+
+    pub fn mark_processing(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?;
+        let record = records
+            .get_mut(&instance_id)
+            .ok_or(InstanceError::InstanceNotFound(instance_id))?;
+
+        record.state = InstanceState::Processing;
+        record.worker_state = WorkerState::Processing;
+
+        Ok(record.clone())
+    }
+
+    pub fn mark_stopped(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?;
+        let record = records
+            .get_mut(&instance_id)
+            .ok_or(InstanceError::InstanceNotFound(instance_id))?;
+
+        record.state = InstanceState::Stopped;
+        record.worker_state = WorkerState::Stopped;
 
         Ok(record.clone())
     }
@@ -476,6 +516,23 @@ mod tests {
 
         assert_eq!(failed.state, InstanceState::Failed);
         assert_eq!(failed.worker_state, WorkerState::Failed);
+    }
+
+    #[test]
+    fn marks_processing_and_stopped() {
+        let registry = InstanceRegistry::new();
+        let plugin = plugin();
+        let record = registry.create(create_params(), &plugin).expect("instance");
+
+        let processing = registry
+            .mark_processing(record.instance_id)
+            .expect("processing");
+        assert_eq!(processing.state, InstanceState::Processing);
+        assert_eq!(processing.worker_state, WorkerState::Processing);
+
+        let stopped = registry.mark_stopped(record.instance_id).expect("stopped");
+        assert_eq!(stopped.state, InstanceState::Stopped);
+        assert_eq!(stopped.worker_state, WorkerState::Stopped);
     }
 
     #[test]
