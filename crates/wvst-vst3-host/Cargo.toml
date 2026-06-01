@@ -8,6 +8,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+core-foundation-sys = "0.8"
 libloading = "0.8"
 serde = { version = "1", features = ["derive"] }
 wvst-scanner = { path = "../wvst-scanner" }

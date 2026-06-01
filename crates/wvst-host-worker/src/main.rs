@@ -5,7 +5,7 @@ use serde_json::json;
 use wvst_scanner::{
     MetadataSource, PluginClass, PluginDescriptor, PluginFormat, parse_vst3_bundle,
 };
-use wvst_vst3_host::{HeadlessPluginInstance, probe_vst3_module};
+use wvst_vst3_host::{HeadlessPluginInstance, load_vst3_factory_info, probe_vst3_module};
 
 fn main() {
     let exit_code = match run(std::env::args().skip(1).collect()) {
@@ -22,10 +22,11 @@ fn main() {
 fn run(args: Vec<String>) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("describe") => describe(args.get(1)),
+        Some("factory-info") => factory_info(args.get(1)),
         Some("factory-probe") => factory_probe(args.get(1)),
         Some("passthrough-probe") => passthrough_probe(),
         _ => Err(
-            "usage: wvst-host-worker describe <plugin.vst3> | factory-probe <plugin.vst3> | passthrough-probe"
+            "usage: wvst-host-worker describe <plugin.vst3> | factory-info <plugin.vst3> | factory-probe <plugin.vst3> | passthrough-probe"
                 .to_string(),
         ),
     }
@@ -38,6 +39,15 @@ fn describe(path: Option<&String>) -> Result<(), String> {
 
     let descriptor = parse_vst3_bundle(PathBuf::from(path)).map_err(|error| error.to_string())?;
     print_json(&descriptor)
+}
+
+fn factory_info(path: Option<&String>) -> Result<(), String> {
+    let Some(path) = path else {
+        return Err("factory-info requires a VST3 bundle path".to_string());
+    };
+
+    let info = load_vst3_factory_info(PathBuf::from(path)).map_err(|error| error.to_string())?;
+    print_json(&info)
 }
 
 fn factory_probe(path: Option<&String>) -> Result<(), String> {
