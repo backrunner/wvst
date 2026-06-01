@@ -6,6 +6,7 @@ pub mod instance_registry;
 pub mod metrics;
 pub mod plugin_registry;
 pub mod server;
+pub mod worker_supervisor;
 
 pub use config::BridgeConfig;
 pub use error::{BridgeError, BridgeResult};

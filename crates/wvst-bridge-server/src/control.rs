@@ -5,11 +5,10 @@ use wvst_protocol::{AUDIO_FRAME_VERSION, negotiate_protocol};
 
 use crate::config::BridgeConfig;
 use crate::host_worker::{HostWorkerClient, HostWorkerError};
-use crate::instance_registry::{
-    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceRegistry,
-};
+use crate::instance_registry::{InstanceError, InstanceRegistry};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
+use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorError};
 
 pub struct ControlContext<'a> {
     pub config: &'a BridgeConfig,
@@ -19,6 +18,7 @@ pub struct ControlContext<'a> {
     pub plugins: &'a PluginRegistry,
     pub origin: Option<&'a str>,
     pub session_authorized: bool,
+    pub workers: &'a WorkerSupervisor,
 }
 
 #[derive(Debug, Clone)]
@@ -142,7 +142,7 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             session_authorized,
         ),
         "instance.create" => ControlResponse::new(
-            handle_instance_create(request.id, request.params, context),
+            control_instances::handle_instance_create(request.id, request.params, context).await,
             session_authorized,
         ),
         "instance.list" => ControlResponse::new(
@@ -150,7 +150,7 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             session_authorized,
         ),
         "instance.destroy" => ControlResponse::new(
-            handle_instance_destroy(request.id, request.params, context),
+            control_instances::handle_instance_destroy(request.id, request.params, context).await,
             session_authorized,
         ),
         _ => ControlResponse::new(
@@ -161,46 +161,6 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             ),
             session_authorized,
         ),
-    }
-}
-
-fn handle_instance_create(id: Value, params: Value, context: ControlContext<'_>) -> String {
-    let params = match serde_json::from_value::<InstanceCreateParams>(params) {
-        Ok(params) => params,
-        Err(error) => {
-            return response_error(
-                id,
-                -32602,
-                format!("invalid instance create params: {error}"),
-            );
-        }
-    };
-
-    let Some(plugin) = context.plugins.find(&params.plugin_id) else {
-        return response_instance_error(id, InstanceError::PluginNotFound(params.plugin_id));
-    };
-
-    match context.instances.create(params, &plugin) {
-        Ok(record) => response_result(id, json!(record)),
-        Err(error) => response_instance_error(id, error),
-    }
-}
-
-fn handle_instance_destroy(id: Value, params: Value, context: ControlContext<'_>) -> String {
-    let params = match serde_json::from_value::<InstanceDestroyParams>(params) {
-        Ok(params) => params,
-        Err(error) => {
-            return response_error(
-                id,
-                -32602,
-                format!("invalid instance destroy params: {error}"),
-            );
-        }
-    };
-
-    match context.instances.destroy(params) {
-        Ok(result) => response_result(id, json!(result)),
-        Err(error) => response_instance_error(id, error),
     }
 }
 
@@ -366,6 +326,10 @@ fn response_instance_error(id: Value, error: InstanceError) -> String {
     response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
 }
 
+fn response_worker_supervisor_error(id: Value, error: WorkerSupervisorError) -> String {
+    response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
+}
+
 fn response_error_data(id: Value, code: i64, message: impl Into<String>, data: Value) -> String {
     serialize_json(json!({
         "jsonrpc": "2.0",
@@ -388,3 +352,6 @@ fn serialize_json(value: Value) -> String {
 #[cfg(test)]
 #[path = "control_tests.rs"]
 mod tests;
+
+#[path = "control_instances.rs"]
+mod control_instances;

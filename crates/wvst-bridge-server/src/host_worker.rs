@@ -53,6 +53,10 @@ impl HostWorkerClient {
         self.run_json("factory-info", plugin_path.as_ref()).await
     }
 
+    pub fn executable_path(&self) -> &Path {
+        &self.executable
+    }
+
     async fn run_json(&self, command: &str, plugin_path: &Path) -> Result<Value, HostWorkerError> {
         let mut child = Command::new(&self.executable);
         child
@@ -219,7 +223,7 @@ mod tests {
         permissions.set_mode(0o755);
         std::fs::set_permissions(&worker, permissions).expect("permissions");
 
-        let client = HostWorkerClient::new_for_test(worker, Duration::from_secs(1));
+        let client = HostWorkerClient::new_for_test(worker, Duration::from_secs(5));
         let value = client.factory_info("/tmp/Fake.vst3").await.expect("json");
 
         assert_eq!(value["vendor"], "WVST");

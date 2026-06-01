@@ -15,6 +15,7 @@ use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::InstanceRegistry;
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
+use crate::worker_supervisor::WorkerSupervisor;
 
 #[derive(Debug, Clone)]
 struct BridgeState {
@@ -23,6 +24,7 @@ struct BridgeState {
     instances: Arc<InstanceRegistry>,
     metrics: Arc<BridgeMetrics>,
     plugins: Arc<PluginRegistry>,
+    workers: Arc<WorkerSupervisor>,
 }
 
 pub struct BridgeServer {
@@ -34,14 +36,18 @@ impl BridgeServer {
     pub async fn bind(config: BridgeConfig) -> BridgeResult<Self> {
         let listener = TcpListener::bind(config.bind_addr()).await?;
 
+        let host_worker = HostWorkerClient::from_env();
+        let workers = WorkerSupervisor::new(host_worker.executable_path().to_path_buf());
+
         Ok(Self {
             listener,
             state: BridgeState {
                 config: Arc::new(config),
-                host_worker: Arc::new(HostWorkerClient::from_env()),
+                host_worker: Arc::new(host_worker),
                 instances: Arc::new(InstanceRegistry::new()),
                 metrics: Arc::new(BridgeMetrics::new()),
                 plugins: Arc::new(PluginRegistry::new()),
+                workers: Arc::new(workers),
             },
         })
     }
@@ -116,6 +122,7 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
                         plugins: &state.plugins,
                         origin: origin.as_deref(),
                         session_authorized,
+                        workers: &state.workers,
                     },
                 )
                 .await;

@@ -18,8 +18,8 @@ export interface InstanceDescriptor {
   maxBlockFrames: number;
   inputChannels: number;
   outputChannels: number;
-  state: "allocated";
-  workerState: "not-started";
+  state: "allocated" | "ready";
+  workerState: "not-started" | "ready" | "failed";
 }
 
 export interface InstanceDestroyOptions {

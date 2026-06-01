@@ -54,6 +54,7 @@ pub struct InstanceRecord {
 #[serde(rename_all = "kebab-case")]
 pub enum InstanceState {
     Allocated,
+    Ready,
     Destroyed,
 }
 
@@ -61,6 +62,8 @@ pub enum InstanceState {
 #[serde(rename_all = "kebab-case")]
 pub enum WorkerState {
     NotStarted,
+    Ready,
+    Failed,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -138,6 +141,35 @@ impl InstanceRegistry {
             .lock()
             .map(|records| records.values().cloned().collect())
             .unwrap_or_default()
+    }
+
+    pub fn mark_worker_ready(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?;
+        let record = records
+            .get_mut(&instance_id)
+            .ok_or(InstanceError::InstanceNotFound(instance_id))?;
+
+        record.state = InstanceState::Ready;
+        record.worker_state = WorkerState::Ready;
+
+        Ok(record.clone())
+    }
+
+    pub fn mark_worker_failed(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?;
+        let record = records
+            .get_mut(&instance_id)
+            .ok_or(InstanceError::InstanceNotFound(instance_id))?;
+
+        record.worker_state = WorkerState::Failed;
+
+        Ok(record.clone())
     }
 
     pub fn destroy(
@@ -297,6 +329,20 @@ mod tests {
 
         assert_eq!(destroyed.state, InstanceState::Destroyed);
         assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn marks_worker_ready() {
+        let registry = InstanceRegistry::new();
+        let plugin = plugin();
+        let record = registry.create(create_params(), &plugin).expect("instance");
+
+        let ready = registry
+            .mark_worker_ready(record.instance_id)
+            .expect("ready");
+
+        assert_eq!(ready.state, InstanceState::Ready);
+        assert_eq!(ready.worker_state, WorkerState::Ready);
     }
 
     #[test]
