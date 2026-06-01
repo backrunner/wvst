@@ -7,6 +7,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::Message;
+use wvst_core::{ChannelCount, StreamId};
+use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameHeader};
 
 use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
@@ -130,8 +132,8 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
                 sender.send(Message::Text(response.text.into())).await?;
             }
             Message::Binary(payload) => {
-                state.metrics.increment_binary_frames();
-                sender.send(Message::Binary(payload)).await?;
+                let response = process_binary_payload(payload.to_vec(), &state).await;
+                sender.send(Message::Binary(response.into())).await?;
             }
             Message::Ping(payload) => sender.send(Message::Pong(payload)).await?,
             Message::Pong(_) => {}
@@ -146,56 +148,92 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use futures_util::{SinkExt, StreamExt};
-    use tokio::sync::oneshot;
-    use tokio_tungstenite::connect_async;
+async fn process_binary_payload(payload: Vec<u8>, state: &BridgeState) -> Vec<u8> {
+    state.metrics.increment_binary_frames();
 
-    #[tokio::test]
-    async fn responds_to_hello_and_echoes_binary_frames() {
-        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
-        let server = BridgeServer::bind(config).await.expect("server binds");
-        let addr = server.local_addr().expect("local addr");
-        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-
-        tokio::spawn(async move {
-            let _ = server
-                .serve_until(async {
-                    let _ = shutdown_receiver.await;
-                })
-                .await;
-        });
-
-        let (mut websocket, _) = connect_async(format!("ws://{addr}"))
-            .await
-            .expect("client connects");
-
-        websocket
-            .send(Message::Text(r#"{"id":1,"method":"bridge.hello","params":{"clientName":"test","clientVersion":"0.1.0","protocolMin":{"major":1,"minor":0},"protocolMax":{"major":1,"minor":0},"audioFrameVersion":1}}"#.into()))
-            .await
-            .expect("hello sends");
-
-        let hello = websocket
-            .next()
-            .await
-            .expect("hello response")
-            .expect("valid websocket message");
-        assert!(hello.to_text().expect("text").contains("wvst-bridge"));
-
-        websocket
-            .send(Message::Binary(vec![1, 2, 3].into()))
-            .await
-            .expect("binary sends");
-
-        let echoed = websocket
-            .next()
-            .await
-            .expect("echoed response")
-            .expect("valid websocket message");
-        assert_eq!(echoed.into_data(), vec![1, 2, 3]);
-
-        let _ = shutdown_sender.send(());
+    match route_audio_frame(&payload, state).await {
+        Some(response) => response,
+        None => payload,
     }
 }
+
+async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> Option<Vec<u8>> {
+    let header = AudioFrameHeader::decode(payload).ok()?;
+    let expected_len = AUDIO_FRAME_HEADER_LEN.checked_add(header.payload_len as usize)?;
+    if payload.len() != expected_len || header.event_count != 0 {
+        return None;
+    }
+
+    let instance = state.instances.find_by_stream_id(header.stream_id.get())?;
+    let input = read_f32_payload(&payload[AUDIO_FRAME_HEADER_LEN..])?;
+    let processed = match state
+        .workers
+        .process_interleaved_f32(instance.instance_id, header.frames.get(), input)
+        .await
+    {
+        Ok(processed) => processed,
+        Err(_) => {
+            state.metrics.increment_worker_failures();
+            let _ = state.instances.mark_worker_failed(instance.instance_id);
+            return None;
+        }
+    };
+
+    encode_processed_frame(header, processed.output_channels, &processed.output).ok()
+}
+
+fn read_f32_payload(payload: &[u8]) -> Option<Vec<f32>> {
+    if payload.len() % 4 != 0 {
+        return None;
+    }
+
+    Some(
+        payload
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect(),
+    )
+}
+
+fn encode_processed_frame(
+    input_header: AudioFrameHeader,
+    output_channels: usize,
+    output: &[f32],
+) -> Result<Vec<u8>, String> {
+    let output_channels = u16::try_from(output_channels).map_err(|error| error.to_string())?;
+    let channels = ChannelCount::new(output_channels).map_err(|error| error.to_string())?;
+    let expected_samples = usize::from(input_header.frames.get()) * usize::from(channels.get());
+    if output.len() != expected_samples {
+        return Err(format!(
+            "worker output sample count mismatch: expected {expected_samples}, got {}",
+            output.len()
+        ));
+    }
+
+    let header = AudioFrameHeader::new_f32(
+        StreamId::new(input_header.stream_id.get()),
+        input_header.sequence,
+        input_header.sent_frame_time,
+        input_header.sample_rate,
+        input_header.frames,
+        channels,
+        input_header.flags,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];
+    header
+        .encode(&mut frame[..AUDIO_FRAME_HEADER_LEN])
+        .map_err(|error| error.to_string())?;
+
+    let mut offset = AUDIO_FRAME_HEADER_LEN;
+    for sample in output {
+        frame[offset..offset + 4].copy_from_slice(&sample.to_le_bytes());
+        offset += 4;
+    }
+
+    Ok(frame)
+}
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod tests;

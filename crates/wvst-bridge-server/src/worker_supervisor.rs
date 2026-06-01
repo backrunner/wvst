@@ -17,8 +17,12 @@ const EXPECTED_WORKER_IPC_VERSION: u16 = 1;
 const QUARANTINE_FAILURES: u32 = 3;
 const STDERR_TAIL_BYTES: usize = 4096;
 
+#[path = "worker_supervisor_audio.rs"]
+mod worker_supervisor_audio;
 #[path = "worker_supervisor_hello.rs"]
 mod worker_supervisor_hello;
+
+pub use worker_supervisor_audio::WorkerAudioProcessResult;
 
 #[derive(Debug)]
 pub struct WorkerSupervisor {

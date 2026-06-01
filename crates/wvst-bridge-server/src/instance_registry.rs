@@ -165,6 +165,15 @@ impl InstanceRegistry {
             .ok_or(InstanceError::InstanceNotFound(instance_id))
     }
 
+    pub fn find_by_stream_id(&self, stream_id: u64) -> Option<InstanceRecord> {
+        self.records
+            .lock()
+            .ok()?
+            .values()
+            .find(|record| record.stream_id == stream_id)
+            .cloned()
+    }
+
     pub fn mark_worker_ready(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
         let mut records = self
             .records

@@ -18,6 +18,7 @@
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion` 和 `instanceLifecycle` capability，避免 Bridge 与不兼容 worker 继续创建实例。
+- Bridge 二进制音频帧已能按 `streamId` 路由到对应 worker 的 debug passthrough 处理路径并回传处理后的 F32 frame；未匹配实例或非法帧暂时保留 echo fallback。
 
 ## 距离完整能力的主要差距
 
@@ -55,14 +56,14 @@
 
 ### 4. 低延迟音频数据面
 
-当前 Bridge 二进制帧仍是 echo 原型。
+当前 Bridge 二进制帧已具备按 `streamId` 到 worker passthrough 的原型路由，但仍不是最终低延迟数据面。
 
 仍缺少：
 
 - stream open/close。
 - Web Worker 从 SAB 取音频块并编码发送。
-- Bridge 到 worker 的 audio IPC。
-- worker 到 VST `process()` 的预分配 buffer 路径。
+- Bridge 到 worker 的正式二进制 audio IPC，替换当前 debug JSON audio process。
+- worker 到真实 VST `process()` 的预分配 buffer 路径。
 - late/drop/underflow/overflow 策略和 p50/p95/p99 指标。
 
 ### 5. MIDI 与音源 VST
@@ -86,6 +87,6 @@
 
 1. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
 2. 把 worker JSON-line IPC 抽象为可替换 framed IPC，并扩展 capability negotiation。
-3. 将 Bridge binary echo 改为按 `streamId` 路由到 worker passthrough，形成 WebAudio 到 worker 再返回的端到端闭环。
+3. 将当前 debug JSON audio passthrough 替换为正式 Bridge-to-worker 二进制 audio IPC。
 4. 在 fake passthrough 稳定后，实现 VST3 `createInstance` 和 2-in/2-out effect processing。
 5. 增加 worker watchdog、超时 kill、restart metrics 和崩溃 quarantine。
