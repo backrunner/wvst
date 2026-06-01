@@ -21,6 +21,7 @@ interface RpcResponse {
   error?: {
     code: number;
     message: string;
+    data?: JsonValue;
   };
 }
 
@@ -38,6 +39,7 @@ export class WVSTBridgeError extends Error {
   constructor(
     public readonly code: number,
     message: string,
+    public readonly data?: JsonValue,
   ) {
     super(message);
     this.name = "WVSTBridgeError";
@@ -142,7 +144,9 @@ export class WebSocketRpcTransport implements RpcTransport {
     this.pendingRpc.delete(String(response.id));
 
     if (response.error) {
-      pending.reject(new WVSTBridgeError(response.error.code, response.error.message));
+      pending.reject(
+        new WVSTBridgeError(response.error.code, response.error.message, response.error.data),
+      );
       return;
     }
 

@@ -11,12 +11,14 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
 use crate::error::BridgeResult;
+use crate::host_worker::HostWorkerClient;
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 
 #[derive(Debug, Clone)]
 struct BridgeState {
     config: Arc<BridgeConfig>,
+    host_worker: Arc<HostWorkerClient>,
     metrics: Arc<BridgeMetrics>,
     plugins: Arc<PluginRegistry>,
 }
@@ -34,6 +36,7 @@ impl BridgeServer {
             listener,
             state: BridgeState {
                 config: Arc::new(config),
+                host_worker: Arc::new(HostWorkerClient::from_env()),
                 metrics: Arc::new(BridgeMetrics::new()),
                 plugins: Arc::new(PluginRegistry::new()),
             },
@@ -95,6 +98,7 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
 
     let origin = origin.lock().ok().and_then(|value| value.clone());
     let (mut sender, mut receiver) = websocket.split();
+    let mut session_authorized = false;
 
     while let Some(message) = receiver.next().await {
         match message? {
@@ -103,12 +107,16 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
                     text.as_ref(),
                     ControlContext {
                         config: &state.config,
+                        host_worker: &state.host_worker,
                         metrics: &state.metrics,
                         plugins: &state.plugins,
                         origin: origin.as_deref(),
+                        session_authorized,
                     },
-                );
-                sender.send(Message::Text(response.into())).await?;
+                )
+                .await;
+                session_authorized = response.session_authorized;
+                sender.send(Message::Text(response.text.into())).await?;
             }
             Message::Binary(payload) => {
                 state.metrics.increment_binary_frames();

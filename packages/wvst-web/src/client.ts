@@ -1,5 +1,12 @@
 import { AUDIO_FRAME_VERSION } from "./protocol.js";
-import type { PluginApi, PluginListOptions, PluginScanOptions, PluginScanReport } from "./plugins.js";
+import type {
+  PluginApi,
+  PluginFactoryInfo,
+  PluginFactoryInfoOptions,
+  PluginListOptions,
+  PluginScanOptions,
+  PluginScanReport,
+} from "./plugins.js";
 import {
   WebSocketRpcTransport,
   type BridgeMetrics,
@@ -76,6 +83,8 @@ export class WVSTClient {
         this.request<PluginScanReport>("plugin.scan", options ?? {}),
       list: (options?: PluginListOptions) =>
         this.request<PluginScanReport>("plugin.list", options ?? {}),
+      factoryInfo: (options: PluginFactoryInfoOptions) =>
+        this.request<PluginFactoryInfo>("plugin.factoryInfo", options),
     };
   }
 
