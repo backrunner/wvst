@@ -19,6 +19,7 @@
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion`、`instanceLifecycle` 和 `binaryAudioProcess` capability，避免 Bridge 与不兼容 worker 继续创建实例。
 - Bridge 二进制音频帧已能按 `streamId` 路由到对应 worker 的独立二进制 audio IPC，并回传 worker 处理后的 F32 frame；未匹配实例或非法帧暂时保留 echo fallback。
+- Bridge metrics 已区分二进制帧总量、成功路由音频帧、fallback echo 和音频路由失败，便于后续接入 drop/late/underflow/overflow 统计。
 
 ## 距离完整能力的主要差距
 
@@ -64,7 +65,7 @@
 - Web Worker 从 SAB 取音频块并编码发送。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；仍缺少共享内存/预分配 buffer、背压语义和错误帧语义完善。
 - worker 到真实 VST `process()` 的预分配 buffer 路径。
-- late/drop/underflow/overflow 策略和 p50/p95/p99 指标。
+- late/drop/underflow/overflow 策略和 p50/p95/p99 指标；当前只有 route/fallback/failure 计数，还没有时延分位数。
 
 ### 5. MIDI 与音源 VST
 

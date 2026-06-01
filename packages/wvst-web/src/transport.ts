@@ -12,6 +12,9 @@ export interface BridgeMetrics {
   websocketConnections: number;
   controlMessages: number;
   binaryFrames: number;
+  audioFramesRouted: number;
+  audioFrameFallbacks: number;
+  audioFrameRouteFailures: number;
   helloRequests: number;
   workerFailures: number;
   workerRestarts: number;

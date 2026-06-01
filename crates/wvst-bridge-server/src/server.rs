@@ -151,8 +151,14 @@ async fn process_binary_payload(payload: Vec<u8>, state: &BridgeState) -> Vec<u8
     state.metrics.increment_binary_frames();
 
     match route_audio_frame(&payload, state).await {
-        Some(response) => response,
-        None => payload,
+        Some(response) => {
+            state.metrics.increment_audio_frames_routed();
+            response
+        }
+        None => {
+            state.metrics.increment_audio_frame_fallbacks();
+            payload
+        }
     }
 }
 
@@ -172,6 +178,7 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> Option<Vec<u8
         Ok(processed) => processed,
         Err(_) => {
             state.metrics.increment_worker_failures();
+            state.metrics.increment_audio_frame_route_failures();
             let _ = state.instances.mark_worker_failed(instance.instance_id);
             return None;
         }
@@ -181,6 +188,7 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> Option<Vec<u8
     let processed_len =
         AUDIO_FRAME_HEADER_LEN.checked_add(processed_header.payload_len as usize)?;
     if processed.len() != processed_len || processed_header.stream_id != header.stream_id {
+        state.metrics.increment_audio_frame_route_failures();
         return None;
     }
 
