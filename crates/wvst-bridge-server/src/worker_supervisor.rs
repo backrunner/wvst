@@ -1,23 +1,28 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::instance_registry::InstanceRecord;
 
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
+const QUARANTINE_FAILURES: u32 = 3;
+const STDERR_TAIL_BYTES: usize = 4096;
 
 #[derive(Debug)]
 pub struct WorkerSupervisor {
     executable: PathBuf,
     timeout: Duration,
+    failures: Mutex<BTreeMap<String, u32>>,
     processes: Mutex<BTreeMap<u64, WorkerProcess>>,
+    quarantined: Mutex<BTreeMap<String, u32>>,
 }
 
 #[derive(Debug)]
@@ -25,7 +30,13 @@ struct WorkerProcess {
     child: Child,
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
+    stderr: StderrTail,
     next_request_id: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct StderrTail {
+    buffer: Arc<Mutex<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,12 +65,21 @@ pub enum WorkerSupervisorError {
     Timeout {
         method: &'static str,
         timeout_ms: u128,
+        stderr: String,
     },
     InvalidJson(String),
-    Protocol(String),
+    Protocol {
+        message: String,
+        stderr: String,
+    },
+    Quarantined {
+        plugin_id: String,
+        failures: u32,
+    },
     WorkerRejected {
         code: i64,
         message: String,
+        stderr: String,
     },
 }
 
@@ -68,7 +88,9 @@ impl WorkerSupervisor {
         Self {
             executable,
             timeout: DEFAULT_IPC_TIMEOUT,
+            failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
+            quarantined: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -76,24 +98,23 @@ impl WorkerSupervisor {
         &self,
         record: &InstanceRecord,
     ) -> Result<Value, WorkerSupervisorError> {
-        let mut process = WorkerProcess::spawn(self.executable.clone()).await?;
-        process
-            .request("worker.hello", json!({}), self.timeout)
-            .await?;
-        let ready = process
-            .request(
-                "instance.create",
-                instance_create_params(record),
-                self.timeout,
-            )
-            .await?;
+        self.reject_if_quarantined(&record.plugin_id).await?;
 
-        self.processes
-            .lock()
-            .await
-            .insert(record.instance_id, process);
-
-        Ok(ready)
+        let result = self.start_instance_inner(record).await;
+        match result {
+            Ok((ready, process)) => {
+                self.clear_failures(&record.plugin_id).await;
+                self.processes
+                    .lock()
+                    .await
+                    .insert(record.instance_id, process);
+                Ok(ready)
+            }
+            Err(error) => {
+                self.record_failure(&record.plugin_id).await;
+                Err(error)
+            }
+        }
     }
 
     pub async fn destroy_instance(
@@ -141,11 +162,16 @@ impl WorkerProcess {
             .stdout
             .take()
             .ok_or(WorkerSupervisorError::MissingPipe("stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or(WorkerSupervisorError::MissingPipe("stderr"))?;
 
         Ok(Self {
             child,
             stdin,
             stdout: BufReader::new(stdout).lines(),
+            stderr: StderrTail::spawn(stderr),
             next_request_id: 1,
         })
     }
@@ -164,56 +190,170 @@ impl WorkerProcess {
             "method": method,
             "params": params,
         }))
-        .map_err(|error| WorkerSupervisorError::Protocol(error.to_string()))?;
+        .map_err(|error| self.protocol_error(error.to_string()))?;
         let line = format!("{request}\n");
 
-        timeout(timeout_duration, self.stdin.write_all(line.as_bytes()))
-            .await
-            .map_err(|_| WorkerSupervisorError::Timeout {
-                method,
-                timeout_ms: timeout_duration.as_millis(),
-            })?
-            .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?;
-        timeout(timeout_duration, self.stdin.flush())
-            .await
-            .map_err(|_| WorkerSupervisorError::Timeout {
-                method,
-                timeout_ms: timeout_duration.as_millis(),
-            })?
-            .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?;
+        match timeout(timeout_duration, self.stdin.write_all(line.as_bytes())).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
+            Err(_) => {
+                let error = self.timeout_error(method, timeout_duration).await;
+                self.shutdown().await;
+                return Err(error);
+            }
+        }
+        match timeout(timeout_duration, self.stdin.flush()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
+            Err(_) => {
+                let error = self.timeout_error(method, timeout_duration).await;
+                self.shutdown().await;
+                return Err(error);
+            }
+        }
 
-        let line = timeout(timeout_duration, self.stdout.next_line())
-            .await
-            .map_err(|_| WorkerSupervisorError::Timeout {
-                method,
-                timeout_ms: timeout_duration.as_millis(),
-            })?
-            .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?
-            .ok_or_else(|| WorkerSupervisorError::Protocol("worker stdout closed".to_string()))?;
+        let line = match timeout(timeout_duration, self.stdout.next_line()).await {
+            Ok(line) => line
+                .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?
+                .ok_or_else(|| self.protocol_error("worker stdout closed".to_string()))?,
+            Err(_) => {
+                let error = self.timeout_error(method, timeout_duration).await;
+                self.shutdown().await;
+                return Err(error);
+            }
+        };
         let response = serde_json::from_str::<WorkerResponse>(&line)
             .map_err(|error| WorkerSupervisorError::InvalidJson(error.to_string()))?;
 
         if response.id != json!(id) {
-            return Err(WorkerSupervisorError::Protocol(format!(
-                "response id mismatch for {method}"
-            )));
+            return Err(self.protocol_error(format!("response id mismatch for {method}")));
         }
 
         if let Some(error) = response.error {
             return Err(WorkerSupervisorError::WorkerRejected {
                 code: error.code,
                 message: error.message,
+                stderr: self.stderr.snapshot().await,
             });
         }
 
         response
             .result
-            .ok_or_else(|| WorkerSupervisorError::Protocol("missing result".to_string()))
+            .ok_or_else(|| self.protocol_error("missing result".to_string()))
     }
 
     async fn shutdown(&mut self) {
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
+    }
+
+    async fn timeout_error(
+        &self,
+        method: &'static str,
+        timeout_duration: Duration,
+    ) -> WorkerSupervisorError {
+        WorkerSupervisorError::Timeout {
+            method,
+            timeout_ms: timeout_duration.as_millis(),
+            stderr: self.stderr.snapshot().await,
+        }
+    }
+
+    fn protocol_error(&self, message: String) -> WorkerSupervisorError {
+        WorkerSupervisorError::Protocol {
+            message,
+            stderr: String::new(),
+        }
+    }
+}
+
+impl WorkerSupervisor {
+    async fn start_instance_inner(
+        &self,
+        record: &InstanceRecord,
+    ) -> Result<(Value, WorkerProcess), WorkerSupervisorError> {
+        let mut process = WorkerProcess::spawn(self.executable.clone()).await?;
+        if let Err(error) = process
+            .request("worker.hello", json!({}), self.timeout)
+            .await
+        {
+            process.shutdown().await;
+            return Err(error);
+        }
+
+        match process
+            .request(
+                "instance.create",
+                instance_create_params(record),
+                self.timeout,
+            )
+            .await
+        {
+            Ok(ready) => Ok((ready, process)),
+            Err(error) => {
+                process.shutdown().await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn reject_if_quarantined(&self, plugin_id: &str) -> Result<(), WorkerSupervisorError> {
+        if let Some(failures) = self.quarantined.lock().await.get(plugin_id).copied() {
+            return Err(WorkerSupervisorError::Quarantined {
+                plugin_id: plugin_id.to_string(),
+                failures,
+            });
+        }
+
+        Ok(())
+    }
+
+    async fn record_failure(&self, plugin_id: &str) {
+        let mut failures = self.failures.lock().await;
+        let count = failures
+            .entry(plugin_id.to_string())
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+
+        if *count >= QUARANTINE_FAILURES {
+            self.quarantined
+                .lock()
+                .await
+                .insert(plugin_id.to_string(), *count);
+        }
+    }
+
+    async fn clear_failures(&self, plugin_id: &str) {
+        self.failures.lock().await.remove(plugin_id);
+        self.quarantined.lock().await.remove(plugin_id);
+    }
+}
+
+impl StderrTail {
+    fn spawn(stderr: ChildStderr) -> Self {
+        let tail = Self::default();
+        let buffer = Arc::clone(&tail.buffer);
+
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let mut buffer = buffer.lock().await;
+                if !buffer.is_empty() {
+                    buffer.push('\n');
+                }
+                buffer.push_str(&line);
+
+                while buffer.len() > STDERR_TAIL_BYTES {
+                    buffer.remove(0);
+                }
+            }
+        });
+
+        tail
+    }
+
+    async fn snapshot(&self) -> String {
+        self.buffer.lock().await.clone()
     }
 }
 
@@ -223,7 +363,8 @@ impl WorkerSupervisorError {
             Self::WorkerRejected { code, .. } => *code,
             Self::Timeout { .. } => 5035,
             Self::Spawn { .. } | Self::MissingPipe(_) | Self::Io(_) => 5036,
-            Self::InvalidJson(_) | Self::Protocol(_) => 5037,
+            Self::InvalidJson(_) | Self::Protocol { .. } => 5037,
+            Self::Quarantined { .. } => 4093,
         }
     }
 
@@ -235,11 +376,19 @@ impl WorkerSupervisorError {
             } => format!("failed to start worker {}: {message}", executable.display()),
             Self::MissingPipe(pipe) => format!("worker missing {pipe} pipe"),
             Self::Io(message) => format!("worker io failed: {message}"),
-            Self::Timeout { method, timeout_ms } => {
+            Self::Timeout {
+                method, timeout_ms, ..
+            } => {
                 format!("worker method {method} timed out after {timeout_ms}ms")
             }
             Self::InvalidJson(message) => format!("worker returned invalid JSON: {message}"),
-            Self::Protocol(message) => format!("worker protocol error: {message}"),
+            Self::Protocol { message, .. } => format!("worker protocol error: {message}"),
+            Self::Quarantined {
+                plugin_id,
+                failures,
+            } => {
+                format!("worker quarantined for plugin {plugin_id} after {failures} failures")
+            }
             Self::WorkerRejected { message, .. } => message.clone(),
         }
     }
@@ -256,13 +405,29 @@ impl WorkerSupervisorError {
             }),
             Self::MissingPipe(pipe) => json!({ "kind": "missing-pipe", "pipe": pipe }),
             Self::Io(message) => json!({ "kind": "io", "message": message }),
-            Self::Timeout { method, timeout_ms } => {
-                json!({ "kind": "timeout", "method": method, "timeoutMs": timeout_ms })
+            Self::Timeout {
+                method,
+                timeout_ms,
+                stderr,
+            } => {
+                json!({ "kind": "timeout", "method": method, "timeoutMs": timeout_ms, "stderr": stderr })
             }
             Self::InvalidJson(message) => json!({ "kind": "invalid-json", "message": message }),
-            Self::Protocol(message) => json!({ "kind": "protocol", "message": message }),
-            Self::WorkerRejected { code, message } => {
-                json!({ "kind": "worker-rejected", "code": code, "message": message })
+            Self::Protocol { message, stderr } => {
+                json!({ "kind": "protocol", "message": message, "stderr": stderr })
+            }
+            Self::Quarantined {
+                plugin_id,
+                failures,
+            } => {
+                json!({ "kind": "quarantined", "pluginId": plugin_id, "failures": failures })
+            }
+            Self::WorkerRejected {
+                code,
+                message,
+                stderr,
+            } => {
+                json!({ "kind": "worker-rejected", "code": code, "message": message, "stderr": stderr })
             }
         }
     }
@@ -287,7 +452,61 @@ impl WorkerSupervisor {
         Self {
             executable,
             timeout,
+            failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
+            quarantined: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instance_registry::{InstanceState, WorkerState};
+
+    #[tokio::test]
+    async fn quarantines_plugin_after_repeated_start_failures() {
+        let supervisor = WorkerSupervisor::new_for_test(
+            PathBuf::from("missing-wvst-worker"),
+            Duration::from_millis(50),
+        );
+        let record = record();
+
+        for _ in 0..QUARANTINE_FAILURES {
+            assert!(matches!(
+                supervisor.start_instance(&record).await,
+                Err(WorkerSupervisorError::Spawn { .. })
+            ));
+        }
+
+        let error = supervisor
+            .start_instance(&record)
+            .await
+            .expect_err("quarantined");
+
+        assert!(matches!(
+            error,
+            WorkerSupervisorError::Quarantined {
+                failures: QUARANTINE_FAILURES,
+                ..
+            }
+        ));
+    }
+
+    fn record() -> InstanceRecord {
+        InstanceRecord {
+            instance_id: 1,
+            stream_id: 1,
+            plugin_id: "vst3:test".to_string(),
+            plugin_path: "/tmp/Test.vst3".to_string(),
+            class_id: Some("class-a".to_string()),
+            class_name: Some("Test".to_string()),
+            sample_rate: 48_000,
+            max_block_frames: 128,
+            input_channels: 2,
+            output_channels: 2,
+            state: InstanceState::Allocated,
+            worker_state: WorkerState::NotStarted,
         }
     }
 }
