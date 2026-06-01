@@ -12,6 +12,7 @@
 - Bridge 已通过 `plugin.factoryInfo` 将 factory metadata 请求路由到隔离 worker，Bridge 自身不加载第三方 VST。
 - Bridge 控制面已增加连接级会话门禁，除 `bridge.hello` 外的 API 需要先完成授权 hello。
 - Bridge/Web SDK 已提供 `instance.create` / `instance.list` / `instance.destroy` 控制面，能为已扫描插件分配独立 `instanceId` 与 `streamId`。
+- `wvst-host-worker serve` 已提供常驻 JSON-line IPC 原型，支持 worker hello、fake passthrough instance create/destroy 和 debug 小块处理。
 
 ## 距离完整能力的主要差距
 
@@ -27,12 +28,12 @@
 
 ### 2. 持久 worker IPC
 
-当前 worker 仍是一次性 CLI 命令模型，适合 scan/probe/metadata，不适合实时处理。
+当前 worker 已有 JSON-line serve 原型，但 Bridge 尚未把实例绑定到常驻 worker。
 
 仍缺少：
 
-- worker 常驻模式。
-- Bridge 与 worker 的 framed IPC。
+- Bridge worker session/supervisor。
+- Bridge 与 worker 的正式 framed IPC，而不是仅 worker 内部原型。
 - 心跳、超时、kill、restart、stderr 摘要和 crash quarantine。
 - worker capability negotiation，确保 Bridge/Web/worker 协议匹配。
 
@@ -78,8 +79,8 @@
 
 ## 建议下一阶段
 
-1. 把 `wvst-host-worker` 扩展为常驻 JSON/frame IPC worker，先支持 fake passthrough instance。
-2. 将 Bridge `allocated` 实例绑定到 worker 进程，补 `starting` / `ready` / `failed` 状态。
+1. 将 Bridge `allocated` 实例绑定到 `wvst-host-worker serve` 进程，补 `starting` / `ready` / `failed` 状态。
+2. 把 worker JSON-line IPC 抽象为可替换 framed IPC，并加入 capability negotiation。
 3. 将 Bridge binary echo 改为按 `streamId` 路由到 worker passthrough，形成 WebAudio 到 worker 再返回的端到端闭环。
 4. 在 fake passthrough 稳定后，实现 VST3 `createInstance` 和 2-in/2-out effect processing。
 5. 增加 worker watchdog、超时 kill、restart metrics 和崩溃 quarantine。

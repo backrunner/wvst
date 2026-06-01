@@ -8,7 +8,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-serde = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wvst-scanner = { path = "../wvst-scanner" }
 wvst-vst3-host = { path = "../wvst-vst3-host" }
