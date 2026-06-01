@@ -39,6 +39,7 @@ impl AudioFrameFlags {
     pub const MIDI_ONLY: Self = Self(1 << 1);
     pub const END_OF_STREAM: Self = Self(1 << 2);
     pub const LATE: Self = Self(1 << 3);
+    pub const PROCESS_ERROR: Self = Self(1 << 4);
 
     pub const fn empty() -> Self {
         Self(0)

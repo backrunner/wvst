@@ -11,6 +11,7 @@ export enum AudioFrameFlags {
   MidiOnly = 1 << 1,
   EndOfStream = 1 << 2,
   Late = 1 << 3,
+  ProcessError = 1 << 4,
 }
 
 export interface AudioFrameHeader {
@@ -120,4 +121,3 @@ export function decodeAudioFrame(buffer: ArrayBuffer): DecodedAudioFrame {
     payload: buffer.slice(AUDIO_FRAME_HEADER_BYTES),
   };
 }
-

@@ -133,14 +133,27 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
         })
         .expect("stream closed");
     let closed_stream_response = process_binary_payload(audio_frame(stream_id), &state).await;
+    let closed_stream_header =
+        AudioFrameHeader::decode(&closed_stream_response).expect("closed stream header");
+    assert!(
+        closed_stream_header
+            .flags
+            .contains(wvst_protocol::AudioFrameFlags::SILENCE)
+    );
+    assert!(
+        closed_stream_header
+            .flags
+            .contains(wvst_protocol::AudioFrameFlags::END_OF_STREAM)
+    );
     assert_eq!(
         read_f32_payload(&closed_stream_response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
-        vec![0.25, 0.5, -0.25, -0.5]
+        vec![0.0, 0.0, 0.0, 0.0]
     );
     let metrics = state.metrics.snapshot();
     assert_eq!(metrics.binary_frames, 3);
-    assert_eq!(metrics.audio_frame_fallbacks, 2);
+    assert_eq!(metrics.audio_frame_fallbacks, 1);
     assert_eq!(metrics.audio_frames_routed, 1);
+    assert_eq!(metrics.audio_frame_route_failures, 1);
 
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));

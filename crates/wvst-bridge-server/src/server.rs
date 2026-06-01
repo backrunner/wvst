@@ -7,13 +7,14 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::Message;
-use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameHeader};
+use wvst_core::ChannelCount;
+use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameFlags, AudioFrameHeader};
 
 use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
 use crate::error::BridgeResult;
 use crate::host_worker::HostWorkerClient;
-use crate::instance_registry::InstanceRegistry;
+use crate::instance_registry::{InstanceRecord, InstanceRegistry, StreamState};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::worker_supervisor::WorkerSupervisor;
@@ -151,27 +152,43 @@ async fn process_binary_payload(payload: Vec<u8>, state: &BridgeState) -> Vec<u8
     state.metrics.increment_binary_frames();
 
     match route_audio_frame(&payload, state).await {
-        Some(response) => {
+        AudioRouteResult::Routed(response) => {
             state.metrics.increment_audio_frames_routed();
             response
         }
-        None => {
+        AudioRouteResult::Diagnostic(response) => {
+            state.metrics.increment_audio_frame_route_failures();
+            response
+        }
+        AudioRouteResult::Fallback => {
             state.metrics.increment_audio_frame_fallbacks();
             payload
         }
     }
 }
 
-async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> Option<Vec<u8>> {
-    let header = AudioFrameHeader::decode(payload).ok()?;
-    let expected_len = AUDIO_FRAME_HEADER_LEN.checked_add(header.payload_len as usize)?;
+async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteResult {
+    let Ok(header) = AudioFrameHeader::decode(payload) else {
+        return AudioRouteResult::Fallback;
+    };
+    let Some(expected_len) = AUDIO_FRAME_HEADER_LEN.checked_add(header.payload_len as usize) else {
+        return AudioRouteResult::Fallback;
+    };
     if payload.len() != expected_len || header.event_count != 0 {
-        return None;
+        return AudioRouteResult::Fallback;
     }
 
-    let instance = state
-        .instances
-        .find_open_by_stream_id(header.stream_id.get())?;
+    let Some(instance) = state.instances.find_by_stream_id(header.stream_id.get()) else {
+        return AudioRouteResult::Fallback;
+    };
+    if instance.stream_state != StreamState::Open {
+        return diagnostic_silence_frame(
+            header,
+            &instance,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::END_OF_STREAM,
+        );
+    }
+
     let processed = match state
         .workers
         .process_audio_frame(instance.instance_id, payload.to_vec())
@@ -180,21 +197,81 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> Option<Vec<u8
         Ok(processed) => processed,
         Err(_) => {
             state.metrics.increment_worker_failures();
-            state.metrics.increment_audio_frame_route_failures();
             let _ = state.instances.mark_worker_failed(instance.instance_id);
-            return None;
+            return diagnostic_silence_frame(
+                header,
+                &instance,
+                AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
+            );
         }
     };
 
-    let processed_header = AudioFrameHeader::decode(&processed).ok()?;
-    let processed_len =
-        AUDIO_FRAME_HEADER_LEN.checked_add(processed_header.payload_len as usize)?;
+    let Ok(processed_header) = AudioFrameHeader::decode(&processed) else {
+        return diagnostic_silence_frame(
+            header,
+            &instance,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
+        );
+    };
+    let Some(processed_len) =
+        AUDIO_FRAME_HEADER_LEN.checked_add(processed_header.payload_len as usize)
+    else {
+        return diagnostic_silence_frame(
+            header,
+            &instance,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
+        );
+    };
     if processed.len() != processed_len || processed_header.stream_id != header.stream_id {
-        state.metrics.increment_audio_frame_route_failures();
-        return None;
+        return diagnostic_silence_frame(
+            header,
+            &instance,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
+        );
     }
 
-    Some(processed)
+    AudioRouteResult::Routed(processed)
+}
+
+fn diagnostic_silence_frame(
+    input_header: AudioFrameHeader,
+    instance: &InstanceRecord,
+    flags: AudioFrameFlags,
+) -> AudioRouteResult {
+    match encode_silence_frame(input_header, instance.output_channels, flags) {
+        Ok(frame) => AudioRouteResult::Diagnostic(frame),
+        Err(_) => AudioRouteResult::Fallback,
+    }
+}
+
+fn encode_silence_frame(
+    input_header: AudioFrameHeader,
+    output_channels: u16,
+    flags: AudioFrameFlags,
+) -> Result<Vec<u8>, String> {
+    let channels = ChannelCount::new(output_channels).map_err(|error| error.to_string())?;
+    let header = AudioFrameHeader::new_f32(
+        input_header.stream_id,
+        input_header.sequence,
+        input_header.sent_frame_time,
+        input_header.sample_rate,
+        input_header.frames,
+        channels,
+        input_header.flags | flags,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];
+    header
+        .encode(&mut frame[..AUDIO_FRAME_HEADER_LEN])
+        .map_err(|error| error.to_string())?;
+
+    Ok(frame)
+}
+
+enum AudioRouteResult {
+    Routed(Vec<u8>),
+    Diagnostic(Vec<u8>),
+    Fallback,
 }
 
 #[cfg(test)]
