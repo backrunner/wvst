@@ -16,6 +16,7 @@
 - Bridge `instance.create` 已能启动并绑定 `wvst-host-worker serve`，成功后实例进入 `ready` / `ready` 状态。
 - Bridge worker supervisor 已加入 stderr 摘要、启动失败计数和基础 quarantine，避免同一故障插件无限重启。
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
+- Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
 
 ## 距离完整能力的主要差距
 
@@ -24,7 +25,7 @@
 仍缺少：
 
 - `ready` 之后的 `processing`、`stopping` 等更细生命周期，以及对启动中状态的显式暴露。
-- 每个实例的独立 worker 进程已具备原型，仍缺少 restart 状态机、崩溃事件推送和策略化资源回收。
+- 每个实例的独立 worker 进程已具备原型，并支持手动 restart；仍缺少自动 restart 状态机、崩溃事件推送和策略化资源回收。
 - 同一插件 N 个实例的实际 worker 隔离策略和调度策略。
 
 这是下一阶段最高优先级，因为当前实例句柄还没有绑定常驻 worker 和真实 VST 对象。
@@ -35,7 +36,7 @@
 
 仍缺少：
 
-- 更完整的 Bridge worker supervisor 生命周期管理，包括 restart policy、主动 crash event 推送和 quarantine 解除策略。
+- 更完整的 Bridge worker supervisor 生命周期管理，包括自动 restart policy、主动 crash event 推送和 quarantine 解除策略。
 - 正式 framed IPC，替换当前 JSON-line 原型。
 - 超时后的全链路 kill/wait 审计、restart 指标和 crash quarantine 解除策略。
 - worker capability negotiation，确保 Bridge/Web/worker 协议匹配。
@@ -82,7 +83,7 @@
 
 ## 建议下一阶段
 
-1. 给 Bridge worker supervisor 增加 heartbeat、restart policy、quarantine 解除策略和 worker crash 事件回传。
+1. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
 2. 把 worker JSON-line IPC 抽象为可替换 framed IPC，并加入 capability negotiation。
 3. 将 Bridge binary echo 改为按 `streamId` 路由到 worker passthrough，形成 WebAudio 到 worker 再返回的端到端闭环。
 4. 在 fake passthrough 稳定后，实现 VST3 `createInstance` 和 2-in/2-out effect processing。

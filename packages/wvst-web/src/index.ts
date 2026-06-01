@@ -30,6 +30,8 @@ export {
   type InstanceDescriptor,
   type InstanceDestroyOptions,
   type InstanceDestroyResult,
+  type InstanceRestartOptions,
+  type InstanceRestartResult,
   type InstanceStatusOptions,
   type InstanceStatusResult,
   type InstanceWorkerMetrics,

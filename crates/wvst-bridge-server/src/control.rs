@@ -153,6 +153,10 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             control_instances::handle_instance_status(request.id, request.params, context).await,
             session_authorized,
         ),
+        "instance.restart" => ControlResponse::new(
+            control_instances::handle_instance_restart(request.id, request.params, context).await,
+            session_authorized,
+        ),
         "instance.destroy" => ControlResponse::new(
             control_instances::handle_instance_destroy(request.id, request.params, context).await,
             session_authorized,
@@ -356,6 +360,10 @@ fn serialize_json(value: Value) -> String {
 #[cfg(test)]
 #[path = "control_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "control_instance_tests.rs"]
+mod instance_tests;
 
 #[path = "control_instances.rs"]
 mod control_instances;

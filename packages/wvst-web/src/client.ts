@@ -5,6 +5,8 @@ import type {
   InstanceDescriptor,
   InstanceDestroyOptions,
   InstanceDestroyResult,
+  InstanceRestartOptions,
+  InstanceRestartResult,
   InstanceStatusOptions,
   InstanceStatusResult,
 } from "./instances.js";
@@ -94,6 +96,8 @@ export class WVSTClient {
       list: () => this.request<InstanceDescriptor[]>("instance.list", {}),
       status: (options: InstanceStatusOptions) =>
         this.request<InstanceStatusResult>("instance.status", options),
+      restart: (options: InstanceRestartOptions) =>
+        this.request<InstanceRestartResult>("instance.restart", options),
       destroy: (options: InstanceDestroyOptions) =>
         this.request<InstanceDestroyResult>("instance.destroy", options),
     };

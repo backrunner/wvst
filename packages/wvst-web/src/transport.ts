@@ -13,6 +13,8 @@ export interface BridgeMetrics {
   controlMessages: number;
   binaryFrames: number;
   helloRequests: number;
+  workerFailures: number;
+  workerRestarts: number;
 }
 
 interface RpcResponse {

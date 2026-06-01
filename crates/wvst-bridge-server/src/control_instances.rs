@@ -5,7 +5,8 @@ use super::{
     response_worker_supervisor_error,
 };
 use crate::instance_registry::{
-    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceStatusParams,
+    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceRestartParams,
+    InstanceStatusParams,
 };
 
 pub async fn handle_instance_create(
@@ -39,6 +40,7 @@ pub async fn handle_instance_create(
             Err(error) => response_instance_error(id, error),
         },
         Err(error) => {
+            context.metrics.increment_worker_failures();
             let _ = context.instances.mark_worker_failed(record.instance_id);
             let _ = context.instances.destroy(InstanceDestroyParams {
                 instance_id: record.instance_id,
@@ -72,6 +74,45 @@ pub async fn handle_instance_destroy(
     }
 }
 
+pub async fn handle_instance_restart(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceRestartParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid instance restart params: {error}"),
+            );
+        }
+    };
+
+    let record = match context.instances.get(params.instance_id) {
+        Ok(record) => record,
+        Err(error) => return response_instance_error(id, error),
+    };
+
+    match context.workers.restart_instance(&record).await {
+        Ok(worker) => {
+            context.metrics.increment_worker_restarts();
+            match context.instances.mark_worker_ready(record.instance_id) {
+                Ok(instance) => {
+                    response_result(id, json!({ "instance": instance, "worker": worker }))
+                }
+                Err(error) => response_instance_error(id, error),
+            }
+        }
+        Err(error) => {
+            context.metrics.increment_worker_failures();
+            let _ = context.instances.mark_worker_failed(record.instance_id);
+            response_worker_supervisor_error(id, error)
+        }
+    }
+}
+
 pub async fn handle_instance_status(
     id: Value,
     params: Value,
@@ -98,6 +139,7 @@ pub async fn handle_instance_status(
             Err(error) => response_instance_error(id, error),
         },
         Err(error) => {
+            context.metrics.increment_worker_failures();
             let _ = context.instances.mark_worker_failed(params.instance_id);
             response_worker_supervisor_error(id, error)
         }

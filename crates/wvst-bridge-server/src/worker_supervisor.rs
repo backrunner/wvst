@@ -141,6 +141,14 @@ impl WorkerSupervisor {
         result.map(Some)
     }
 
+    pub async fn restart_instance(
+        &self,
+        record: &InstanceRecord,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.kill_instance(record.instance_id).await;
+        self.start_instance(record).await
+    }
+
     pub async fn heartbeat_instance(
         &self,
         instance_id: u64,
@@ -364,6 +372,14 @@ impl WorkerSupervisor {
         {
             processes.remove(&instance_id);
         }
+    }
+
+    async fn kill_instance(&self, instance_id: u64) {
+        let Some(process) = self.processes.lock().await.remove(&instance_id) else {
+            return;
+        };
+
+        process.lock().await.shutdown().await;
     }
 }
 

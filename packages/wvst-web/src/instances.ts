@@ -39,6 +39,12 @@ export interface InstanceStatusResult {
   worker: InstanceWorkerMetrics;
 }
 
+export interface InstanceRestartOptions {
+  instanceId: number;
+}
+
+export type InstanceRestartResult = InstanceStatusResult;
+
 export interface InstanceDestroyOptions {
   instanceId: number;
 }
@@ -53,5 +59,6 @@ export interface InstanceApi {
   create(options: InstanceCreateOptions): Promise<InstanceDescriptor>;
   list(): Promise<InstanceDescriptor[]>;
   status(options: InstanceStatusOptions): Promise<InstanceStatusResult>;
+  restart(options: InstanceRestartOptions): Promise<InstanceRestartResult>;
   destroy(options: InstanceDestroyOptions): Promise<InstanceDestroyResult>;
 }

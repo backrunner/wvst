@@ -39,6 +39,12 @@ pub struct InstanceStatusParams {
     pub instance_id: u64,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceRestartParams {
+    pub instance_id: u64,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceRecord {
