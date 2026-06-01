@@ -64,6 +64,7 @@ export class WVSTBridgeWorkerClient {
       streamId: options.streamId,
       sampleRate: options.sampleRate,
       frames: options.frames,
+      capacityQuanta: options.buffers.capacityQuanta,
       inputChannels: options.inputChannels,
       outputChannels: options.outputChannels,
       inputBuffer: options.buffers.inputBuffer,

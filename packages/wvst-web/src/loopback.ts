@@ -1,6 +1,7 @@
 export interface LoopbackBufferOptions {
   frames: number;
   channels: number;
+  capacityQuanta?: number;
 }
 
 export interface LoopbackNodeOptions {
@@ -13,6 +14,8 @@ export interface LoopbackNodeOptions {
 export interface LoopbackSharedBuffers {
   frames: number;
   channels: number;
+  capacityQuanta: number;
+  samplesPerQuantum: number;
   inputBuffer: SharedArrayBuffer;
   outputBuffer: SharedArrayBuffer;
   countersBuffer: SharedArrayBuffer;
@@ -29,9 +32,10 @@ export enum LoopbackCounter {
   InputSequence = 4,
   InputConsumedSequence = 5,
   OutputSequence = 6,
+  OutputConsumedSequence = 7,
 }
 
-const COUNTER_COUNT = 7;
+const COUNTER_COUNT = 8;
 const F32_BYTES = 4;
 const I32_BYTES = 4;
 
@@ -41,8 +45,11 @@ export function createLoopbackSharedBuffers(
   assertSharedArrayBufferAvailable();
   assertPositiveInteger("frames", options.frames);
   assertPositiveInteger("channels", options.channels);
+  const capacityQuanta = options.capacityQuanta ?? 4;
+  assertPositiveInteger("capacityQuanta", capacityQuanta);
 
-  const sampleCount = options.frames * options.channels;
+  const samplesPerQuantum = options.frames * options.channels;
+  const sampleCount = samplesPerQuantum * capacityQuanta;
   const inputBuffer = new SharedArrayBuffer(sampleCount * F32_BYTES);
   const outputBuffer = new SharedArrayBuffer(sampleCount * F32_BYTES);
   const countersBuffer = new SharedArrayBuffer(COUNTER_COUNT * I32_BYTES);
@@ -50,6 +57,8 @@ export function createLoopbackSharedBuffers(
   return {
     frames: options.frames,
     channels: options.channels,
+    capacityQuanta,
+    samplesPerQuantum,
     inputBuffer,
     outputBuffer,
     countersBuffer,
@@ -63,30 +72,58 @@ export function writeLoopbackInput(
   buffers: LoopbackSharedBuffers,
   interleavedSamples: Float32Array,
 ): void {
-  if (interleavedSamples.length !== buffers.inputSamples.length) {
+  if (interleavedSamples.length !== buffers.samplesPerQuantum) {
     Atomics.add(buffers.counters, LoopbackCounter.Overflows, 1);
     throw new Error(
-      `WVST loopback input requires ${buffers.inputSamples.length} samples`,
+      `WVST loopback input requires ${buffers.samplesPerQuantum} samples`,
     );
   }
 
-  buffers.inputSamples.set(interleavedSamples);
+  const nextSequence = Atomics.load(buffers.counters, LoopbackCounter.InputSequence) + 1;
+  const consumedSequence = Atomics.load(
+    buffers.counters,
+    LoopbackCounter.InputConsumedSequence,
+  );
+  if (nextSequence - consumedSequence > buffers.capacityQuanta) {
+    Atomics.add(buffers.counters, LoopbackCounter.Overflows, 1);
+    Atomics.store(
+      buffers.counters,
+      LoopbackCounter.InputConsumedSequence,
+      nextSequence - buffers.capacityQuanta,
+    );
+  }
+
+  buffers.inputSamples.set(interleavedSamples, slotOffset(buffers, nextSequence));
   Atomics.add(buffers.counters, LoopbackCounter.InputFrames, buffers.frames);
+  Atomics.store(buffers.counters, LoopbackCounter.InputSequence, nextSequence);
 }
 
 export function readLoopbackOutput(
   buffers: LoopbackSharedBuffers,
   destination: Float32Array,
 ): void {
-  if (destination.length !== buffers.outputSamples.length) {
+  if (destination.length !== buffers.samplesPerQuantum) {
     Atomics.add(buffers.counters, LoopbackCounter.Underflows, 1);
     throw new Error(
-      `WVST loopback output requires ${buffers.outputSamples.length} samples`,
+      `WVST loopback output requires ${buffers.samplesPerQuantum} samples`,
     );
   }
 
-  destination.set(buffers.outputSamples);
+  const outputSequence = Atomics.load(buffers.counters, LoopbackCounter.OutputSequence);
+  const consumedSequence = Atomics.load(
+    buffers.counters,
+    LoopbackCounter.OutputConsumedSequence,
+  );
+  if (outputSequence <= consumedSequence) {
+    Atomics.add(buffers.counters, LoopbackCounter.Underflows, 1);
+    throw new Error("WVST loopback output is not ready");
+  }
+
+  const readSequence = consumedSequence + 1;
+  const offset = slotOffset(buffers, readSequence);
+  destination.set(buffers.outputSamples.subarray(offset, offset + buffers.samplesPerQuantum));
   Atomics.add(buffers.counters, LoopbackCounter.OutputFrames, buffers.frames);
+  Atomics.store(buffers.counters, LoopbackCounter.OutputConsumedSequence, readSequence);
 }
 
 export async function createLoopbackAudioWorkletNode(
@@ -122,10 +159,15 @@ export function configureLoopbackAudioWorkletNode(
     type: "configure",
     frames: buffers.frames,
     channels: buffers.channels,
+    capacityQuanta: buffers.capacityQuanta,
     inputBuffer: buffers.inputBuffer,
     outputBuffer: buffers.outputBuffer,
     countersBuffer: buffers.countersBuffer,
   });
+}
+
+function slotOffset(buffers: LoopbackSharedBuffers, sequence: number): number {
+  return ((sequence - 1) % buffers.capacityQuanta) * buffers.samplesPerQuantum;
 }
 
 function assertSharedArrayBufferAvailable(): void {

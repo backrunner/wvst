@@ -17,26 +17,28 @@ interface ConfigureMessage {
   type: "configure";
   frames: number;
   channels: number;
+  capacityQuanta: number;
   inputBuffer: SharedArrayBuffer;
   outputBuffer: SharedArrayBuffer;
   countersBuffer: SharedArrayBuffer;
 }
 
 const INPUT_FRAMES = 0;
-const OUTPUT_FRAMES = 1;
 const UNDERFLOWS = 2;
 const OVERFLOWS = 3;
 const INPUT_SEQUENCE = 4;
 const INPUT_CONSUMED_SEQUENCE = 5;
 const OUTPUT_SEQUENCE = 6;
+const OUTPUT_CONSUMED_SEQUENCE = 7;
 
 class WVSTLoopbackProcessor extends AudioWorkletProcessor {
   private frames = 0;
   private channels = 0;
+  private capacityQuanta = 1;
+  private samplesPerQuantum = 0;
   private inputSamples?: Float32Array;
   private outputSamples?: Float32Array;
   private counters?: Int32Array;
-  private lastOutputSequence = 0;
 
   constructor() {
     super();
@@ -66,46 +68,65 @@ class WVSTLoopbackProcessor extends AudioWorkletProcessor {
       return true;
     }
 
-    if (Atomics.load(counters, INPUT_SEQUENCE) !== Atomics.load(counters, INPUT_CONSUMED_SEQUENCE)) {
+    const nextInputSequence = Atomics.load(counters, INPUT_SEQUENCE) + 1;
+    const inputConsumedSequence = Atomics.load(counters, INPUT_CONSUMED_SEQUENCE);
+    if (nextInputSequence - inputConsumedSequence > this.capacityQuanta) {
       Atomics.add(counters, OVERFLOWS, 1);
+      Atomics.store(counters, INPUT_CONSUMED_SEQUENCE, nextInputSequence - this.capacityQuanta);
     }
 
-    writeInterleavedInput(input, inputSamples, this.frames, this.channels);
+    writeInterleavedInput(
+      input,
+      inputSamples,
+      slotOffset(nextInputSequence, this.capacityQuanta, this.samplesPerQuantum),
+      this.frames,
+      this.channels,
+    );
     Atomics.add(counters, INPUT_FRAMES, this.frames);
-    Atomics.add(counters, INPUT_SEQUENCE, 1);
+    Atomics.store(counters, INPUT_SEQUENCE, nextInputSequence);
 
     const outputSequence = Atomics.load(counters, OUTPUT_SEQUENCE);
-    if (outputSequence === this.lastOutputSequence) {
+    const outputConsumedSequence = Atomics.load(counters, OUTPUT_CONSUMED_SEQUENCE);
+    if (outputSequence <= outputConsumedSequence) {
       Atomics.add(counters, UNDERFLOWS, 1);
       clearOutputs(output);
       return true;
     }
 
-    readInterleavedOutput(output, outputSamples, this.frames, this.channels);
-    this.lastOutputSequence = outputSequence;
+    const readSequence = outputConsumedSequence + 1;
+    readInterleavedOutput(
+      output,
+      outputSamples,
+      slotOffset(readSequence, this.capacityQuanta, this.samplesPerQuantum),
+      this.frames,
+      this.channels,
+    );
+    Atomics.store(counters, OUTPUT_CONSUMED_SEQUENCE, readSequence);
     return true;
   }
 
   private configure(message: ConfigureMessage): void {
     this.frames = message.frames;
     this.channels = message.channels;
+    this.capacityQuanta = message.capacityQuanta;
+    this.samplesPerQuantum = message.frames * message.channels;
     this.inputSamples = new Float32Array(message.inputBuffer);
     this.outputSamples = new Float32Array(message.outputBuffer);
     this.counters = new Int32Array(message.countersBuffer);
-    this.lastOutputSequence = Atomics.load(this.counters, OUTPUT_SEQUENCE);
   }
 }
 
 function writeInterleavedInput(
   input: Float32Array[],
   destination: Float32Array,
+  offset: number,
   frames: number,
   channels: number,
 ): void {
   for (let frame = 0; frame < frames; frame += 1) {
     for (let channel = 0; channel < channels; channel += 1) {
       const source = input[channel];
-      destination[frame * channels + channel] = source ? source[frame] ?? 0 : 0;
+      destination[offset + frame * channels + channel] = source ? source[frame] ?? 0 : 0;
     }
   }
 }
@@ -113,6 +134,7 @@ function writeInterleavedInput(
 function readInterleavedOutput(
   output: Float32Array[],
   source: Float32Array,
+  offset: number,
   frames: number,
   channels: number,
 ): void {
@@ -128,9 +150,13 @@ function readInterleavedOutput(
     }
 
     for (let frame = 0; frame < frames; frame += 1) {
-      destination[frame] = source[frame * channels + channel] ?? 0;
+      destination[frame] = source[offset + frame * channels + channel] ?? 0;
     }
   }
+}
+
+function slotOffset(sequence: number, capacityQuanta: number, samplesPerQuantum: number): number {
+  return ((sequence - 1) % capacityQuanta) * samplesPerQuantum;
 }
 
 function clearOutputs(outputs: Float32Array[]): void {

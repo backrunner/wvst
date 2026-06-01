@@ -30,6 +30,7 @@ type BridgeWorkerCommand =
       streamId: number;
       sampleRate: number;
       frames: number;
+      capacityQuanta: number;
       inputChannels: number;
       outputChannels: number;
       inputBuffer: SharedArrayBuffer;
@@ -154,10 +155,10 @@ class AudioStreamPump {
   private readonly inputSamples: Float32Array;
   private readonly outputSamples: Float32Array;
   private readonly counters: Int32Array;
+  private readonly inputSamplesPerQuantum: number;
+  private readonly outputSamplesPerQuantum: number;
   private stopped = false;
   private timer: number | undefined;
-  private lastInputSequence = 0;
-  private outputSequence = 0;
   private sequence = 0n;
   private sentFrameTime = 0n;
 
@@ -165,11 +166,13 @@ class AudioStreamPump {
     this.inputSamples = new Float32Array(options.inputBuffer);
     this.outputSamples = new Float32Array(options.outputBuffer);
     this.counters = new Int32Array(options.countersBuffer);
-    this.lastInputSequence = Atomics.load(this.counters, LoopbackCounter.InputSequence);
+    this.inputSamplesPerQuantum = options.frames * options.inputChannels;
+    this.outputSamplesPerQuantum = options.frames * options.outputChannels;
+    const inputSequence = Atomics.load(this.counters, LoopbackCounter.InputSequence);
     Atomics.store(
       this.counters,
       LoopbackCounter.InputConsumedSequence,
-      this.lastInputSequence,
+      inputSequence,
     );
   }
 
@@ -200,8 +203,12 @@ class AudioStreamPump {
 
     try {
       const inputSequence = Atomics.load(this.counters, LoopbackCounter.InputSequence);
-      if (inputSequence !== this.lastInputSequence) {
-        await this.processLatestInput(inputSequence);
+      const consumedSequence = Atomics.load(
+        this.counters,
+        LoopbackCounter.InputConsumedSequence,
+      );
+      if (inputSequence > consumedSequence) {
+        await this.processNextInput(inputSequence, consumedSequence);
       }
     } catch {
       Atomics.add(this.counters, LoopbackCounter.Overflows, 1);
@@ -210,11 +217,26 @@ class AudioStreamPump {
     }
   }
 
-  private async processLatestInput(inputSequence: number): Promise<void> {
-    const inputCopy = new Float32Array(this.inputSamples.length);
-    inputCopy.set(this.inputSamples);
-    Atomics.store(this.counters, LoopbackCounter.InputConsumedSequence, inputSequence);
-    this.lastInputSequence = inputSequence;
+  private async processNextInput(
+    inputSequence: number,
+    consumedSequence: number,
+  ): Promise<void> {
+    let readSequence = consumedSequence + 1;
+    if (inputSequence - consumedSequence > this.options.capacityQuanta) {
+      readSequence = inputSequence;
+      Atomics.add(this.counters, LoopbackCounter.Overflows, 1);
+    }
+
+    const inputOffset = slotOffset(
+      readSequence,
+      this.options.capacityQuanta,
+      this.inputSamplesPerQuantum,
+    );
+    const inputCopy = new Float32Array(this.inputSamplesPerQuantum);
+    inputCopy.set(
+      this.inputSamples.subarray(inputOffset, inputOffset + this.inputSamplesPerQuantum),
+    );
+    Atomics.store(this.counters, LoopbackCounter.InputConsumedSequence, readSequence);
 
     const frame = encodeAudioFrame(this.header(inputCopy.byteLength), inputCopy.buffer);
     const response = await requireTransport().sendBinary(frame);
@@ -224,19 +246,40 @@ class AudioStreamPump {
     if (
       decoded.header.streamId !== BigInt(this.options.streamId) ||
       decoded.header.frames !== this.options.frames ||
-      output.length !== this.outputSamples.length
+      decoded.header.channels !== this.options.outputChannels ||
+      output.length !== this.outputSamplesPerQuantum
     ) {
-      this.outputSamples.fill(0);
+      this.writeOutput(new Float32Array(this.outputSamplesPerQuantum));
       Atomics.add(this.counters, LoopbackCounter.Underflows, 1);
     } else {
-      this.outputSamples.set(output);
+      this.writeOutput(output);
     }
 
-    this.outputSequence = (this.outputSequence + 1) | 0;
-    Atomics.add(this.counters, LoopbackCounter.OutputFrames, decoded.header.frames);
-    Atomics.store(this.counters, LoopbackCounter.OutputSequence, this.outputSequence);
     this.sentFrameTime += BigInt(this.options.frames);
     this.sequence += 1n;
+  }
+
+  private writeOutput(output: Float32Array): void {
+    const nextSequence = Atomics.load(this.counters, LoopbackCounter.OutputSequence) + 1;
+    const consumedSequence = Atomics.load(
+      this.counters,
+      LoopbackCounter.OutputConsumedSequence,
+    );
+    if (nextSequence - consumedSequence > this.options.capacityQuanta) {
+      Atomics.add(this.counters, LoopbackCounter.Overflows, 1);
+      Atomics.store(
+        this.counters,
+        LoopbackCounter.OutputConsumedSequence,
+        nextSequence - this.options.capacityQuanta,
+      );
+    }
+
+    this.outputSamples.set(
+      output,
+      slotOffset(nextSequence, this.options.capacityQuanta, this.outputSamplesPerQuantum),
+    );
+    Atomics.add(this.counters, LoopbackCounter.OutputFrames, this.options.frames);
+    Atomics.store(this.counters, LoopbackCounter.OutputSequence, nextSequence);
   }
 
   private header(payloadBytes: number): AudioFrameHeader {
@@ -253,4 +296,8 @@ class AudioStreamPump {
       eventCount: 0,
     };
   }
+}
+
+function slotOffset(sequence: number, capacityQuanta: number, samplesPerQuantum: number): number {
+  return ((sequence - 1) % capacityQuanta) * samplesPerQuantum;
 }
