@@ -25,6 +25,15 @@ export {
   type LoopbackSharedBuffers,
 } from "./loopback.js";
 export {
+  type PluginApi,
+  type PluginClass,
+  type PluginDescriptor,
+  type PluginListOptions,
+  type PluginScanFailure,
+  type PluginScanOptions,
+  type PluginScanReport,
+} from "./plugins.js";
+export {
   AUDIO_FRAME_HEADER_BYTES,
   AUDIO_FRAME_MAGIC,
   AUDIO_FRAME_VERSION,

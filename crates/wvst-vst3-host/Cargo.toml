@@ -1,0 +1,19 @@
+[package]
+name = "wvst-vst3-host"
+description = "Headless VST3 host facade for WVST."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+wvst-scanner = { path = "../wvst-scanner" }
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+

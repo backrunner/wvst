@@ -2,6 +2,7 @@ pub mod config;
 pub mod control;
 pub mod error;
 pub mod metrics;
+pub mod plugin_registry;
 pub mod server;
 
 pub use config::BridgeConfig;

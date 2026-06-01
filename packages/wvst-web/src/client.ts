@@ -1,4 +1,5 @@
 import { AUDIO_FRAME_VERSION } from "./protocol.js";
+import type { PluginApi, PluginListOptions, PluginScanOptions, PluginScanReport } from "./plugins.js";
 import {
   WebSocketRpcTransport,
   type BridgeMetrics,
@@ -61,13 +62,22 @@ export interface LowLatencyPrerequisites {
 const DEFAULT_ENDPOINT = "ws://127.0.0.1:35876";
 
 export class WVSTClient {
+  public readonly plugins: PluginApi;
+
   private constructor(
     public readonly endpoint: string,
     public readonly clientName: string,
     public readonly clientVersion: string,
     private readonly transport: RpcTransport,
     public readonly hello: BridgeHelloResult,
-  ) {}
+  ) {
+    this.plugins = {
+      scan: (options?: PluginScanOptions) =>
+        this.request<PluginScanReport>("plugin.scan", options ?? {}),
+      list: (options?: PluginListOptions) =>
+        this.request<PluginScanReport>("plugin.list", options ?? {}),
+    };
+  }
 
   static async connect(options: ConnectOptions = {}): Promise<WVSTClient> {
     const requireLowLatency = options.requireLowLatency ?? true;

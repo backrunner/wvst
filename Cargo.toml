@@ -2,9 +2,12 @@
 members = [
     "crates/wvst-bridge-server",
     "crates/wvst-core",
+    "crates/wvst-host-worker",
     "crates/wvst-protocol",
     "crates/wvst-ringbuf",
+    "crates/wvst-scanner",
     "crates/wvst-testkit",
+    "crates/wvst-vst3-host",
 ]
 resolver = "3"
 

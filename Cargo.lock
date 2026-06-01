@@ -691,11 +691,22 @@ dependencies = [
  "url",
  "wvst-core",
  "wvst-protocol",
+ "wvst-scanner",
 ]
 
 [[package]]
 name = "wvst-core"
 version = "0.1.0"
+
+[[package]]
+name = "wvst-host-worker"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wvst-scanner",
+ "wvst-vst3-host",
+]
 
 [[package]]
 name = "wvst-protocol"
@@ -709,11 +720,27 @@ name = "wvst-ringbuf"
 version = "0.1.0"
 
 [[package]]
+name = "wvst-scanner"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "wvst-testkit"
 version = "0.1.0"
 dependencies = [
  "wvst-core",
  "wvst-protocol",
+]
+
+[[package]]
+name = "wvst-vst3-host"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "wvst-scanner",
 ]
 
 [[package]]

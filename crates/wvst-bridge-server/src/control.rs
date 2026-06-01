@@ -5,10 +5,12 @@ use wvst_protocol::{AUDIO_FRAME_VERSION, negotiate_protocol};
 
 use crate::config::BridgeConfig;
 use crate::metrics::BridgeMetrics;
+use crate::plugin_registry::PluginRegistry;
 
 pub struct ControlContext<'a> {
     pub config: &'a BridgeConfig,
     pub metrics: &'a BridgeMetrics,
+    pub plugins: &'a PluginRegistry,
     pub origin: Option<&'a str>,
 }
 
@@ -33,6 +35,22 @@ struct HelloParams {
     token: Option<String>,
     #[serde(default)]
     origin: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginScanParams {
+    #[serde(default)]
+    paths: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginListParams {
+    #[serde(default)]
+    rescan: bool,
+    #[serde(default)]
+    paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -69,12 +87,40 @@ pub fn handle_control_text(text: &str, context: ControlContext<'_>) -> String {
     match request.method.as_str() {
         "bridge.hello" => handle_hello(request.id, request.params, context),
         "bridge.metrics" => response_result(request.id, json!(context.metrics.snapshot())),
+        "plugin.scan" => handle_plugin_scan(request.id, request.params, context),
+        "plugin.list" => handle_plugin_list(request.id, request.params, context),
         _ => response_error(
             request.id,
             -32601,
             format!("method not found: {}", request.method),
         ),
     }
+}
+
+fn handle_plugin_scan(id: Value, params: Value, context: ControlContext<'_>) -> String {
+    let params = parse_params::<PluginScanParams>(params).unwrap_or_default();
+    let report = if params.paths.is_empty() {
+        context.plugins.scan_default_paths()
+    } else {
+        context.plugins.scan_paths(paths_from_strings(params.paths))
+    };
+
+    response_result(id, json!(report))
+}
+
+fn handle_plugin_list(id: Value, params: Value, context: ControlContext<'_>) -> String {
+    let params = parse_params::<PluginListParams>(params).unwrap_or_default();
+    let report = if params.rescan {
+        if params.paths.is_empty() {
+            context.plugins.scan_default_paths()
+        } else {
+            context.plugins.scan_paths(paths_from_strings(params.paths))
+        }
+    } else {
+        context.plugins.list()
+    };
+
+    response_result(id, json!(report))
 }
 
 fn handle_hello(id: Value, params: Value, context: ControlContext<'_>) -> String {
@@ -131,6 +177,21 @@ fn handle_hello(id: Value, params: Value, context: ControlContext<'_>) -> String
     )
 }
 
+fn parse_params<T>(params: Value) -> Result<T, serde_json::Error>
+where
+    T: for<'de> Deserialize<'de> + Default,
+{
+    if params.is_null() {
+        Ok(T::default())
+    } else {
+        serde_json::from_value(params)
+    }
+}
+
+fn paths_from_strings(paths: Vec<String>) -> Vec<std::path::PathBuf> {
+    paths.into_iter().map(std::path::PathBuf::from).collect()
+}
+
 fn response_result(id: Value, result: Value) -> String {
     serialize_json(json!({
         "jsonrpc": "2.0",
@@ -161,14 +222,17 @@ fn serialize_json(value: Value) -> String {
 mod tests {
     use super::*;
     use crate::metrics::BridgeMetrics;
+    use crate::plugin_registry::PluginRegistry;
 
     #[test]
     fn responds_to_hello() {
         let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
         let metrics = BridgeMetrics::new();
+        let plugins = PluginRegistry::new();
         let context = ControlContext {
             config: &config,
             metrics: &metrics,
+            plugins: &plugins,
             origin: Some("http://localhost:5173"),
         };
 
@@ -186,9 +250,11 @@ mod tests {
     fn rejects_denied_origin() {
         let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
         let metrics = BridgeMetrics::new();
+        let plugins = PluginRegistry::new();
         let context = ControlContext {
             config: &config,
             metrics: &metrics,
+            plugins: &plugins,
             origin: Some("https://example.com"),
         };
 
@@ -199,5 +265,30 @@ mod tests {
         let value: Value = serde_json::from_str(&response).expect("valid json");
 
         assert_eq!(value["error"]["code"], 4010);
+    }
+
+    #[test]
+    fn lists_cached_plugins() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+        let metrics = BridgeMetrics::new();
+        let plugins = PluginRegistry::new();
+        let context = ControlContext {
+            config: &config,
+            metrics: &metrics,
+            plugins: &plugins,
+            origin: None,
+        };
+
+        let response =
+            handle_control_text(r#"{"id":1,"method":"plugin.list","params":{}}"#, context);
+        let value: Value = serde_json::from_str(&response).expect("valid json");
+
+        assert_eq!(
+            value["result"]["plugins"]
+                .as_array()
+                .expect("plugins")
+                .len(),
+            0
+        );
     }
 }

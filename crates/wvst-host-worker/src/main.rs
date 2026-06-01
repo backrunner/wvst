@@ -1,0 +1,78 @@
+use std::path::PathBuf;
+
+use serde::Serialize;
+use serde_json::json;
+use wvst_scanner::{
+    MetadataSource, PluginClass, PluginDescriptor, PluginFormat, parse_vst3_bundle,
+};
+use wvst_vst3_host::HeadlessPluginInstance;
+
+fn main() {
+    let exit_code = match run(std::env::args().skip(1).collect()) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("{error}");
+            2
+        }
+    };
+
+    std::process::exit(exit_code);
+}
+
+fn run(args: Vec<String>) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("describe") => describe(args.get(1)),
+        Some("passthrough-probe") => passthrough_probe(),
+        _ => Err("usage: wvst-host-worker describe <plugin.vst3> | passthrough-probe".to_string()),
+    }
+}
+
+fn describe(path: Option<&String>) -> Result<(), String> {
+    let Some(path) = path else {
+        return Err("describe requires a VST3 bundle path".to_string());
+    };
+
+    let descriptor = parse_vst3_bundle(PathBuf::from(path)).map_err(|error| error.to_string())?;
+    print_json(&descriptor)
+}
+
+fn passthrough_probe() -> Result<(), String> {
+    let descriptor = probe_descriptor();
+    let instance =
+        HeadlessPluginInstance::new(&descriptor, 2, 2).map_err(|error| error.to_string())?;
+    let input = [0.1, 0.2, 0.3, 0.4];
+    let mut output = [0.0; 4];
+    let stats = instance
+        .process_interleaved_f32(2, &input, &mut output)
+        .map_err(|error| error.to_string())?;
+
+    print_json(&json!({
+        "metadata": instance.metadata(),
+        "stats": stats,
+        "output": output,
+    }))
+}
+
+fn print_json(value: &impl Serialize) -> Result<(), String> {
+    let json = serde_json::to_string(value).map_err(|error| error.to_string())?;
+    println!("{json}");
+    Ok(())
+}
+
+fn probe_descriptor() -> PluginDescriptor {
+    PluginDescriptor {
+        plugin_id: "vst3:probe".to_string(),
+        format: PluginFormat::Vst3,
+        name: "WVST Passthrough Probe".to_string(),
+        vendor: Some("WVST".to_string()),
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        path: "wvst://probe".to_string(),
+        classes: vec![PluginClass {
+            class_id: None,
+            name: "WVST Passthrough Probe".to_string(),
+            category: Some("Fx".to_string()),
+            subcategories: vec!["Stereo".to_string()],
+        }],
+        metadata_source: MetadataSource::BundleName,
+    }
+}
