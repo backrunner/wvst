@@ -6,6 +6,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
@@ -19,15 +20,18 @@ const STDERR_TAIL_BYTES: usize = 4096;
 
 #[path = "worker_supervisor_audio.rs"]
 mod worker_supervisor_audio;
+#[path = "worker_supervisor_error.rs"]
+mod worker_supervisor_error;
 #[path = "worker_supervisor_hello.rs"]
 mod worker_supervisor_hello;
 
-pub use worker_supervisor_audio::WorkerAudioProcessResult;
+use worker_supervisor_audio::WorkerAudioConnection;
 
 #[derive(Debug)]
 pub struct WorkerSupervisor {
     executable: PathBuf,
     timeout: Duration,
+    use_audio_ipc: bool,
     failures: Mutex<BTreeMap<String, u32>>,
     processes: Mutex<BTreeMap<u64, Arc<Mutex<WorkerProcess>>>>,
     quarantined: Mutex<BTreeMap<String, u32>>,
@@ -39,6 +43,7 @@ struct WorkerProcess {
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
     stderr: StderrTail,
+    audio: Option<WorkerAudioConnection>,
     next_request_id: u64,
 }
 
@@ -94,6 +99,9 @@ pub enum WorkerSupervisorError {
     WorkerMissing {
         instance_id: u64,
     },
+    AudioIpcUnavailable {
+        instance_id: u64,
+    },
     WorkerRejected {
         code: i64,
         message: String,
@@ -106,6 +114,7 @@ impl WorkerSupervisor {
         Self {
             executable,
             timeout: DEFAULT_IPC_TIMEOUT,
+            use_audio_ipc: true,
             failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
             quarantined: Mutex::new(BTreeMap::new()),
@@ -190,10 +199,30 @@ impl WorkerSupervisor {
 }
 
 impl WorkerProcess {
-    async fn spawn(executable: PathBuf) -> Result<Self, WorkerSupervisorError> {
+    async fn spawn(
+        executable: PathBuf,
+        timeout_duration: Duration,
+        use_audio_ipc: bool,
+    ) -> Result<Self, WorkerSupervisorError> {
+        let audio_listener = if use_audio_ipc {
+            Some(
+                TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?,
+            )
+        } else {
+            None
+        };
+
         let mut command = Command::new(&executable);
+        command.arg("serve");
+        if let Some(listener) = audio_listener.as_ref() {
+            let address = listener
+                .local_addr()
+                .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?;
+            command.arg("--audio-connect").arg(address.to_string());
+        }
         command
-            .arg("serve")
             .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -218,13 +247,34 @@ impl WorkerProcess {
             .take()
             .ok_or(WorkerSupervisorError::MissingPipe("stderr"))?;
 
-        Ok(Self {
+        let mut process = Self {
             child,
             stdin,
             stdout: BufReader::new(stdout).lines(),
             stderr: StderrTail::spawn(stderr),
+            audio: None,
             next_request_id: 1,
-        })
+        };
+
+        if let Some(listener) = audio_listener {
+            let accepted = match timeout(timeout_duration, listener.accept()).await {
+                Ok(Ok((stream, _))) => stream,
+                Ok(Err(error)) => {
+                    process.shutdown().await;
+                    return Err(WorkerSupervisorError::Io(error.to_string()));
+                }
+                Err(_) => {
+                    let error = process
+                        .timeout_error("audio.connect", timeout_duration)
+                        .await;
+                    process.shutdown().await;
+                    return Err(error);
+                }
+            };
+            process.audio = Some(WorkerAudioConnection::new(accepted));
+        }
+
+        Ok(process)
     }
 
     async fn request(
@@ -323,7 +373,8 @@ impl WorkerSupervisor {
         &self,
         record: &InstanceRecord,
     ) -> Result<(Value, WorkerProcess), WorkerSupervisorError> {
-        let mut process = WorkerProcess::spawn(self.executable.clone()).await?;
+        let mut process =
+            WorkerProcess::spawn(self.executable.clone(), self.timeout, self.use_audio_ipc).await?;
         let hello = match process
             .request("worker.hello", json!({}), self.timeout)
             .await
@@ -436,109 +487,6 @@ impl StderrTail {
     }
 }
 
-impl WorkerSupervisorError {
-    pub fn rpc_code(&self) -> i64 {
-        match self {
-            Self::WorkerRejected { code, .. } => *code,
-            Self::Timeout { .. } => 5035,
-            Self::Spawn { .. } | Self::MissingPipe(_) | Self::Io(_) => 5036,
-            Self::InvalidJson(_) | Self::Protocol { .. } => 5037,
-            Self::Quarantined { .. } => 4093,
-            Self::IncompatibleWorker { .. } => 4094,
-            Self::WorkerMissing { .. } => 4041,
-        }
-    }
-
-    pub fn rpc_message(&self) -> String {
-        match self {
-            Self::Spawn {
-                executable,
-                message,
-            } => format!("failed to start worker {}: {message}", executable.display()),
-            Self::MissingPipe(pipe) => format!("worker missing {pipe} pipe"),
-            Self::Io(message) => format!("worker io failed: {message}"),
-            Self::Timeout {
-                method, timeout_ms, ..
-            } => {
-                format!("worker method {method} timed out after {timeout_ms}ms")
-            }
-            Self::InvalidJson(message) => format!("worker returned invalid JSON: {message}"),
-            Self::Protocol { message, .. } => format!("worker protocol error: {message}"),
-            Self::Quarantined {
-                plugin_id,
-                failures,
-            } => {
-                format!("worker quarantined for plugin {plugin_id} after {failures} failures")
-            }
-            Self::IncompatibleWorker { reason, .. } => {
-                format!("worker incompatible: {reason}")
-            }
-            Self::WorkerMissing { instance_id } => {
-                format!("worker not found for instance {instance_id}")
-            }
-            Self::WorkerRejected { message, .. } => message.clone(),
-        }
-    }
-
-    pub fn rpc_data(&self) -> Value {
-        match self {
-            Self::Spawn {
-                executable,
-                message,
-            } => json!({
-                "kind": "spawn",
-                "executable": executable.display().to_string(),
-                "message": message,
-            }),
-            Self::MissingPipe(pipe) => json!({ "kind": "missing-pipe", "pipe": pipe }),
-            Self::Io(message) => json!({ "kind": "io", "message": message }),
-            Self::Timeout {
-                method,
-                timeout_ms,
-                stderr,
-            } => {
-                json!({ "kind": "timeout", "method": method, "timeoutMs": timeout_ms, "stderr": stderr })
-            }
-            Self::InvalidJson(message) => json!({ "kind": "invalid-json", "message": message }),
-            Self::Protocol { message, stderr } => {
-                json!({ "kind": "protocol", "message": message, "stderr": stderr })
-            }
-            Self::Quarantined {
-                plugin_id,
-                failures,
-            } => {
-                json!({ "kind": "quarantined", "pluginId": plugin_id, "failures": failures })
-            }
-            Self::IncompatibleWorker {
-                reason,
-                expected_ipc_version,
-                actual_ipc_version,
-                hello,
-                stderr,
-            } => {
-                json!({
-                    "kind": "worker-incompatible",
-                    "reason": reason,
-                    "expectedIpcVersion": expected_ipc_version,
-                    "actualIpcVersion": actual_ipc_version,
-                    "hello": hello,
-                    "stderr": stderr,
-                })
-            }
-            Self::WorkerMissing { instance_id } => {
-                json!({ "kind": "worker-missing", "instanceId": instance_id })
-            }
-            Self::WorkerRejected {
-                code,
-                message,
-                stderr,
-            } => {
-                json!({ "kind": "worker-rejected", "code": code, "message": message, "stderr": stderr })
-            }
-        }
-    }
-}
-
 fn instance_create_params(record: &InstanceRecord) -> Value {
     json!({
         "instanceId": record.instance_id,
@@ -558,6 +506,18 @@ impl WorkerSupervisor {
         Self {
             executable,
             timeout,
+            use_audio_ipc: false,
+            failures: Mutex::new(BTreeMap::new()),
+            processes: Mutex::new(BTreeMap::new()),
+            quarantined: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    pub fn new_for_test_with_audio(executable: PathBuf, timeout: Duration) -> Self {
+        Self {
+            executable,
+            timeout,
+            use_audio_ipc: true,
             failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
             quarantined: Mutex::new(BTreeMap::new()),

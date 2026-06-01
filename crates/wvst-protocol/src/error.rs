@@ -5,10 +5,14 @@ use std::fmt::{Display, Formatter};
 pub enum ProtocolError {
     BufferTooSmall { min: usize, actual: usize },
     InvalidMagic(u32),
+    InvalidWorkerAudioIpcMagic(u32),
+    UnsupportedWorkerAudioIpcVersion(u16),
     UnsupportedAudioFrameVersion(u16),
     InvalidHeaderLength(u16),
     InvalidSampleFormat(u8),
+    InvalidWorkerAudioMessageKind(u16),
     InvalidPayloadLength { expected: u32, actual: u32 },
+    PayloadTooLarge,
     InvalidCoreValue(String),
 }
 
@@ -22,17 +26,27 @@ impl Display for ProtocolError {
                 )
             }
             Self::InvalidMagic(value) => write!(formatter, "invalid audio frame magic: {value:#x}"),
+            Self::InvalidWorkerAudioIpcMagic(value) => {
+                write!(formatter, "invalid worker audio IPC magic: {value:#x}")
+            }
+            Self::UnsupportedWorkerAudioIpcVersion(value) => {
+                write!(formatter, "unsupported worker audio IPC version: {value}")
+            }
             Self::UnsupportedAudioFrameVersion(value) => {
                 write!(formatter, "unsupported audio frame version: {value}")
             }
             Self::InvalidHeaderLength(value) => write!(formatter, "invalid header length: {value}"),
             Self::InvalidSampleFormat(value) => write!(formatter, "invalid sample format: {value}"),
+            Self::InvalidWorkerAudioMessageKind(value) => {
+                write!(formatter, "invalid worker audio message kind: {value}")
+            }
             Self::InvalidPayloadLength { expected, actual } => {
                 write!(
                     formatter,
                     "invalid payload length: expected {expected}, got {actual}"
                 )
             }
+            Self::PayloadTooLarge => formatter.write_str("protocol payload is too large"),
             Self::InvalidCoreValue(message) => formatter.write_str(message),
         }
     }

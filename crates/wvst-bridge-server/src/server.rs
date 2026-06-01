@@ -7,7 +7,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::Message;
-use wvst_core::{ChannelCount, StreamId};
 use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameHeader};
 
 use crate::config::BridgeConfig;
@@ -165,10 +164,9 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> Option<Vec<u8
     }
 
     let instance = state.instances.find_by_stream_id(header.stream_id.get())?;
-    let input = read_f32_payload(&payload[AUDIO_FRAME_HEADER_LEN..])?;
     let processed = match state
         .workers
-        .process_interleaved_f32(instance.instance_id, header.frames.get(), input)
+        .process_audio_frame(instance.instance_id, payload.to_vec())
         .await
     {
         Ok(processed) => processed,
@@ -179,59 +177,14 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> Option<Vec<u8
         }
     };
 
-    encode_processed_frame(header, processed.output_channels, &processed.output).ok()
-}
-
-fn read_f32_payload(payload: &[u8]) -> Option<Vec<f32>> {
-    if payload.len() % 4 != 0 {
+    let processed_header = AudioFrameHeader::decode(&processed).ok()?;
+    let processed_len =
+        AUDIO_FRAME_HEADER_LEN.checked_add(processed_header.payload_len as usize)?;
+    if processed.len() != processed_len || processed_header.stream_id != header.stream_id {
         return None;
     }
 
-    Some(
-        payload
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect(),
-    )
-}
-
-fn encode_processed_frame(
-    input_header: AudioFrameHeader,
-    output_channels: usize,
-    output: &[f32],
-) -> Result<Vec<u8>, String> {
-    let output_channels = u16::try_from(output_channels).map_err(|error| error.to_string())?;
-    let channels = ChannelCount::new(output_channels).map_err(|error| error.to_string())?;
-    let expected_samples = usize::from(input_header.frames.get()) * usize::from(channels.get());
-    if output.len() != expected_samples {
-        return Err(format!(
-            "worker output sample count mismatch: expected {expected_samples}, got {}",
-            output.len()
-        ));
-    }
-
-    let header = AudioFrameHeader::new_f32(
-        StreamId::new(input_header.stream_id.get()),
-        input_header.sequence,
-        input_header.sent_frame_time,
-        input_header.sample_rate,
-        input_header.frames,
-        channels,
-        input_header.flags,
-    )
-    .map_err(|error| error.to_string())?;
-    let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];
-    header
-        .encode(&mut frame[..AUDIO_FRAME_HEADER_LEN])
-        .map_err(|error| error.to_string())?;
-
-    let mut offset = AUDIO_FRAME_HEADER_LEN;
-    for sample in output {
-        frame[offset..offset + 4].copy_from_slice(&sample.to_le_bytes());
-        offset += 4;
-    }
-
-    Ok(frame)
+    Some(processed)
 }
 
 #[cfg(test)]

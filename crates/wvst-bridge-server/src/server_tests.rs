@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio_tungstenite::connect_async;
-use wvst_core::{FrameCount, SampleRate};
+use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId};
 
 #[tokio::test]
 async fn responds_to_hello_and_echoes_binary_frames() {
@@ -67,7 +67,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
         instances: Arc::new(InstanceRegistry::new()),
         metrics: Arc::new(BridgeMetrics::new()),
         plugins: Arc::new(plugins),
-        workers: Arc::new(WorkerSupervisor::new_for_test(
+        workers: Arc::new(WorkerSupervisor::new_for_test_with_audio(
             worker_path.clone(),
             Duration::from_secs(5),
         )),
@@ -116,6 +116,19 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
 
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
+fn read_f32_payload(payload: &[u8]) -> Option<Vec<f32>> {
+    if payload.len() % 4 != 0 {
+        return None;
+    }
+
+    Some(
+        payload
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect(),
+    )
 }
 
 fn audio_frame(stream_id: u64) -> Vec<u8> {
@@ -169,12 +182,47 @@ fn passthrough_worker_script() -> PathBuf {
     std::fs::write(
         &worker,
         r#"#!/bin/sh
+audio_addr=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --audio-connect) audio_addr="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$audio_addr" ]; then
+  python3 - "$audio_addr" <<'PY' &
+import socket
+import struct
+import sys
+
+addr = sys.argv[1]
+host, port = addr.rsplit(":", 1)
+sock = socket.create_connection((host, int(port)))
+while True:
+    header = sock.recv(24)
+    if not header:
+        break
+    while len(header) < 24:
+        chunk = sock.recv(24 - len(header))
+        if not chunk:
+            raise SystemExit(0)
+        header += chunk
+    magic, version, header_len, kind, status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
+    body = b""
+    while len(body) < body_len:
+        chunk = sock.recv(body_len - len(body))
+        if not chunk:
+            raise SystemExit(0)
+        body += chunk
+    response = struct.pack("<IHHHHIQ", magic, version, header_len, 2, 0, len(body), sequence) + body
+    sock.sendall(response)
+PY
+fi
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
-    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true}}}\n' "$id" ;;
+    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
     *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready"}}\n' "$id" ;;
-    *debug.processInterleavedF32*) printf '{"jsonrpc":"2.0","id":%s,"result":{"streamId":1,"inputChannels":2,"outputChannels":2,"stats":{"frames":2,"inputChannels":2,"outputChannels":2},"output":[0.25,0.5,-0.25,-0.5]}}\n' "$id" ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
   esac
 done

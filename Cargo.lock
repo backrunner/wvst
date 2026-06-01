@@ -720,6 +720,8 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "wvst-core",
+ "wvst-protocol",
  "wvst-scanner",
  "wvst-vst3-host",
 ]

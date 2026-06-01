@@ -16,6 +16,8 @@ struct WorkerHello {
 struct WorkerCapabilities {
     #[serde(default)]
     instance_lifecycle: bool,
+    #[serde(default)]
+    binary_audio_process: bool,
 }
 
 pub(super) async fn validate_worker_hello(
@@ -52,6 +54,16 @@ pub(super) async fn validate_worker_hello(
         return Err(incompatible_worker(
             stderr,
             "missing instanceLifecycle capability".to_string(),
+            Some(u64::from(parsed.ipc_version)),
+            hello,
+        )
+        .await);
+    }
+
+    if !parsed.capabilities.binary_audio_process {
+        return Err(incompatible_worker(
+            stderr,
+            "missing binaryAudioProcess capability".to_string(),
             Some(u64::from(parsed.ipc_version)),
             hello,
         )

@@ -27,12 +27,32 @@ fn run(args: Vec<String>) -> Result<(), String> {
         Some("factory-info") => factory_info(args.get(1)),
         Some("factory-probe") => factory_probe(args.get(1)),
         Some("passthrough-probe") => passthrough_probe(),
-        Some("serve") => ipc::serve_stdio(),
+        Some("serve") => ipc::serve_stdio(parse_audio_connect(&args[1..])?),
         _ => Err(
             "usage: wvst-host-worker describe <plugin.vst3> | factory-info <plugin.vst3> | factory-probe <plugin.vst3> | passthrough-probe | serve"
                 .to_string(),
         ),
     }
+}
+
+fn parse_audio_connect(args: &[String]) -> Result<Option<String>, String> {
+    let mut index = 0;
+    let mut audio_connect = None;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--audio-connect" => {
+                let Some(address) = args.get(index + 1) else {
+                    return Err("--audio-connect requires an address".to_string());
+                };
+                audio_connect = Some(address.clone());
+                index += 2;
+            }
+            other => return Err(format!("unknown serve option: {other}")),
+        }
+    }
+
+    Ok(audio_connect)
 }
 
 fn describe(path: Option<&String>) -> Result<(), String> {

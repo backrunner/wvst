@@ -1,10 +1,14 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
 use wvst_vst3_host::HeadlessPluginInstance;
+
+#[path = "ipc_audio.rs"]
+mod ipc_audio;
 
 const WORKER_IPC_VERSION: u16 = 1;
 
@@ -50,14 +54,6 @@ struct InstanceDestroyParams {
     instance_id: u64,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DebugProcessParams {
-    instance_id: u64,
-    frames: usize,
-    input: Vec<f32>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceReady {
@@ -73,15 +69,27 @@ enum WorkerState {
     Destroyed,
 }
 
-pub fn serve_stdio() -> Result<(), String> {
+pub fn serve_stdio(audio_connect: Option<String>) -> Result<(), String> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
 
-    serve(stdin.lock(), stdout.lock())
+    serve_with_audio(stdin.lock(), stdout.lock(), audio_connect)
 }
 
+#[cfg(test)]
 pub fn serve(reader: impl BufRead, mut writer: impl Write) -> Result<(), String> {
-    let mut state = WorkerIpcState::default();
+    serve_with_audio(reader, &mut writer, None)
+}
+
+fn serve_with_audio(
+    reader: impl BufRead,
+    mut writer: impl Write,
+    audio_connect: Option<String>,
+) -> Result<(), String> {
+    let state = Arc::new(Mutex::new(WorkerIpcState::default()));
+    if let Some(address) = audio_connect {
+        ipc_audio::spawn_audio_thread(address, Arc::clone(&state));
+    }
 
     for line in reader.lines() {
         let line = line.map_err(|error| error.to_string())?;
@@ -89,7 +97,12 @@ pub fn serve(reader: impl BufRead, mut writer: impl Write) -> Result<(), String>
             continue;
         }
 
-        let response = handle_ipc_line(&line, &mut state);
+        let response = {
+            let mut state = state
+                .lock()
+                .map_err(|_| "worker state mutex poisoned".to_string())?;
+            handle_ipc_line(&line, &mut state)
+        };
         writeln!(writer, "{response}").map_err(|error| error.to_string())?;
         writer.flush().map_err(|error| error.to_string())?;
     }
@@ -110,7 +123,6 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
         "worker.metrics" => response_result(request.id, worker_metrics(state)),
         "instance.create" => handle_instance_create(request.id, request.params, state),
         "instance.destroy" => handle_instance_destroy(request.id, request.params, state),
-        "debug.processInterleavedF32" => handle_debug_process(request.id, request.params, state),
         _ => response_error(
             request.id,
             -32601,
@@ -193,44 +205,6 @@ fn handle_instance_destroy(id: Value, params: Value, state: &mut WorkerIpcState)
     )
 }
 
-fn handle_debug_process(id: Value, params: Value, state: &mut WorkerIpcState) -> String {
-    let params = match serde_json::from_value::<DebugProcessParams>(params) {
-        Ok(params) => params,
-        Err(error) => {
-            return response_error(id, -32602, format!("invalid debug process params: {error}"));
-        }
-    };
-
-    let Some(instance) = state.instances.get(&params.instance_id) else {
-        return response_error(
-            id,
-            4040,
-            format!("instance not found: {}", params.instance_id),
-        );
-    };
-
-    let mut output = vec![0.0; params.frames * instance.output_channels];
-    let stats =
-        match instance
-            .plugin
-            .process_interleaved_f32(params.frames, &params.input, &mut output)
-        {
-            Ok(stats) => stats,
-            Err(error) => return response_error(id, 4220, error.to_string()),
-        };
-
-    response_result(
-        id,
-        json!({
-            "streamId": instance.stream_id,
-            "inputChannels": instance.input_channels,
-            "outputChannels": instance.output_channels,
-            "stats": stats,
-            "output": output,
-        }),
-    )
-}
-
 fn worker_hello() -> Value {
     json!({
         "workerName": "wvst-host-worker",
@@ -240,7 +214,7 @@ fn worker_hello() -> Value {
             "factoryInfo": true,
             "instanceLifecycle": true,
             "fakePassthrough": true,
-            "debugJsonAudioProcess": true
+            "binaryAudioProcess": true
         }
     })
 }
@@ -325,21 +299,6 @@ mod tests {
         );
         let create_value: Value = serde_json::from_str(&create).expect("create json");
         assert_eq!(create_value["result"]["workerState"], "ready");
-
-        let process = handle_ipc_line(
-            r#"{"id":2,"method":"debug.processInterleavedF32","params":{"instanceId":7,"frames":2,"input":[0.1,0.2,0.3,0.4]}}"#,
-            &mut state,
-        );
-        let process_value: Value = serde_json::from_str(&process).expect("process json");
-        let output = process_value["result"]["output"]
-            .as_array()
-            .expect("output array")
-            .iter()
-            .map(|value| value.as_f64().expect("number"))
-            .collect::<Vec<_>>();
-        assert_eq!(output.len(), 4);
-        assert!((output[0] - 0.1).abs() < 0.000_001);
-        assert!((output[3] - 0.4).abs() < 0.000_001);
 
         let destroy = handle_ipc_line(
             r#"{"id":3,"method":"instance.destroy","params":{"instanceId":7}}"#,
