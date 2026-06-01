@@ -48,6 +48,20 @@ export function encodeAudioFrameHeader(header: AudioFrameHeader): ArrayBuffer {
   return buffer;
 }
 
+export function encodeAudioFrame(header: AudioFrameHeader, payload: ArrayBuffer): ArrayBuffer {
+  if (payload.byteLength !== header.payloadBytes) {
+    throw new Error(
+      `WVST payload length mismatch: expected ${header.payloadBytes}, got ${payload.byteLength}`,
+    );
+  }
+
+  const frame = new Uint8Array(AUDIO_FRAME_HEADER_BYTES + payload.byteLength);
+  frame.set(new Uint8Array(encodeAudioFrameHeader(header)), 0);
+  frame.set(new Uint8Array(payload), AUDIO_FRAME_HEADER_BYTES);
+
+  return frame.buffer;
+}
+
 export function decodeAudioFrameHeader(buffer: ArrayBufferLike): AudioFrameHeader {
   if (buffer.byteLength < AUDIO_FRAME_HEADER_BYTES) {
     throw new Error(
@@ -83,6 +97,27 @@ export function decodeAudioFrameHeader(buffer: ArrayBufferLike): AudioFrameHeade
     format: view.getUint8(44),
     flags: view.getUint16(46, true),
     eventCount: view.getUint16(48, true),
+  };
+}
+
+export interface DecodedAudioFrame {
+  header: AudioFrameHeader;
+  payload: ArrayBuffer;
+}
+
+export function decodeAudioFrame(buffer: ArrayBuffer): DecodedAudioFrame {
+  const header = decodeAudioFrameHeader(buffer);
+  const expectedBytes = AUDIO_FRAME_HEADER_BYTES + header.payloadBytes;
+
+  if (buffer.byteLength !== expectedBytes) {
+    throw new Error(
+      `WVST audio frame length mismatch: expected ${expectedBytes}, got ${buffer.byteLength}`,
+    );
+  }
+
+  return {
+    header,
+    payload: buffer.slice(AUDIO_FRAME_HEADER_BYTES),
   };
 }
 

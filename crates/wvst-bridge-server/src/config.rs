@@ -1,0 +1,128 @@
+use std::net::SocketAddr;
+
+use url::{Host, Url};
+
+use crate::{BridgeError, BridgeResult};
+
+const DEFAULT_BIND_ADDR: &str = "127.0.0.1:35876";
+
+#[derive(Debug, Clone)]
+pub struct BridgeConfig {
+    bind_addr: SocketAddr,
+    token: Option<String>,
+    allowed_origins: Vec<String>,
+    allow_loopback_origins: bool,
+}
+
+impl BridgeConfig {
+    pub fn from_env() -> BridgeResult<Self> {
+        let bind_addr = std::env::var("WVST_BIND_ADDR")
+            .unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_string())
+            .parse()
+            .map_err(|_| BridgeError::InvalidBindAddress(DEFAULT_BIND_ADDR.to_string()))?;
+
+        let token = std::env::var("WVST_TOKEN")
+            .ok()
+            .filter(|value| !value.is_empty());
+
+        let allowed_origins = std::env::var("WVST_ALLOWED_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+
+        let allow_loopback_origins = std::env::var("WVST_ALLOW_LOOPBACK_ORIGINS")
+            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
+
+        Ok(Self {
+            bind_addr,
+            token,
+            allowed_origins,
+            allow_loopback_origins,
+        })
+    }
+
+    pub fn development(bind_addr: SocketAddr) -> Self {
+        Self {
+            bind_addr,
+            token: None,
+            allowed_origins: Vec::new(),
+            allow_loopback_origins: true,
+        }
+    }
+
+    pub fn bind_addr(&self) -> SocketAddr {
+        self.bind_addr
+    }
+
+    pub fn token_required(&self) -> bool {
+        self.token.is_some()
+    }
+
+    pub fn token_is_valid(&self, provided: Option<&str>) -> bool {
+        match self.token.as_deref() {
+            Some(expected) => provided == Some(expected),
+            None => true,
+        }
+    }
+
+    pub fn origin_is_allowed(&self, origin: Option<&str>) -> bool {
+        let Some(origin) = origin else {
+            return true;
+        };
+
+        if self.allowed_origins.iter().any(|allowed| allowed == origin) {
+            return true;
+        }
+
+        self.allow_loopback_origins && is_loopback_origin(origin)
+    }
+
+    pub fn allowed_origins(&self) -> &[String] {
+        &self.allowed_origins
+    }
+}
+
+fn is_loopback_origin(origin: &str) -> bool {
+    let Ok(url) = Url::parse(origin) else {
+        return false;
+    };
+
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+
+    match url.host() {
+        Some(Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allows_loopback_origins_by_default() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+
+        assert!(config.origin_is_allowed(Some("http://localhost:5173")));
+        assert!(config.origin_is_allowed(Some("https://127.0.0.1:8443")));
+        assert!(!config.origin_is_allowed(Some("https://example.com")));
+    }
+
+    #[test]
+    fn validates_token_when_configured() {
+        let mut config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+        config.token = Some("secret".to_string());
+
+        assert!(config.token_is_valid(Some("secret")));
+        assert!(!config.token_is_valid(None));
+        assert!(!config.token_is_valid(Some("wrong")));
+    }
+}

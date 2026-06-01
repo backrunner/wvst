@@ -8,6 +8,12 @@
     ".": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./bridge-worker": {
+      "import": "./dist/esm/bridge-worker.js"
+    },
+    "./loopback-processor": {
+      "import": "./dist/esm/loopback-processor.js"
     }
   },
   "files": [
@@ -18,4 +24,3 @@
     "check": "tsc -p tsconfig.json --noEmit"
   }
 }
-

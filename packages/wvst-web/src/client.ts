@@ -1,21 +1,56 @@
 import { AUDIO_FRAME_VERSION } from "./protocol.js";
+import {
+  WebSocketRpcTransport,
+  type BridgeMetrics,
+  type JsonValue,
+  type RpcTransport,
+} from "./transport.js";
 
 export interface ConnectOptions {
   endpoint?: string;
   clientName?: string;
   clientVersion?: string;
   requireLowLatency?: boolean;
+  token?: string;
+}
+
+export interface ProtocolVersion {
+  major: number;
+  minor: number;
+}
+
+export interface HelloParams {
+  clientName: string;
+  clientVersion: string;
+  protocolMin: ProtocolVersion;
+  protocolMax: ProtocolVersion;
+  audioFrameVersion: number;
+  token?: string;
+  origin?: string;
 }
 
 export interface HelloRequest {
   method: "bridge.hello";
-  params: {
-    clientName: string;
-    clientVersion: string;
-    protocolMin: { major: number; minor: number };
-    protocolMax: { major: number; minor: number };
-    audioFrameVersion: number;
+  params: HelloParams;
+}
+
+export interface BridgeHelloResult {
+  bridgeName: string;
+  bridgeVersion: string;
+  protocol: ProtocolVersion;
+  audioFrameVersion: number;
+  pairingRequired: boolean;
+  origin?: string;
+  client: {
+    name: string;
+    version: string;
   };
+  lowLatency: {
+    sharedArrayBufferRequired: boolean;
+    crossOriginIsolationRequired: boolean;
+  };
+  allowedOrigins: string[];
+  metrics: BridgeMetrics;
 }
 
 export interface LowLatencyPrerequisites {
@@ -30,6 +65,8 @@ export class WVSTClient {
     public readonly endpoint: string,
     public readonly clientName: string,
     public readonly clientVersion: string,
+    private readonly transport: RpcTransport,
+    public readonly hello: BridgeHelloResult,
   ) {}
 
   static async connect(options: ConnectOptions = {}): Promise<WVSTClient> {
@@ -45,11 +82,20 @@ export class WVSTClient {
       }
     }
 
-    return new WVSTClient(
-      options.endpoint ?? DEFAULT_ENDPOINT,
-      options.clientName ?? "@wvst/web",
-      options.clientVersion ?? "0.1.0",
-    );
+    const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
+    const clientName = options.clientName ?? "@wvst/web";
+    const clientVersion = options.clientVersion ?? "0.1.0";
+    const transport = await WebSocketRpcTransport.connect(endpoint);
+
+    try {
+      const params = createHelloParams(clientName, clientVersion, options.token);
+      const hello = await transport.request<BridgeHelloResult>("bridge.hello", params);
+
+      return new WVSTClient(endpoint, clientName, clientVersion, transport, hello);
+    } catch (error) {
+      transport.close();
+      throw error;
+    }
   }
 
   static lowLatencyPrerequisites(): LowLatencyPrerequisites {
@@ -62,14 +108,43 @@ export class WVSTClient {
   createHelloRequest(): HelloRequest {
     return {
       method: "bridge.hello",
-      params: {
-        clientName: this.clientName,
-        clientVersion: this.clientVersion,
-        protocolMin: { major: 1, minor: 0 },
-        protocolMax: { major: 1, minor: 0 },
-        audioFrameVersion: AUDIO_FRAME_VERSION,
-      },
+      params: createHelloParams(this.clientName, this.clientVersion),
     };
+  }
+
+  metrics(): Promise<BridgeMetrics> {
+    return this.transport.request<BridgeMetrics>("bridge.metrics", {});
+  }
+
+  echoAudioFrame(frame: ArrayBuffer): Promise<ArrayBuffer> {
+    return this.transport.sendBinary(frame);
+  }
+
+  request<T = JsonValue>(method: string, params: unknown): Promise<T> {
+    return this.transport.request<T>(method, params);
+  }
+
+  close(): void {
+    this.transport.close();
   }
 }
 
+function createHelloParams(
+  clientName: string,
+  clientVersion: string,
+  token?: string,
+): HelloParams {
+  return {
+    clientName,
+    clientVersion,
+    protocolMin: { major: 1, minor: 0 },
+    protocolMax: { major: 1, minor: 0 },
+    audioFrameVersion: AUDIO_FRAME_VERSION,
+    token,
+    origin: currentOrigin(),
+  };
+}
+
+function currentOrigin(): string | undefined {
+  return typeof globalThis.location === "object" ? globalThis.location.origin : undefined;
+}

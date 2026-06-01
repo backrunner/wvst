@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/wvst-bridge-server",
     "crates/wvst-core",
     "crates/wvst-protocol",
     "crates/wvst-ringbuf",
