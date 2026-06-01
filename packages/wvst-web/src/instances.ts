@@ -1,3 +1,5 @@
+import type { JsonValue } from "./transport.js";
+
 export interface InstanceCreateOptions {
   pluginId: string;
   classId?: string;
@@ -18,8 +20,23 @@ export interface InstanceDescriptor {
   maxBlockFrames: number;
   inputChannels: number;
   outputChannels: number;
-  state: "allocated" | "ready";
+  state: "allocated" | "ready" | "failed";
   workerState: "not-started" | "ready" | "failed";
+}
+
+export interface InstanceStatusOptions {
+  instanceId: number;
+}
+
+export interface InstanceWorkerMetrics {
+  ipcVersion: number;
+  instances: number;
+  [key: string]: JsonValue;
+}
+
+export interface InstanceStatusResult {
+  instance: InstanceDescriptor;
+  worker: InstanceWorkerMetrics;
 }
 
 export interface InstanceDestroyOptions {
@@ -35,5 +52,6 @@ export interface InstanceDestroyResult {
 export interface InstanceApi {
   create(options: InstanceCreateOptions): Promise<InstanceDescriptor>;
   list(): Promise<InstanceDescriptor[]>;
+  status(options: InstanceStatusOptions): Promise<InstanceStatusResult>;
   destroy(options: InstanceDestroyOptions): Promise<InstanceDestroyResult>;
 }

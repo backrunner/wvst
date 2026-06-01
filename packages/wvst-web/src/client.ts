@@ -5,6 +5,8 @@ import type {
   InstanceDescriptor,
   InstanceDestroyOptions,
   InstanceDestroyResult,
+  InstanceStatusOptions,
+  InstanceStatusResult,
 } from "./instances.js";
 import type {
   PluginApi,
@@ -90,6 +92,8 @@ export class WVSTClient {
       create: (options: InstanceCreateOptions) =>
         this.request<InstanceDescriptor>("instance.create", options),
       list: () => this.request<InstanceDescriptor[]>("instance.list", {}),
+      status: (options: InstanceStatusOptions) =>
+        this.request<InstanceStatusResult>("instance.status", options),
       destroy: (options: InstanceDestroyOptions) =>
         this.request<InstanceDestroyResult>("instance.destroy", options),
     };

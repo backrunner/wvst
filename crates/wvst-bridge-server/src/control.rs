@@ -149,6 +149,10 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             response_result(request.id, json!(context.instances.list())),
             session_authorized,
         ),
+        "instance.status" => ControlResponse::new(
+            control_instances::handle_instance_status(request.id, request.params, context).await,
+            session_authorized,
+        ),
         "instance.destroy" => ControlResponse::new(
             control_instances::handle_instance_destroy(request.id, request.params, context).await,
             session_authorized,

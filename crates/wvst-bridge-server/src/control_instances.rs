@@ -4,7 +4,9 @@ use super::{
     ControlContext, response_error, response_instance_error, response_result,
     response_worker_supervisor_error,
 };
-use crate::instance_registry::{InstanceCreateParams, InstanceDestroyParams, InstanceError};
+use crate::instance_registry::{
+    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceStatusParams,
+};
 
 pub async fn handle_instance_create(
     id: Value,
@@ -67,5 +69,37 @@ pub async fn handle_instance_destroy(
     match context.instances.destroy(params) {
         Ok(result) => response_result(id, json!(result)),
         Err(error) => response_instance_error(id, error),
+    }
+}
+
+pub async fn handle_instance_status(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceStatusParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid instance status params: {error}"),
+            );
+        }
+    };
+
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.workers.heartbeat_instance(params.instance_id).await {
+        Ok(worker) => match context.instances.mark_worker_ready(params.instance_id) {
+            Ok(instance) => response_result(id, json!({ "instance": instance, "worker": worker })),
+            Err(error) => response_instance_error(id, error),
+        },
+        Err(error) => {
+            let _ = context.instances.mark_worker_failed(params.instance_id);
+            response_worker_supervisor_error(id, error)
+        }
     }
 }

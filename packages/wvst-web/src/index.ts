@@ -30,6 +30,9 @@ export {
   type InstanceDescriptor,
   type InstanceDestroyOptions,
   type InstanceDestroyResult,
+  type InstanceStatusOptions,
+  type InstanceStatusResult,
+  type InstanceWorkerMetrics,
 } from "./instances.js";
 export {
   type PluginApi,

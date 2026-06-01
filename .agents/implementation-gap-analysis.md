@@ -1,6 +1,6 @@
 # WVST Implementation Gap Analysis
 
-更新日期：2026-06-01
+更新日期：2026-06-02
 
 ## 当前已完成能力
 
@@ -15,6 +15,7 @@
 - `wvst-host-worker serve` 已提供常驻 JSON-line IPC 原型，支持 worker hello、fake passthrough instance create/destroy 和 debug 小块处理。
 - Bridge `instance.create` 已能启动并绑定 `wvst-host-worker serve`，成功后实例进入 `ready` / `ready` 状态。
 - Bridge worker supervisor 已加入 stderr 摘要、启动失败计数和基础 quarantine，避免同一故障插件无限重启。
+- Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 
 ## 距离完整能力的主要差距
 
@@ -22,8 +23,8 @@
 
 仍缺少：
 
-- `allocated` 之后的 worker-backed 状态迁移，例如 `starting`、`ready`、`processing`、`failed`。
-- 每个实例的独立 worker 进程、资源释放和 crash/restart 状态机。
+- `ready` 之后的 `processing`、`stopping` 等更细生命周期，以及对启动中状态的显式暴露。
+- 每个实例的独立 worker 进程已具备原型，仍缺少 restart 状态机、崩溃事件推送和策略化资源回收。
 - 同一插件 N 个实例的实际 worker 隔离策略和调度策略。
 
 这是下一阶段最高优先级，因为当前实例句柄还没有绑定常驻 worker 和真实 VST 对象。
@@ -34,7 +35,7 @@
 
 仍缺少：
 
-- 更完整的 Bridge worker supervisor 生命周期管理，包括 heartbeat、restart policy 和崩溃状态回传。
+- 更完整的 Bridge worker supervisor 生命周期管理，包括 restart policy、主动 crash event 推送和 quarantine 解除策略。
 - 正式 framed IPC，替换当前 JSON-line 原型。
 - 超时后的全链路 kill/wait 审计、restart 指标和 crash quarantine 解除策略。
 - worker capability negotiation，确保 Bridge/Web/worker 协议匹配。

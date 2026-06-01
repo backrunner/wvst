@@ -33,6 +33,12 @@ pub struct InstanceDestroyParams {
     pub instance_id: u64,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceStatusParams {
+    pub instance_id: u64,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceRecord {
@@ -55,6 +61,7 @@ pub struct InstanceRecord {
 pub enum InstanceState {
     Allocated,
     Ready,
+    Failed,
     Destroyed,
 }
 
@@ -143,6 +150,15 @@ impl InstanceRegistry {
             .unwrap_or_default()
     }
 
+    pub fn get(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
+        self.records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?
+            .get(&instance_id)
+            .cloned()
+            .ok_or(InstanceError::InstanceNotFound(instance_id))
+    }
+
     pub fn mark_worker_ready(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
         let mut records = self
             .records
@@ -167,6 +183,7 @@ impl InstanceRegistry {
             .get_mut(&instance_id)
             .ok_or(InstanceError::InstanceNotFound(instance_id))?;
 
+        record.state = InstanceState::Failed;
         record.worker_state = WorkerState::Failed;
 
         Ok(record.clone())
@@ -343,6 +360,20 @@ mod tests {
 
         assert_eq!(ready.state, InstanceState::Ready);
         assert_eq!(ready.worker_state, WorkerState::Ready);
+    }
+
+    #[test]
+    fn marks_worker_failed() {
+        let registry = InstanceRegistry::new();
+        let plugin = plugin();
+        let record = registry.create(create_params(), &plugin).expect("instance");
+
+        let failed = registry
+            .mark_worker_failed(record.instance_id)
+            .expect("failed");
+
+        assert_eq!(failed.state, InstanceState::Failed);
+        assert_eq!(failed.worker_state, WorkerState::Failed);
     }
 
     #[test]

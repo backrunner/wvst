@@ -21,7 +21,7 @@ pub struct WorkerSupervisor {
     executable: PathBuf,
     timeout: Duration,
     failures: Mutex<BTreeMap<String, u32>>,
-    processes: Mutex<BTreeMap<u64, WorkerProcess>>,
+    processes: Mutex<BTreeMap<u64, Arc<Mutex<WorkerProcess>>>>,
     quarantined: Mutex<BTreeMap<String, u32>>,
 }
 
@@ -76,6 +76,9 @@ pub enum WorkerSupervisorError {
         plugin_id: String,
         failures: u32,
     },
+    WorkerMissing {
+        instance_id: u64,
+    },
     WorkerRejected {
         code: i64,
         message: String,
@@ -107,7 +110,7 @@ impl WorkerSupervisor {
                 self.processes
                     .lock()
                     .await
-                    .insert(record.instance_id, process);
+                    .insert(record.instance_id, Arc::new(Mutex::new(process)));
                 Ok(ready)
             }
             Err(error) => {
@@ -121,9 +124,10 @@ impl WorkerSupervisor {
         &self,
         instance_id: u64,
     ) -> Result<Option<Value>, WorkerSupervisorError> {
-        let Some(mut process) = self.processes.lock().await.remove(&instance_id) else {
+        let Some(process) = self.processes.lock().await.remove(&instance_id) else {
             return Ok(None);
         };
+        let mut process = process.lock().await;
 
         let result = process
             .request(
@@ -131,10 +135,34 @@ impl WorkerSupervisor {
                 json!({ "instanceId": instance_id }),
                 self.timeout,
             )
-            .await?;
+            .await;
         process.shutdown().await;
 
-        Ok(Some(result))
+        result.map(Some)
+    }
+
+    pub async fn heartbeat_instance(
+        &self,
+        instance_id: u64,
+    ) -> Result<Value, WorkerSupervisorError> {
+        let Some(process) = self.processes.lock().await.get(&instance_id).cloned() else {
+            return Err(WorkerSupervisorError::WorkerMissing { instance_id });
+        };
+
+        let result = process
+            .lock()
+            .await
+            .request("worker.metrics", json!({}), self.timeout)
+            .await;
+
+        match result {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                process.lock().await.shutdown().await;
+                self.remove_process_if_same(instance_id, &process).await;
+                Err(error)
+            }
+        }
     }
 }
 
@@ -327,6 +355,16 @@ impl WorkerSupervisor {
         self.failures.lock().await.remove(plugin_id);
         self.quarantined.lock().await.remove(plugin_id);
     }
+
+    async fn remove_process_if_same(&self, instance_id: u64, process: &Arc<Mutex<WorkerProcess>>) {
+        let mut processes = self.processes.lock().await;
+        if processes
+            .get(&instance_id)
+            .is_some_and(|current| Arc::ptr_eq(current, process))
+        {
+            processes.remove(&instance_id);
+        }
+    }
 }
 
 impl StderrTail {
@@ -365,6 +403,7 @@ impl WorkerSupervisorError {
             Self::Spawn { .. } | Self::MissingPipe(_) | Self::Io(_) => 5036,
             Self::InvalidJson(_) | Self::Protocol { .. } => 5037,
             Self::Quarantined { .. } => 4093,
+            Self::WorkerMissing { .. } => 4041,
         }
     }
 
@@ -388,6 +427,9 @@ impl WorkerSupervisorError {
                 failures,
             } => {
                 format!("worker quarantined for plugin {plugin_id} after {failures} failures")
+            }
+            Self::WorkerMissing { instance_id } => {
+                format!("worker not found for instance {instance_id}")
             }
             Self::WorkerRejected { message, .. } => message.clone(),
         }
@@ -421,6 +463,9 @@ impl WorkerSupervisorError {
                 failures,
             } => {
                 json!({ "kind": "quarantined", "pluginId": plugin_id, "failures": failures })
+            }
+            Self::WorkerMissing { instance_id } => {
+                json!({ "kind": "worker-missing", "instanceId": instance_id })
             }
             Self::WorkerRejected {
                 code,
@@ -460,53 +505,5 @@ impl WorkerSupervisor {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::instance_registry::{InstanceState, WorkerState};
-
-    #[tokio::test]
-    async fn quarantines_plugin_after_repeated_start_failures() {
-        let supervisor = WorkerSupervisor::new_for_test(
-            PathBuf::from("missing-wvst-worker"),
-            Duration::from_millis(50),
-        );
-        let record = record();
-
-        for _ in 0..QUARANTINE_FAILURES {
-            assert!(matches!(
-                supervisor.start_instance(&record).await,
-                Err(WorkerSupervisorError::Spawn { .. })
-            ));
-        }
-
-        let error = supervisor
-            .start_instance(&record)
-            .await
-            .expect_err("quarantined");
-
-        assert!(matches!(
-            error,
-            WorkerSupervisorError::Quarantined {
-                failures: QUARANTINE_FAILURES,
-                ..
-            }
-        ));
-    }
-
-    fn record() -> InstanceRecord {
-        InstanceRecord {
-            instance_id: 1,
-            stream_id: 1,
-            plugin_id: "vst3:test".to_string(),
-            plugin_path: "/tmp/Test.vst3".to_string(),
-            class_id: Some("class-a".to_string()),
-            class_name: Some("Test".to_string()),
-            sample_rate: 48_000,
-            max_block_frames: 128,
-            input_channels: 2,
-            output_channels: 2,
-            state: InstanceState::Allocated,
-            worker_state: WorkerState::NotStarted,
-        }
-    }
-}
+#[path = "worker_supervisor_tests.rs"]
+mod tests;
