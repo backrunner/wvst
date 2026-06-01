@@ -13,8 +13,12 @@ use tokio::time::timeout;
 use crate::instance_registry::InstanceRecord;
 
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
+const EXPECTED_WORKER_IPC_VERSION: u16 = 1;
 const QUARANTINE_FAILURES: u32 = 3;
 const STDERR_TAIL_BYTES: usize = 4096;
+
+#[path = "worker_supervisor_hello.rs"]
+mod worker_supervisor_hello;
 
 #[derive(Debug)]
 pub struct WorkerSupervisor {
@@ -75,6 +79,13 @@ pub enum WorkerSupervisorError {
     Quarantined {
         plugin_id: String,
         failures: u32,
+    },
+    IncompatibleWorker {
+        reason: String,
+        expected_ipc_version: u16,
+        actual_ipc_version: Option<u64>,
+        hello: Value,
+        stderr: String,
     },
     WorkerMissing {
         instance_id: u64,
@@ -309,9 +320,19 @@ impl WorkerSupervisor {
         record: &InstanceRecord,
     ) -> Result<(Value, WorkerProcess), WorkerSupervisorError> {
         let mut process = WorkerProcess::spawn(self.executable.clone()).await?;
-        if let Err(error) = process
+        let hello = match process
             .request("worker.hello", json!({}), self.timeout)
             .await
+        {
+            Ok(hello) => hello,
+            Err(error) => {
+                process.shutdown().await;
+                return Err(error);
+            }
+        };
+
+        if let Err(error) =
+            worker_supervisor_hello::validate_worker_hello(&process.stderr, hello).await
         {
             process.shutdown().await;
             return Err(error);
@@ -419,6 +440,7 @@ impl WorkerSupervisorError {
             Self::Spawn { .. } | Self::MissingPipe(_) | Self::Io(_) => 5036,
             Self::InvalidJson(_) | Self::Protocol { .. } => 5037,
             Self::Quarantined { .. } => 4093,
+            Self::IncompatibleWorker { .. } => 4094,
             Self::WorkerMissing { .. } => 4041,
         }
     }
@@ -443,6 +465,9 @@ impl WorkerSupervisorError {
                 failures,
             } => {
                 format!("worker quarantined for plugin {plugin_id} after {failures} failures")
+            }
+            Self::IncompatibleWorker { reason, .. } => {
+                format!("worker incompatible: {reason}")
             }
             Self::WorkerMissing { instance_id } => {
                 format!("worker not found for instance {instance_id}")
@@ -479,6 +504,22 @@ impl WorkerSupervisorError {
                 failures,
             } => {
                 json!({ "kind": "quarantined", "pluginId": plugin_id, "failures": failures })
+            }
+            Self::IncompatibleWorker {
+                reason,
+                expected_ipc_version,
+                actual_ipc_version,
+                hello,
+                stderr,
+            } => {
+                json!({
+                    "kind": "worker-incompatible",
+                    "reason": reason,
+                    "expectedIpcVersion": expected_ipc_version,
+                    "actualIpcVersion": actual_ipc_version,
+                    "hello": hello,
+                    "stderr": stderr,
+                })
             }
             Self::WorkerMissing { instance_id } => {
                 json!({ "kind": "worker-missing", "instanceId": instance_id })

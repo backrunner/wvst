@@ -17,6 +17,7 @@
 - Bridge worker supervisor 已加入 stderr 摘要、启动失败计数和基础 quarantine，避免同一故障插件无限重启。
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
+- Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion` 和 `instanceLifecycle` capability，避免 Bridge 与不兼容 worker 继续创建实例。
 
 ## 距离完整能力的主要差距
 
@@ -39,7 +40,7 @@
 - 更完整的 Bridge worker supervisor 生命周期管理，包括自动 restart policy、主动 crash event 推送和 quarantine 解除策略。
 - 正式 framed IPC，替换当前 JSON-line 原型。
 - 超时后的全链路 kill/wait 审计、restart 指标和 crash quarantine 解除策略。
-- worker capability negotiation，确保 Bridge/Web/worker 协议匹配。
+- 更完整的 worker capability negotiation，包括按数据面、MIDI、参数自动化和诊断能力分层协商。
 
 ### 3. 真实 VST3 component/controller lifecycle
 
@@ -84,7 +85,7 @@
 ## 建议下一阶段
 
 1. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
-2. 把 worker JSON-line IPC 抽象为可替换 framed IPC，并加入 capability negotiation。
+2. 把 worker JSON-line IPC 抽象为可替换 framed IPC，并扩展 capability negotiation。
 3. 将 Bridge binary echo 改为按 `streamId` 路由到 worker passthrough，形成 WebAudio 到 worker 再返回的端到端闭环。
 4. 在 fake passthrough 稳定后，实现 VST3 `createInstance` 和 2-in/2-out effect processing。
 5. 增加 worker watchdog、超时 kill、restart metrics 和崩溃 quarantine。

@@ -238,6 +238,7 @@ fn worker_hello() -> Value {
         "ipcVersion": WORKER_IPC_VERSION,
         "capabilities": {
             "factoryInfo": true,
+            "instanceLifecycle": true,
             "fakePassthrough": true,
             "debugJsonAudioProcess": true
         }
@@ -312,6 +313,7 @@ mod tests {
 
         assert_eq!(value["result"]["workerName"], "wvst-host-worker");
         assert_eq!(value["result"]["ipcVersion"], WORKER_IPC_VERSION);
+        assert_eq!(value["result"]["capabilities"]["instanceLifecycle"], true);
     }
 
     #[test]
