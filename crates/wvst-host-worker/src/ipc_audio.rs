@@ -83,6 +83,36 @@ fn process_message(
             ))
         })?;
 
+    if !instance.processing {
+        return Err(AudioProcessError::invalid(format!(
+            "instance for stream {} is not processing",
+            input_header.stream_id.get()
+        )));
+    }
+
+    if !instance.backend.supports_binary_audio_process() {
+        return Err(AudioProcessError::invalid(format!(
+            "backend {:?} does not expose binary audio processing yet",
+            instance.backend.kind()
+        )));
+    }
+
+    if input_header.sample_rate.get() != instance.sample_rate {
+        return Err(AudioProcessError::invalid(format!(
+            "sample rate mismatch: expected {}, got {}",
+            instance.sample_rate,
+            input_header.sample_rate.get()
+        )));
+    }
+
+    if input_header.frames.get() > instance.max_block_frames {
+        return Err(AudioProcessError::invalid(format!(
+            "frame count exceeds max block size: max {}, got {}",
+            instance.max_block_frames,
+            input_header.frames.get()
+        )));
+    }
+
     if usize::from(input_header.channels.get()) != instance.input_channels {
         return Err(AudioProcessError::invalid(format!(
             "input channel mismatch: expected {}, got {}",
@@ -205,10 +235,15 @@ mod tests {
     fn processes_audio_frame_for_registered_stream() {
         let mut state = WorkerIpcState::default();
         let create = super::super::handle_ipc_line(
-            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","inputChannels":2,"outputChannels":2}}"#,
+            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":2,"outputChannels":2}}"#,
             &mut state,
         );
         assert!(create.contains(r#""result""#));
+        let start = super::super::handle_ipc_line(
+            r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,
+            &mut state,
+        );
+        assert!(start.contains(r#""result""#));
 
         let request =
             WorkerAudioIpcMessage::process_request(11, audio_frame(9)).expect("request message");
@@ -221,6 +256,24 @@ mod tests {
             read_f32_payload(&response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
             vec![0.1, 0.2, 0.3, 0.4]
         );
+    }
+
+    #[test]
+    fn rejects_audio_frame_before_processing_starts() {
+        let mut state = WorkerIpcState::default();
+        let create = super::super::handle_ipc_line(
+            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":2,"outputChannels":2}}"#,
+            &mut state,
+        );
+        assert!(create.contains(r#""result""#));
+
+        let request =
+            WorkerAudioIpcMessage::process_request(11, audio_frame(9)).expect("request message");
+        let state = Arc::new(Mutex::new(state));
+        let error = process_message(request, &state).expect_err("not processing");
+
+        assert_eq!(error.status_code, AUDIO_ERROR_INVALID_REQUEST);
+        assert!(error.message.contains("not processing"));
     }
 
     fn audio_frame(stream_id: u64) -> Vec<u8> {

@@ -18,13 +18,18 @@
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
 - Bridge/Web SDK 已提供 `instance.start` / `instance.stop` 处理生命周期控制，实例状态可从 `ready` 切到 `processing` / `stopped`。
+- Bridge 音频路由现在要求实例处于 `processing` 状态；未 start、已 stop 或处理失败都会返回带 `silence` / `process-error` 的诊断静音帧，而不是继续把音频送进 worker。
+- Instance heartbeat 已避免把正在 `processing` 的实例误降回 `ready`，降低控制面状态刷新对数据面的干扰。
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion`、`instanceLifecycle` 和 `binaryAudioProcess` capability，避免 Bridge 与不兼容 worker 继续创建实例。
+- Bridge 创建 worker 实例时已把 `sampleRate` 和 `maxBlockFrames` 传给 worker；worker audio IPC 会验证 sample rate、最大 block、输入通道数和 processing 状态。
 - Bridge 二进制音频帧已能按 `streamId` 路由到对应 worker 的独立二进制 audio IPC，并回传 worker 处理后的 F32 frame；未匹配实例或非法帧暂时保留 echo fallback。
 - Bridge metrics 已区分二进制帧总量、成功路由音频帧、fallback echo 和音频路由失败，便于后续接入 drop/late/underflow/overflow 统计。
 - Bridge/Web SDK 已提供 `stream.open` / `stream.close` 控制 API，实例记录包含 `streamState`，Bridge 只将 open stream 的音频帧路由到 worker。
 - 对于已知 stream 的关闭或处理失败场景，Bridge 会返回带 `silence` / `end-of-stream` / `process-error` flag 的诊断静音音频帧，避免把异常伪装成正常 echo。
 - Web `bridge-worker` 已具备从 SAB input ring 读取 quantum、编码 WVST binary audio frame、发送 Bridge 并写回 output ring 的基础 audio pump；AudioWorklet processor 已支持通过 SAB ring 和计数器交换音频块。
 - Web SDK 已提供 `WVSTBridgeWorkerClient`，封装 bridge worker 的 connect/request/sendBinary/startAudioStream/stopAudioStream 命令，避免应用侧手写 worker message protocol。
+- `wvst-vst3-host` 已增加 VST3 FUID 规范化、`IPluginFactory::createInstance` ABI skeleton 和 macOS `create_vst3_component_probe()` safe facade；`wvst-host-worker component-probe <plugin.vst3> <class-id>` 可在隔离 worker 内验证 component 创建并释放。
+- `wvst-host-worker serve` 已能在 instance create 时对有效 VST3 class id 尝试 component createInstance probe；真实 VST3 音频处理尚未启用时会保持和 passthrough 后端清晰区分。
 
 ## 距离完整能力的主要差距
 
@@ -51,12 +56,12 @@
 
 ### 3. 真实 VST3 component/controller lifecycle
 
-当前只完成 factory info 读取，尚未创建真实 VST3 component/controller。
+当前已完成 factory info 读取和 `IPluginFactory::createInstance` component probe，尚未进入完整 component/controller 运行态。
 
 仍缺少：
 
-- `IPluginFactory::createInstance` ABI。
-- component/controller 初始化、bus arrangement、sample rate、max block size。
+- 持久持有 component/controller 对象的 worker 内状态模型。
+- component/controller 初始化、host context、bus arrangement、sample rate、max block size。
 - `setProcessing`、`process`、latency/tail 查询。
 - 参数、state、program list、unit metadata。
 
@@ -69,7 +74,7 @@
 - stream open/close 已有首版控制 API；仍缺少 end-of-stream 帧语义、close 后 drain 策略和 WebAudio 端自动重开策略。
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，仍缺少共享内存/预分配 buffer 和背压语义。
-- worker 到真实 VST `process()` 的预分配 buffer 路径。
+- worker passthrough 路径已验证 sample rate / max block / processing state；仍缺少 worker 到真实 VST `process()` 的预分配 buffer 路径。
 - late/drop/underflow/overflow 策略和 p50/p95/p99 指标；当前只有 route/fallback/failure 计数，还没有时延分位数。
 
 ### 5. MIDI 与音源 VST
@@ -91,8 +96,8 @@
 
 ## 建议下一阶段
 
-1. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
-2. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
-3. 为 audio IPC 增加错误帧语义、stream open/close 和 backpressure/late-frame 指标。
-4. 在 fake passthrough 稳定后，实现 VST3 `createInstance` 和 2-in/2-out effect processing。
-5. 增加 worker watchdog、超时 kill、restart metrics 和崩溃 quarantine。
+1. 在 `createInstance` probe 之后实现持久 VST3 component/controller holder，并补齐初始化、bus arrangement、setupProcessing 和 setProcessing 状态机。
+2. 将 worker passthrough audio buffer path 替换为真实 VST3 2-in/2-out effect `process()` 预分配 buffer path，并用 fake ABI fixture 覆盖 CI。
+3. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
+4. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
+5. 为 audio IPC 增加 backpressure/late-frame 指标和 p50/p95/p99 延迟统计。

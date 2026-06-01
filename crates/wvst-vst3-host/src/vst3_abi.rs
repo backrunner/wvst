@@ -1,6 +1,23 @@
 use std::ffi::{c_char, c_void};
 
 pub const K_RESULT_OK: i32 = 0;
+pub const VST3_I_COMPONENT_IID: &str = "E831FF31F2D54301928EBBEE25697802";
+
+#[repr(C)]
+pub struct FUnknown {
+    pub vtable: *const FUnknownVTable,
+}
+
+#[repr(C)]
+pub struct FUnknownVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut FUnknown,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut FUnknown) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut FUnknown) -> u32,
+}
 
 #[repr(C)]
 pub struct IPluginFactory {
@@ -88,6 +105,23 @@ pub fn tuid_hex(value: &[u8; 16]) -> String {
         .collect::<String>()
 }
 
+pub fn normalize_fuid_string(value: &str) -> Option<String> {
+    let mut normalized = String::with_capacity(32);
+    for character in value.trim().chars() {
+        match character {
+            '{' | '}' | '-' => {}
+            value if value.is_ascii_hexdigit() => normalized.push(value.to_ascii_uppercase()),
+            _ => return None,
+        }
+    }
+
+    if normalized.len() == 32 {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +138,14 @@ mod tests {
     #[test]
     fn renders_tuid_as_hex() {
         assert_eq!(tuid_hex(&[1; 16]), "01010101010101010101010101010101");
+    }
+
+    #[test]
+    fn normalizes_fuid_strings() {
+        assert_eq!(
+            normalize_fuid_string("{e831ff31-f2d5-4301-928e-bbee25697802}").as_deref(),
+            Some(VST3_I_COMPONENT_IID)
+        );
+        assert!(normalize_fuid_string("class-a").is_none());
     }
 }

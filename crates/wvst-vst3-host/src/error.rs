@@ -6,13 +6,32 @@ pub type HostResult<T> = Result<T, HostError>;
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum HostError {
     BundleExecutableNotFound(String),
-    FactoryCallFailed { method: &'static str, result: i32 },
+    FactoryCallFailed {
+        method: &'static str,
+        result: i32,
+    },
     FactoryReturnedNull,
+    InstanceCreationFailed {
+        class_id: String,
+        interface_id: String,
+        result: i32,
+    },
+    InstanceReturnedNull {
+        class_id: String,
+        interface_id: String,
+    },
+    InvalidClassId(String),
     MissingSymbol(&'static str),
     ModuleLoadFailed(String),
     UnsupportedPlatform(&'static str),
-    InvalidChannelCount { input: usize, output: usize },
-    InvalidBufferLength { expected: usize, actual: usize },
+    InvalidChannelCount {
+        input: usize,
+        output: usize,
+    },
+    InvalidBufferLength {
+        expected: usize,
+        actual: usize,
+    },
 }
 
 impl Display for HostError {
@@ -28,6 +47,28 @@ impl Display for HostError {
                 )
             }
             Self::FactoryReturnedNull => formatter.write_str("GetPluginFactory returned null"),
+            Self::InstanceCreationFailed {
+                class_id,
+                interface_id,
+                result,
+            } => {
+                write!(
+                    formatter,
+                    "VST3 createInstance failed for class {class_id} and interface {interface_id}: {result}"
+                )
+            }
+            Self::InstanceReturnedNull {
+                class_id,
+                interface_id,
+            } => {
+                write!(
+                    formatter,
+                    "VST3 createInstance returned null for class {class_id} and interface {interface_id}"
+                )
+            }
+            Self::InvalidClassId(class_id) => {
+                write!(formatter, "invalid VST3 class id: {class_id}")
+            }
             Self::MissingSymbol(symbol) => write!(formatter, "missing VST3 symbol: {symbol}"),
             Self::ModuleLoadFailed(message) => write!(formatter, "module load failed: {message}"),
             Self::UnsupportedPlatform(message) => formatter.write_str(message),

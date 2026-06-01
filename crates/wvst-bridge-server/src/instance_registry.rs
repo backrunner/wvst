@@ -233,8 +233,14 @@ impl InstanceRegistry {
             .get_mut(&instance_id)
             .ok_or(InstanceError::InstanceNotFound(instance_id))?;
 
-        record.state = InstanceState::Ready;
-        record.worker_state = WorkerState::Ready;
+        match record.state {
+            InstanceState::Processing => record.worker_state = WorkerState::Processing,
+            InstanceState::Stopped => record.worker_state = WorkerState::Stopped,
+            _ => {
+                record.state = InstanceState::Ready;
+                record.worker_state = WorkerState::Ready;
+            }
+        }
 
         Ok(record.clone())
     }

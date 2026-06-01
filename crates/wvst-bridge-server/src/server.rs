@@ -14,7 +14,7 @@ use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
 use crate::error::BridgeResult;
 use crate::host_worker::HostWorkerClient;
-use crate::instance_registry::{InstanceRecord, InstanceRegistry, StreamState};
+use crate::instance_registry::{InstanceRecord, InstanceRegistry, InstanceState, StreamState};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::worker_supervisor::WorkerSupervisor;
@@ -186,6 +186,13 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteRes
             header,
             &instance,
             AudioFrameFlags::SILENCE | AudioFrameFlags::END_OF_STREAM,
+        );
+    }
+    if instance.state != InstanceState::Processing {
+        return diagnostic_silence_frame(
+            header,
+            &instance,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
         );
     }
 

@@ -497,6 +497,8 @@ fn instance_create_params(record: &InstanceRecord) -> Value {
         "pluginPath": record.plugin_path,
         "classId": record.class_id,
         "className": record.class_name,
+        "sampleRate": record.sample_rate,
+        "maxBlockFrames": record.max_block_frames,
         "inputChannels": record.input_channels,
         "outputChannels": record.output_channels,
     })

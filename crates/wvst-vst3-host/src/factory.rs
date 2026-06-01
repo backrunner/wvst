@@ -21,10 +21,33 @@ pub struct Vst3FactoryClass {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vst3ComponentProbe {
+    pub bundle_path: String,
+    pub class_id: String,
+    pub interface_id: String,
+    pub created: bool,
+}
+
 pub fn load_vst3_factory_info(
     bundle_path: impl AsRef<std::path::Path>,
 ) -> HostResult<Vst3FactoryInfo> {
     platform::load_vst3_factory_info(bundle_path.as_ref())
+}
+
+pub fn create_vst3_component_probe(
+    bundle_path: impl AsRef<std::path::Path>,
+    class_id: &str,
+) -> HostResult<Vst3ComponentProbe> {
+    let class_id = crate::vst3_abi::normalize_fuid_string(class_id)
+        .ok_or_else(|| crate::HostError::InvalidClassId(class_id.to_string()))?;
+
+    platform::create_vst3_component_probe(
+        bundle_path.as_ref(),
+        &class_id,
+        crate::vst3_abi::VST3_I_COMPONENT_IID,
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -44,7 +67,7 @@ mod platform {
 
     use super::{Vst3FactoryClass, Vst3FactoryInfo};
     use crate::vst3_abi::{
-        IPluginFactory, K_RESULT_OK, PClassInfo, PFactoryInfo, fixed_string, tuid_hex,
+        FUnknown, IPluginFactory, K_RESULT_OK, PClassInfo, PFactoryInfo, fixed_string, tuid_hex,
     };
     use crate::{HostError, HostResult};
 
@@ -60,6 +83,26 @@ mod platform {
         let info = factory.info()?;
 
         Ok(info)
+    }
+
+    pub fn create_vst3_component_probe(
+        bundle_path: &Path,
+        class_id: &str,
+        interface_id: &str,
+    ) -> HostResult<super::Vst3ComponentProbe> {
+        let mut bundle = MacBundle::open(bundle_path)?;
+        bundle.call_entry()?;
+
+        let factory = bundle.plugin_factory()?;
+        let instance = factory.create_instance(class_id, interface_id)?;
+        drop(instance);
+
+        Ok(super::Vst3ComponentProbe {
+            bundle_path: bundle_path.to_string_lossy().into_owned(),
+            class_id: class_id.to_string(),
+            interface_id: interface_id.to_string(),
+            created: true,
+        })
     }
 
     struct MacBundle {
@@ -269,6 +312,48 @@ mod platform {
             Ok(classes)
         }
 
+        fn create_instance(
+            &self,
+            class_id: &str,
+            interface_id: &str,
+        ) -> HostResult<Vst3UnknownInstance> {
+            let vtable = self.vtable()?;
+            let class_id_string = CString::new(class_id)
+                .map_err(|error| HostError::ModuleLoadFailed(error.to_string()))?;
+            let interface_id_string = CString::new(interface_id)
+                .map_err(|error| HostError::ModuleLoadFailed(error.to_string()))?;
+            let mut object: *mut c_void = std::ptr::null_mut();
+
+            // SAFETY: `self.factory` is a valid IPluginFactory pointer. The class
+            // and interface ids are NUL-terminated FUID strings, and `object`
+            // points to writable stack storage for the returned FUnknown pointer.
+            let result = unsafe {
+                ((*vtable).create_instance)(
+                    self.factory,
+                    class_id_string.as_ptr(),
+                    interface_id_string.as_ptr(),
+                    &mut object,
+                )
+            };
+            if result != K_RESULT_OK {
+                return Err(HostError::InstanceCreationFailed {
+                    class_id: class_id.to_string(),
+                    interface_id: interface_id.to_string(),
+                    result,
+                });
+            }
+            if object.is_null() {
+                return Err(HostError::InstanceReturnedNull {
+                    class_id: class_id.to_string(),
+                    interface_id: interface_id.to_string(),
+                });
+            }
+
+            Ok(Vst3UnknownInstance {
+                object: object.cast(),
+            })
+        }
+
         fn vtable(&self) -> HostResult<*const crate::vst3_abi::IPluginFactoryVTable> {
             // SAFETY: only reads the vtable pointer from a non-null factory pointer.
             let vtable = unsafe { (*self.factory).vtable };
@@ -276,6 +361,27 @@ mod platform {
                 Err(HostError::FactoryReturnedNull)
             } else {
                 Ok(vtable)
+            }
+        }
+    }
+
+    struct Vst3UnknownInstance {
+        object: *mut FUnknown,
+    }
+
+    impl Drop for Vst3UnknownInstance {
+        fn drop(&mut self) {
+            if self.object.is_null() {
+                return;
+            }
+
+            // SAFETY: `object` was returned by IPluginFactory::createInstance for
+            // an interface derived from FUnknown. VST3 interfaces expose release
+            // as the third FUnknown vtable entry. Null vtables are ignored.
+            let vtable = unsafe { (*self.object).vtable };
+            if !vtable.is_null() {
+                // SAFETY: release balances the reference returned by createInstance.
+                let _ = unsafe { ((*vtable).release)(self.object) };
             }
         }
     }
@@ -313,12 +419,36 @@ mod platform {
 mod platform {
     use std::path::Path;
 
-    use super::Vst3FactoryInfo;
+    use super::{Vst3ComponentProbe, Vst3FactoryInfo};
     use crate::{HostError, HostResult};
 
     pub fn load_vst3_factory_info(_bundle_path: &Path) -> HostResult<Vst3FactoryInfo> {
         Err(HostError::UnsupportedPlatform(
             "VST3 factory loading is currently implemented for macOS only",
         ))
+    }
+
+    pub fn create_vst3_component_probe(
+        _bundle_path: &Path,
+        _class_id: &str,
+        _interface_id: &str,
+    ) -> HostResult<Vst3ComponentProbe> {
+        Err(HostError::UnsupportedPlatform(
+            "VST3 createInstance is currently implemented for macOS only",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::HostError;
+
+    #[test]
+    fn rejects_invalid_component_class_id_before_loading_bundle() {
+        let error = create_vst3_component_probe("/tmp/Missing.vst3", "class-a")
+            .expect_err("invalid class id");
+
+        assert!(matches!(error, HostError::InvalidClassId(class_id) if class_id == "class-a"));
     }
 }

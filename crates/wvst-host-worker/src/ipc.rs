@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
-use wvst_vst3_host::HeadlessPluginInstance;
+use wvst_vst3_host::{HeadlessPluginInstance, create_vst3_component_probe};
 
 #[path = "ipc_audio.rs"]
 mod ipc_audio;
@@ -19,9 +19,12 @@ pub struct WorkerIpcState {
 
 struct WorkerInstance {
     stream_id: u64,
+    sample_rate: u32,
+    max_block_frames: u16,
     input_channels: usize,
     output_channels: usize,
     processing: bool,
+    backend: WorkerBackend,
     plugin: HeadlessPluginInstance,
 }
 
@@ -45,6 +48,8 @@ struct InstanceCreateParams {
     class_id: Option<String>,
     #[serde(default)]
     class_name: Option<String>,
+    sample_rate: u32,
+    max_block_frames: u16,
     input_channels: usize,
     output_channels: usize,
 }
@@ -67,6 +72,7 @@ struct InstanceReady {
     instance_id: u64,
     stream_id: u64,
     worker_state: WorkerState,
+    backend: WorkerBackendKind,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,6 +82,52 @@ enum WorkerState {
     Processing,
     Stopped,
     Destroyed,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum WorkerBackendKind {
+    Passthrough,
+    Vst3ComponentProbe,
+}
+
+#[derive(Debug)]
+pub(super) struct WorkerBackend {
+    kind: WorkerBackendKind,
+}
+
+impl WorkerBackend {
+    fn passthrough() -> Self {
+        Self {
+            kind: WorkerBackendKind::Passthrough,
+        }
+    }
+
+    fn from_create_params(params: &InstanceCreateParams) -> Result<Self, String> {
+        let Some(class_id) = params.class_id.as_deref() else {
+            return Ok(Self::passthrough());
+        };
+
+        if !std::path::Path::new(&params.plugin_path).is_dir() {
+            return Ok(Self::passthrough());
+        }
+
+        match create_vst3_component_probe(&params.plugin_path, class_id) {
+            Ok(_) => Ok(Self {
+                kind: WorkerBackendKind::Vst3ComponentProbe,
+            }),
+            Err(wvst_vst3_host::HostError::InvalidClassId(_)) => Ok(Self::passthrough()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    pub(super) fn kind(&self) -> WorkerBackendKind {
+        self.kind
+    }
+
+    pub(super) fn supports_binary_audio_process(&self) -> bool {
+        self.kind == WorkerBackendKind::Passthrough
+    }
 }
 
 pub fn serve_stdio(audio_connect: Option<String>) -> Result<(), String> {
@@ -161,8 +213,18 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
     if state.instances.contains_key(&params.instance_id) {
         return response_error(id, 4092, "instance already exists");
     }
+    if params.sample_rate == 0 {
+        return response_error(id, 4220, "invalid sampleRate: 0");
+    }
+    if params.max_block_frames == 0 {
+        return response_error(id, 4220, "invalid maxBlockFrames: 0");
+    }
 
     let descriptor = descriptor_from_params(&params);
+    let backend = match WorkerBackend::from_create_params(&params) {
+        Ok(backend) => backend,
+        Err(error) => return response_error(id, 4220, error),
+    };
     let plugin = match HeadlessPluginInstance::new(
         &descriptor,
         params.input_channels,
@@ -176,14 +238,18 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
         instance_id: params.instance_id,
         stream_id: params.stream_id,
         worker_state: WorkerState::Ready,
+        backend: backend.kind(),
     };
     state.instances.insert(
         params.instance_id,
         WorkerInstance {
             stream_id: params.stream_id,
+            sample_rate: params.sample_rate,
+            max_block_frames: params.max_block_frames,
             input_channels: params.input_channels,
             output_channels: params.output_channels,
             processing: false,
+            backend,
             plugin,
         },
     );
@@ -270,7 +336,9 @@ fn worker_hello() -> Value {
             "factoryInfo": true,
             "instanceLifecycle": true,
             "fakePassthrough": true,
-            "binaryAudioProcess": true
+            "binaryAudioProcess": true,
+            "vst3CreateInstance": true,
+            "sampleRateValidation": true
         }
     })
 }
@@ -283,6 +351,11 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
             .instances
             .values()
             .filter(|instance| instance.processing)
+            .count(),
+        "passthroughInstances": state
+            .instances
+            .values()
+            .filter(|instance| instance.backend.kind() == WorkerBackendKind::Passthrough)
             .count(),
     })
 }
@@ -355,11 +428,12 @@ mod tests {
     fn creates_processes_and_destroys_passthrough_instance() {
         let mut state = WorkerIpcState::default();
         let create = handle_ipc_line(
-            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","inputChannels":2,"outputChannels":2}}"#,
+            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":2,"outputChannels":2}}"#,
             &mut state,
         );
         let create_value: Value = serde_json::from_str(&create).expect("create json");
         assert_eq!(create_value["result"]["workerState"], "ready");
+        assert_eq!(create_value["result"]["backend"], "passthrough");
 
         let start = handle_ipc_line(
             r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,

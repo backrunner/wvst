@@ -110,6 +110,33 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
     let stream_id = create_value["result"]["streamId"]
         .as_u64()
         .expect("stream id");
+    let instance_id = create_value["result"]["instanceId"]
+        .as_u64()
+        .expect("instance id");
+
+    let start_request = serde_json::json!({
+        "id": 2,
+        "method": "instance.start",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let start = handle_control_text(
+        &start_request,
+        ControlContext {
+            config: &state.config,
+            host_worker: &state.host_worker,
+            instances: &state.instances,
+            metrics: &state.metrics,
+            plugins: &state.plugins,
+            origin: None,
+            session_authorized: true,
+            workers: &state.workers,
+        },
+    )
+    .await;
+    let start_value: serde_json::Value =
+        serde_json::from_str(&start.text).expect("valid start json");
+    assert_eq!(start_value["result"]["instance"]["state"], "processing");
 
     let processed = process_binary_payload(audio_frame(stream_id), &state).await;
     let header = AudioFrameHeader::decode(&processed).expect("processed header");
@@ -126,11 +153,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
 
     state
         .instances
-        .close_stream(StreamLifecycleParams {
-            instance_id: create_value["result"]["instanceId"]
-                .as_u64()
-                .expect("instance id"),
-        })
+        .close_stream(StreamLifecycleParams { instance_id })
         .expect("stream closed");
     let closed_stream_response = process_binary_payload(audio_frame(stream_id), &state).await;
     let closed_stream_header =
@@ -264,6 +287,7 @@ while IFS= read -r line; do
   case "$line" in
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
     *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready"}}\n' "$id" ;;
+    *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
   esac
 done

@@ -5,7 +5,9 @@ use serde_json::json;
 use wvst_scanner::{
     MetadataSource, PluginClass, PluginDescriptor, PluginFormat, parse_vst3_bundle,
 };
-use wvst_vst3_host::{HeadlessPluginInstance, load_vst3_factory_info, probe_vst3_module};
+use wvst_vst3_host::{
+    HeadlessPluginInstance, create_vst3_component_probe, load_vst3_factory_info, probe_vst3_module,
+};
 
 mod ipc;
 
@@ -26,10 +28,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
         Some("describe") => describe(args.get(1)),
         Some("factory-info") => factory_info(args.get(1)),
         Some("factory-probe") => factory_probe(args.get(1)),
+        Some("component-probe") => component_probe(args.get(1), args.get(2)),
         Some("passthrough-probe") => passthrough_probe(),
         Some("serve") => ipc::serve_stdio(parse_audio_connect(&args[1..])?),
         _ => Err(
-            "usage: wvst-host-worker describe <plugin.vst3> | factory-info <plugin.vst3> | factory-probe <plugin.vst3> | passthrough-probe | serve"
+            "usage: wvst-host-worker describe <plugin.vst3> | factory-info <plugin.vst3> | factory-probe <plugin.vst3> | component-probe <plugin.vst3> <class-id> | passthrough-probe | serve"
                 .to_string(),
         ),
     }
@@ -79,6 +82,19 @@ fn factory_probe(path: Option<&String>) -> Result<(), String> {
     };
 
     let probe = probe_vst3_module(PathBuf::from(path)).map_err(|error| error.to_string())?;
+    print_json(&probe)
+}
+
+fn component_probe(path: Option<&String>, class_id: Option<&String>) -> Result<(), String> {
+    let Some(path) = path else {
+        return Err("component-probe requires a VST3 bundle path".to_string());
+    };
+    let Some(class_id) = class_id else {
+        return Err("component-probe requires a VST3 class id".to_string());
+    };
+
+    let probe = create_vst3_component_probe(PathBuf::from(path), class_id)
+        .map_err(|error| error.to_string())?;
     print_json(&probe)
 }
 

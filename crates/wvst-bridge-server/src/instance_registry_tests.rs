@@ -110,6 +110,23 @@ fn marks_processing_and_stopped() {
 }
 
 #[test]
+fn heartbeat_ready_preserves_processing_state() {
+    let registry = InstanceRegistry::new();
+    let plugin = plugin();
+    let record = registry.create(create_params(), &plugin).expect("instance");
+
+    registry
+        .mark_processing(record.instance_id)
+        .expect("processing");
+    let heartbeat = registry
+        .mark_worker_ready(record.instance_id)
+        .expect("heartbeat");
+
+    assert_eq!(heartbeat.state, InstanceState::Processing);
+    assert_eq!(heartbeat.worker_state, WorkerState::Processing);
+}
+
+#[test]
 fn rejects_invalid_sample_rate() {
     let registry = InstanceRegistry::new();
     let plugin = plugin();
