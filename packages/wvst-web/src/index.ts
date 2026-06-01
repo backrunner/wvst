@@ -16,6 +16,7 @@ export {
 } from "./transport.js";
 export {
   LoopbackCounter,
+  configureLoopbackAudioWorkletNode,
   createLoopbackAudioWorkletNode,
   createLoopbackSharedBuffers,
   readLoopbackOutput,
@@ -35,6 +36,7 @@ export {
   type InstanceStatusOptions,
   type InstanceStatusResult,
   type InstanceWorkerMetrics,
+  type StreamLifecycleOptions,
 } from "./instances.js";
 export {
   type PluginApi,

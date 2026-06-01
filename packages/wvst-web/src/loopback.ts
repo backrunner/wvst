@@ -7,6 +7,7 @@ export interface LoopbackNodeOptions {
   processorUrl: string;
   inputChannels?: number;
   outputChannels?: number;
+  buffers?: LoopbackSharedBuffers;
 }
 
 export interface LoopbackSharedBuffers {
@@ -25,9 +26,12 @@ export enum LoopbackCounter {
   OutputFrames = 1,
   Underflows = 2,
   Overflows = 3,
+  InputSequence = 4,
+  InputConsumedSequence = 5,
+  OutputSequence = 6,
 }
 
-const COUNTER_COUNT = 4;
+const COUNTER_COUNT = 7;
 const F32_BYTES = 4;
 const I32_BYTES = 4;
 
@@ -94,13 +98,33 @@ export async function createLoopbackAudioWorkletNode(
 
   await context.audioWorklet.addModule(options.processorUrl);
 
-  return new AudioWorkletNode(context, "wvst-loopback", {
+  const node = new AudioWorkletNode(context, "wvst-loopback", {
     numberOfInputs: 1,
     numberOfOutputs: 1,
     outputChannelCount: [outputChannels],
     channelCount: inputChannels,
     channelCountMode: "explicit",
     channelInterpretation: "speakers",
+  });
+
+  if (options.buffers) {
+    configureLoopbackAudioWorkletNode(node, options.buffers);
+  }
+
+  return node;
+}
+
+export function configureLoopbackAudioWorkletNode(
+  node: AudioWorkletNode,
+  buffers: LoopbackSharedBuffers,
+): void {
+  node.port.postMessage({
+    type: "configure",
+    frames: buffers.frames,
+    channels: buffers.channels,
+    inputBuffer: buffers.inputBuffer,
+    outputBuffer: buffers.outputBuffer,
+    countersBuffer: buffers.countersBuffer,
   });
 }
 
