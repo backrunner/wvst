@@ -13,6 +13,7 @@ use tokio::time::timeout;
 
 use crate::instance_registry::InstanceRecord;
 use crate::metrics::{BridgeMetrics, WorkerShutdownAudit};
+use crate::worker_process_tree::WorkerTerminationTarget;
 
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_QUARANTINE_DURATION: Duration = Duration::from_secs(60);
@@ -62,6 +63,7 @@ struct WorkerProcess {
     stdout: Lines<BufReader<ChildStdout>>,
     stderr: StderrTail,
     audio: Option<WorkerAudioConnection>,
+    termination_target: WorkerTerminationTarget,
     next_request_id: u64,
 }
 
@@ -316,6 +318,7 @@ impl WorkerProcess {
 
         let mut command = Command::new(&executable);
         command.arg("serve");
+        WorkerTerminationTarget::configure_command(&mut command);
         if let Some(listener) = audio_listener.as_ref() {
             let address = listener
                 .local_addr()
@@ -334,6 +337,7 @@ impl WorkerProcess {
                 executable,
                 message: error.to_string(),
             })?;
+        let termination_target = WorkerTerminationTarget::from_child(&child);
         let stdin = child
             .stdin
             .take()
@@ -353,6 +357,7 @@ impl WorkerProcess {
             stdout: BufReader::new(stdout).lines(),
             stderr: StderrTail::spawn(stderr),
             audio: None,
+            termination_target,
             next_request_id: 1,
         };
 
@@ -443,14 +448,32 @@ impl WorkerProcess {
 
     async fn shutdown(&mut self) -> WorkerShutdownAudit {
         let mut audit = WorkerShutdownAudit {
-            kill_requested: true,
+            tree_kill_requested: self.termination_target.terminate_tree(),
             ..WorkerShutdownAudit::default()
         };
-        let _ = self.child.start_kill();
+        if audit.tree_kill_requested {
+            audit.kill_requested = true;
+        } else if self.child.try_wait().is_ok_and(|status| status.is_none()) {
+            audit.kill_requested = true;
+            let _ = self.child.start_kill();
+        }
+
         match timeout(DEFAULT_IPC_TIMEOUT, self.child.wait()).await {
             Ok(Ok(_)) => audit.wait_succeeded = true,
             Ok(Err(_)) => {}
-            Err(_) => audit.wait_timed_out = true,
+            Err(_) => {
+                audit.wait_timed_out = true;
+                audit.forced_kill_requested = true;
+                if !self.termination_target.kill_tree() {
+                    let _ = self.child.start_kill();
+                }
+                if timeout(DEFAULT_IPC_TIMEOUT, self.child.wait())
+                    .await
+                    .is_ok_and(|result| result.is_ok())
+                {
+                    audit.wait_succeeded = true;
+                }
+            }
         }
         audit
     }

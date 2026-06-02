@@ -19,10 +19,11 @@
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
 - Bridge `instance.status` 已加入可配置的 worker 自动恢复策略：heartbeat 失败后默认尝试重启同一实例并保留 `instanceId` / `streamId`，如果实例原先处于 `processing` 会重新进入 processing；Bridge metrics 已暴露 `workerAutoRestarts`。
-- Bridge worker supervisor 已接入 kill/wait shutdown audit metrics，`bridge.metrics` / Web SDK 可观测 `workerShutdowns`、`workerKillRequests`、`workerWaitSuccesses` 和 `workerWaitTimeouts`。
+- Bridge worker supervisor 已接入 kill/wait shutdown audit metrics，`bridge.metrics` / Web SDK 可观测 `workerShutdowns`、`workerKillRequests`、`workerTreeKillRequests`、`workerForcedKillRequests`、`workerWaitSuccesses` 和 `workerWaitTimeouts`。
 - Bridge/Web SDK 已提供 `instance.start` / `instance.stop` 处理生命周期控制，实例状态可从 `ready` 切到 `processing` / `stopped`，并已补入 `starting` / `stopping` / `recovering` 瞬态状态。
 - Bridge 已提供运行时事件总线、`bridge.events` 控制面查询和授权后 WebSocket `bridge.event` server-push notification；Web SDK 已暴露 `client.events()` 轮询和 `client.onEvent()` 主动订阅，可观察 server lifecycle、worker start/ready/processing/stopped/failed/recovering/recovered/quarantine 事件；`worker-failed` 事件会携带可选 `errorData`，数据面 audio process 失败也会发布包含 worker/runtime 结构化原因的失败事件。
 - Bridge worker supervisor 已提供 quarantine TTL 释放策略，过期释放会清空累计失败计数并可通过事件观测。
+- Bridge worker supervisor 已提供首版 worker 进程树终止：Unix/macOS 启动 worker 时放入独立 process group，shutdown 时优先向 process group 发终止信号并等待，超时后升级强制 kill；测试覆盖 worker 派生子进程后 destroy 仍能清理进程组。
 - Bridge 音频路由现在要求实例处于 `processing` 状态；未 start、已 stop 或处理失败都会返回带 `silence` / `process-error` 的诊断静音帧，而不是继续把音频送进 worker。
 - Instance heartbeat 已避免把正在 `processing` 的实例误降回 `ready`，降低控制面状态刷新对数据面的干扰。
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion`、`instanceLifecycle` 和 `binaryAudioProcess` capability，避免 Bridge 与不兼容 worker 继续创建实例。
@@ -87,9 +88,9 @@
 
 仍缺少：
 
-- 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略和 worker kill/wait 审计指标首版；仍缺少进程树级 kill/wait、平台化 supervisor backend 和更多失败分类。
+- 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略、worker kill/wait 审计指标和 Unix/macOS 进程树级 kill/wait 首版；仍缺少 Windows/Linux 专用 supervisor backend、资源限制集成和更多失败分类。
 - 正式 framed control IPC，替换当前 JSON-line 控制面原型。
-- 超时后的全链路 kill/wait 审计已有首版 counters，仍缺少进程树维度、细粒度 restart 诊断和 crash quarantine 策略调优。
+- 超时后的全链路 kill/wait 审计已有首版 counters，且 Unix/macOS 已覆盖进程树维度；仍缺少细粒度 restart 诊断和 crash quarantine 策略调优。
 - worker hello 已有基础 capability negotiation，实例级 `runtimeCapabilities` 已能按数据面、MIDI、参数自动化和诊断能力暴露首版，且包含 schema version 与 passthrough fallback 原因；worker rejection 已能透传 VST3 runtime init 和 `process()` 阶段化失败 data；仍缺少正式 framed IPC 下的 capability schema version negotiation 和更完整的非 VST3 runtime/process 失败分类。
 
 ### 3. 真实 VST3 component/controller lifecycle

@@ -10,6 +10,7 @@ pub mod metrics;
 pub mod plugin_registry;
 pub mod runtime_capabilities;
 pub mod server;
+pub mod worker_process_tree;
 pub mod worker_supervisor;
 
 pub use config::BridgeConfig;

@@ -22,6 +22,8 @@ export interface BridgeMetrics {
   workerAutoRestarts: number;
   workerShutdowns: number;
   workerKillRequests: number;
+  workerTreeKillRequests: number;
+  workerForcedKillRequests: number;
   workerWaitSuccesses: number;
   workerWaitTimeouts: number;
   audioSequenceGapEvents: number;

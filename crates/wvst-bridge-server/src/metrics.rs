@@ -21,6 +21,8 @@ pub struct BridgeMetrics {
     worker_auto_restarts: AtomicU64,
     worker_shutdowns: AtomicU64,
     worker_kill_requests: AtomicU64,
+    worker_tree_kill_requests: AtomicU64,
+    worker_forced_kill_requests: AtomicU64,
     worker_wait_successes: AtomicU64,
     worker_wait_timeouts: AtomicU64,
     audio_sequence_gap_events: AtomicU64,
@@ -64,6 +66,8 @@ impl BridgeMetrics {
             worker_auto_restarts: AtomicU64::new(0),
             worker_shutdowns: AtomicU64::new(0),
             worker_kill_requests: AtomicU64::new(0),
+            worker_tree_kill_requests: AtomicU64::new(0),
+            worker_forced_kill_requests: AtomicU64::new(0),
             worker_wait_successes: AtomicU64::new(0),
             worker_wait_timeouts: AtomicU64::new(0),
             audio_sequence_gap_events: AtomicU64::new(0),
@@ -122,6 +126,14 @@ impl BridgeMetrics {
         if audit.kill_requested {
             self.worker_kill_requests.fetch_add(1, Ordering::Relaxed);
         }
+        if audit.tree_kill_requested {
+            self.worker_tree_kill_requests
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if audit.forced_kill_requested {
+            self.worker_forced_kill_requests
+                .fetch_add(1, Ordering::Relaxed);
+        }
         if audit.wait_succeeded {
             self.worker_wait_successes.fetch_add(1, Ordering::Relaxed);
         }
@@ -171,6 +183,8 @@ impl BridgeMetrics {
             worker_auto_restarts: self.worker_auto_restarts.load(Ordering::Relaxed),
             worker_shutdowns: self.worker_shutdowns.load(Ordering::Relaxed),
             worker_kill_requests: self.worker_kill_requests.load(Ordering::Relaxed),
+            worker_tree_kill_requests: self.worker_tree_kill_requests.load(Ordering::Relaxed),
+            worker_forced_kill_requests: self.worker_forced_kill_requests.load(Ordering::Relaxed),
             worker_wait_successes: self.worker_wait_successes.load(Ordering::Relaxed),
             worker_wait_timeouts: self.worker_wait_timeouts.load(Ordering::Relaxed),
             audio_sequence_gap_events: self.audio_sequence_gap_events.load(Ordering::Relaxed),
@@ -193,6 +207,8 @@ impl Default for BridgeMetrics {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WorkerShutdownAudit {
     pub kill_requested: bool,
+    pub tree_kill_requested: bool,
+    pub forced_kill_requested: bool,
     pub wait_succeeded: bool,
     pub wait_timed_out: bool,
 }
@@ -213,6 +229,8 @@ pub struct BridgeMetricsSnapshot {
     pub worker_auto_restarts: u64,
     pub worker_shutdowns: u64,
     pub worker_kill_requests: u64,
+    pub worker_tree_kill_requests: u64,
+    pub worker_forced_kill_requests: u64,
     pub worker_wait_successes: u64,
     pub worker_wait_timeouts: u64,
     pub audio_sequence_gap_events: u64,
@@ -356,11 +374,15 @@ mod tests {
 
         metrics.record_worker_shutdown(WorkerShutdownAudit {
             kill_requested: true,
+            tree_kill_requested: true,
+            forced_kill_requested: false,
             wait_succeeded: true,
             wait_timed_out: false,
         });
         metrics.record_worker_shutdown(WorkerShutdownAudit {
             kill_requested: true,
+            tree_kill_requested: true,
+            forced_kill_requested: true,
             wait_succeeded: false,
             wait_timed_out: true,
         });
@@ -368,6 +390,8 @@ mod tests {
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.worker_shutdowns, 2);
         assert_eq!(snapshot.worker_kill_requests, 2);
+        assert_eq!(snapshot.worker_tree_kill_requests, 2);
+        assert_eq!(snapshot.worker_forced_kill_requests, 1);
         assert_eq!(snapshot.worker_wait_successes, 1);
         assert_eq!(snapshot.worker_wait_timeouts, 1);
     }
