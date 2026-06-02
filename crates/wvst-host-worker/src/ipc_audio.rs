@@ -11,6 +11,7 @@ use wvst_protocol::{
 
 use super::WorkerIpcState;
 use super::ipc_midi::decode_midi_events_into;
+use super::ipc_parameter_events::decode_parameter_events_into;
 
 #[cfg(test)]
 use wvst_protocol::WorkerAudioIpcMessage;
@@ -104,7 +105,28 @@ fn process_message_into(
     let audio_payload_end = AUDIO_FRAME_HEADER_LEN
         .checked_add(audio_payload_len)
         .ok_or_else(|| AudioProcessError::invalid("audio payload length overflow"))?;
-    let event_payload = &message_body[audio_payload_end..];
+    let midi_payload_len = input_header
+        .midi_event_payload_len()
+        .map_err(|error| AudioProcessError::invalid(error.to_string()))?
+        as usize;
+    let midi_payload_end = audio_payload_end
+        .checked_add(midi_payload_len)
+        .ok_or_else(|| AudioProcessError::invalid("MIDI payload length overflow"))?;
+    let parameter_payload_len = input_header
+        .parameter_event_payload_len()
+        .map_err(|error| AudioProcessError::invalid(error.to_string()))?
+        as usize;
+    let parameter_payload_end = midi_payload_end
+        .checked_add(parameter_payload_len)
+        .ok_or_else(|| AudioProcessError::invalid("parameter payload length overflow"))?;
+    if parameter_payload_end != message_body.len() {
+        return Err(AudioProcessError::invalid(format!(
+            "audio frame section length mismatch: expected {parameter_payload_end}, got {}",
+            message_body.len()
+        )));
+    }
+    let midi_payload = &message_body[audio_payload_end..midi_payload_end];
+    let parameter_payload = &message_body[midi_payload_end..parameter_payload_end];
 
     let mut state = state
         .lock()
@@ -160,8 +182,27 @@ fn process_message_into(
 
     let frames = usize::from(input_header.frames.get());
     let output_channels = instance.output_channels;
-    decode_midi_events_into(input_header, event_payload, frames, &mut instance.events)
+    decode_parameter_events_into(
+        input_header,
+        parameter_payload,
+        frames,
+        &mut instance.parameter_changes,
+    )
+    .map_err(AudioProcessError::invalid)?;
+    {
+        let backend = &instance.backend;
+        let events = &mut instance.events;
+        let parameter_changes = &mut instance.parameter_changes;
+        decode_midi_events_into(
+            input_header,
+            midi_payload,
+            frames,
+            events,
+            parameter_changes,
+            |channel, controller| backend.midi_controller_param_id(channel, controller),
+        )
         .map_err(AudioProcessError::invalid)?;
+    }
     let (input, output) = instance
         .buffers
         .prepare_process(
@@ -171,7 +212,13 @@ fn process_message_into(
         .map_err(AudioProcessError::invalid)?;
     instance
         .backend
-        .process_interleaved_f32(frames, input, &instance.events, output)
+        .process_interleaved_f32(
+            frames,
+            input,
+            &instance.events,
+            &instance.parameter_changes,
+            output,
+        )
         .map_err(AudioProcessError::invalid)?;
 
     encode_output_frame_into(input_header, output_channels, output, output_body)

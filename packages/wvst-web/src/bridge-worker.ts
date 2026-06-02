@@ -5,8 +5,10 @@ import {
   decodeAudioFrame,
   encodeAudioFrame,
   midiEventPayloadBytes,
+  parameterAutomationEventPayloadBytes,
   type AudioFrameHeader,
   type MidiEvent,
+  type ParameterAutomationEvent,
 } from "./protocol.js";
 
 type BridgeWorkerCommand =
@@ -49,6 +51,12 @@ type BridgeWorkerCommand =
       type: "sendMidiEvents";
       streamId: number;
       events: MidiEvent[];
+    }
+  | {
+      id: number;
+      type: "sendParameterEvents";
+      streamId: number;
+      events: ParameterAutomationEvent[];
     }
   | {
       id: number;
@@ -110,6 +118,10 @@ async function handleCommand(command: BridgeWorkerCommand): Promise<void> {
         enqueueMidiEvents(command.streamId, command.events);
         postResult(command.id, null);
         return;
+      case "sendParameterEvents":
+        enqueueParameterEvents(command.streamId, command.events);
+        postResult(command.id, null);
+        return;
       case "close":
         stopAllAudioStreams();
         requireTransport().close();
@@ -163,6 +175,15 @@ function enqueueMidiEvents(streamId: number, events: MidiEvent[]) {
   pump.enqueueMidiEvents(events);
 }
 
+function enqueueParameterEvents(streamId: number, events: ParameterAutomationEvent[]) {
+  const pump = audioPumps.get(streamId);
+  if (!pump) {
+    throw new Error(`WVST audio stream is not active: ${streamId}`);
+  }
+
+  pump.enqueueParameterEvents(events);
+}
+
 function stopAllAudioStreams() {
   for (const pump of audioPumps.values()) {
     pump.stop();
@@ -172,6 +193,7 @@ function stopAllAudioStreams() {
 
 const AUDIO_POLL_INTERVAL_MS = 1;
 const MAX_PENDING_MIDI_EVENTS = 4_096;
+const MAX_PENDING_PARAMETER_EVENTS = 4_096;
 
 class AudioStreamPump {
   private readonly inputSamples: Float32Array;
@@ -184,6 +206,7 @@ class AudioStreamPump {
   private sequence = 0n;
   private sentFrameTime = 0n;
   private pendingMidiEvents: MidiEvent[] = [];
+  private pendingParameterEvents: ParameterAutomationEvent[] = [];
 
   constructor(private readonly options: Extract<BridgeWorkerCommand, { type: "startAudioStream" }>) {
     this.inputSamples = new Float32Array(options.inputBuffer);
@@ -234,6 +257,42 @@ class AudioStreamPump {
         );
       }
       this.pendingMidiEvents.push(event);
+    }
+  }
+
+  enqueueParameterEvents(events: ParameterAutomationEvent[]): void {
+    if (this.pendingParameterEvents.length + events.length > MAX_PENDING_PARAMETER_EVENTS) {
+      Atomics.add(this.counters, LoopbackCounter.Overflows, 1);
+      throw new Error("WVST parameter event queue is full");
+    }
+
+    for (const event of events) {
+      if (
+        !Number.isInteger(event.sampleOffset) ||
+        event.sampleOffset < 0 ||
+        event.sampleOffset >= this.options.frames
+      ) {
+        throw new Error(
+          `WVST parameter sampleOffset must be an integer in [0, ${this.options.frames})`,
+        );
+      }
+      if (
+        !Number.isInteger(event.parameterId) ||
+        event.parameterId < 0 ||
+        event.parameterId > 0xffffffff
+      ) {
+        throw new Error(`invalid WVST parameter id: ${event.parameterId}`);
+      }
+      if (
+        !Number.isFinite(event.valueNormalized) ||
+        event.valueNormalized < 0 ||
+        event.valueNormalized > 1
+      ) {
+        throw new Error(
+          `invalid WVST normalized parameter value: ${event.valueNormalized}`,
+        );
+      }
+      this.pendingParameterEvents.push(event);
     }
   }
 
@@ -288,11 +347,16 @@ class AudioStreamPump {
     Atomics.store(this.counters, LoopbackCounter.InputConsumedSequence, readSequence);
 
     const events = this.takeMidiEvents();
-    const payloadBytes = inputCopy.byteLength + midiEventPayloadBytes(events.length);
+    const parameterEvents = this.takeParameterEvents();
+    const payloadBytes =
+      inputCopy.byteLength +
+      midiEventPayloadBytes(events.length) +
+      parameterAutomationEventPayloadBytes(parameterEvents.length);
     const frame = encodeAudioFrame(
-      this.header(payloadBytes, events.length),
+      this.header(payloadBytes, events.length, parameterEvents.length),
       inputCopy.buffer,
       events,
+      parameterEvents,
     );
     const response = await requireTransport().sendBinary(frame);
     const decoded = decodeAudioFrame(response);
@@ -325,6 +389,17 @@ class AudioStreamPump {
     return events;
   }
 
+  private takeParameterEvents(): ParameterAutomationEvent[] {
+    if (this.pendingParameterEvents.length === 0) {
+      return [];
+    }
+
+    const events = this.pendingParameterEvents;
+    this.pendingParameterEvents = [];
+    events.sort((left, right) => left.sampleOffset - right.sampleOffset);
+    return events;
+  }
+
   private writeOutput(output: Float32Array): void {
     const nextSequence = Atomics.load(this.counters, LoopbackCounter.OutputSequence) + 1;
     const consumedSequence = Atomics.load(
@@ -348,7 +423,11 @@ class AudioStreamPump {
     Atomics.store(this.counters, LoopbackCounter.OutputSequence, nextSequence);
   }
 
-  private header(payloadBytes: number, eventCount: number): AudioFrameHeader {
+  private header(
+    payloadBytes: number,
+    eventCount: number,
+    parameterEventCount: number,
+  ): AudioFrameHeader {
     return {
       streamId: BigInt(this.options.streamId),
       sequence: this.sequence,
@@ -360,6 +439,7 @@ class AudioStreamPump {
       format: AudioSampleFormat.F32Le,
       flags: 0,
       eventCount,
+      parameterEventCount,
     };
   }
 }

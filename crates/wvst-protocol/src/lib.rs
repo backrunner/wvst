@@ -2,6 +2,7 @@ pub mod audio_frame;
 pub mod control;
 pub mod error;
 pub mod midi_event;
+pub mod parameter_event;
 pub mod worker_audio_ipc;
 
 pub use audio_frame::{
@@ -11,6 +12,7 @@ pub use audio_frame::{
 pub use control::{HELLO_METHOD, HelloRequest, HelloResponse, negotiate_protocol};
 pub use error::ProtocolError;
 pub use midi_event::{MIDI_EVENT_LEN, MidiEvent, MidiEventKind};
+pub use parameter_event::{PARAMETER_AUTOMATION_EVENT_LEN, ParameterAutomationEvent};
 pub use worker_audio_ipc::{
     WORKER_AUDIO_IPC_HEADER_LEN, WORKER_AUDIO_IPC_MAGIC, WORKER_AUDIO_IPC_VERSION,
     WorkerAudioIpcHeader, WorkerAudioIpcMessage, WorkerAudioMessageKind,

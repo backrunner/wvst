@@ -21,6 +21,9 @@ pub const VST3_I_PLUGIN_BASE_IID: &str = "22888DDB156E45AE8358B34808190625";
 pub const VST3_I_COMPONENT_IID: &str = "E831FF31F2D54301928EBBEE25697802";
 pub const VST3_I_AUDIO_PROCESSOR_IID: &str = "42043F99B7DA453CA569E79D9AAEC33D";
 pub const VST3_I_EDIT_CONTROLLER_IID: &str = "DCD7BBE37742448DA874AACC979C759E";
+pub const VST3_I_MIDI_MAPPING_IID: &str = "DF0FF9F749B74669B63AB7327ADBF5E5";
+pub const VST3_I_PARAM_VALUE_QUEUE_IID: &str = "01263A18ED074F6F98C9D3564686F9BA";
+pub const VST3_I_PARAMETER_CHANGES_IID: &str = "A47796630BB64A56B44384A8466FEB9D";
 pub const VST3_I_COMPONENT_HANDLER_IID: &str = "93A0BEA30BD045DB8E890B0CC1E46AC6";
 pub const VST3_I_HOST_APPLICATION_IID: &str = "58E595CCDB2D49698B6AAF8C36A664E5";
 pub const VST3_IBSTREAM_IID: &str = "C3BF6EA2309947529B6BF9901EE33E9B";
@@ -33,6 +36,8 @@ pub const VST3_PARAMETER_IS_LIST: i32 = 1 << 3;
 pub const VST3_PARAMETER_IS_HIDDEN: i32 = 1 << 4;
 pub const VST3_PARAMETER_IS_PROGRAM_CHANGE: i32 = 1 << 15;
 pub const VST3_PARAMETER_IS_BYPASS: i32 = 1 << 16;
+pub const VST3_MIDI_CONTROLLER_AFTERTOUCH: CtrlNumber = 128;
+pub const VST3_MIDI_CONTROLLER_PITCH_BEND: CtrlNumber = 129;
 pub const VST3_STREAM_SEEK_SET: i32 = 0;
 pub const VST3_STREAM_SEEK_CUR: i32 = 1;
 pub const VST3_STREAM_SEEK_END: i32 = 2;
@@ -52,6 +57,7 @@ pub type TBool = u8;
 pub type TUid = [u8; 16];
 pub type ParamId = u32;
 pub type ParamValue = f64;
+pub type CtrlNumber = i16;
 pub type UnitId = i32;
 pub type SampleRate = f64;
 pub type SpeakerArrangement = u64;
@@ -255,6 +261,88 @@ pub struct IComponentHandlerVTable {
     pub end_edit: unsafe extern "system" fn(this: *mut IComponentHandler, id: ParamId) -> i32,
     pub restart_component:
         unsafe extern "system" fn(this: *mut IComponentHandler, flags: i32) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IMidiMapping {
+    pub vtable: *const IMidiMappingVTable,
+}
+
+#[repr(C)]
+pub struct IMidiMappingVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IMidiMapping,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IMidiMapping) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IMidiMapping) -> u32,
+    pub get_midi_controller_assignment: unsafe extern "system" fn(
+        this: *mut IMidiMapping,
+        bus_index: i32,
+        channel: i16,
+        midi_controller_number: CtrlNumber,
+        id: *mut ParamId,
+    ) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IParamValueQueue {
+    pub vtable: *const IParamValueQueueVTable,
+}
+
+#[repr(C)]
+pub struct IParamValueQueueVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IParamValueQueue,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IParamValueQueue) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IParamValueQueue) -> u32,
+    pub get_parameter_id: unsafe extern "system" fn(this: *mut IParamValueQueue) -> ParamId,
+    pub get_point_count: unsafe extern "system" fn(this: *mut IParamValueQueue) -> i32,
+    pub get_point: unsafe extern "system" fn(
+        this: *mut IParamValueQueue,
+        index: i32,
+        sample_offset: *mut i32,
+        value: *mut ParamValue,
+    ) -> i32,
+    pub add_point: unsafe extern "system" fn(
+        this: *mut IParamValueQueue,
+        sample_offset: i32,
+        value: ParamValue,
+        index: *mut i32,
+    ) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IParameterChanges {
+    pub vtable: *const IParameterChangesVTable,
+}
+
+#[repr(C)]
+pub struct IParameterChangesVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IParameterChanges,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IParameterChanges) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IParameterChanges) -> u32,
+    pub get_parameter_count: unsafe extern "system" fn(this: *mut IParameterChanges) -> i32,
+    pub get_parameter_data: unsafe extern "system" fn(
+        this: *mut IParameterChanges,
+        index: i32,
+    ) -> *mut IParamValueQueue,
+    pub add_parameter_data: unsafe extern "system" fn(
+        this: *mut IParameterChanges,
+        id: *const ParamId,
+        index: *mut i32,
+    ) -> *mut IParamValueQueue,
 }
 
 #[repr(C)]

@@ -4,12 +4,14 @@ use std::ptr::NonNull;
 use serde::{Deserialize, Serialize};
 
 use crate::component_handler::Vst3ComponentHandler;
+use crate::midi_mapping::Vst3MidiMapping;
 use crate::state_stream::Vst3StateStream;
 use crate::vst3_abi::{
-    IEditController, IEditControllerVTable, K_RESULT_OK, ParamId, ParamValue,
-    ParameterInfo as RawParameterInfo, String128, VST3_PARAMETER_CAN_AUTOMATE,
-    VST3_PARAMETER_IS_BYPASS, VST3_PARAMETER_IS_HIDDEN, VST3_PARAMETER_IS_LIST,
-    VST3_PARAMETER_IS_PROGRAM_CHANGE, VST3_PARAMETER_IS_READ_ONLY, VST3_PARAMETER_IS_WRAP_AROUND,
+    IEditController, IEditControllerVTable, K_RESULT_FALSE, K_RESULT_OK, ParamId, ParamValue,
+    ParameterInfo as RawParameterInfo, String128, VST3_I_MIDI_MAPPING_IID,
+    VST3_PARAMETER_CAN_AUTOMATE, VST3_PARAMETER_IS_BYPASS, VST3_PARAMETER_IS_HIDDEN,
+    VST3_PARAMETER_IS_LIST, VST3_PARAMETER_IS_PROGRAM_CHANGE, VST3_PARAMETER_IS_READ_ONLY,
+    VST3_PARAMETER_IS_WRAP_AROUND, parse_tuid_hex,
 };
 use crate::{HostError, HostResult, Vst3HostContext};
 
@@ -216,6 +218,39 @@ impl Vst3EditController {
             // SAFETY: stream object remains live for the duration of the call.
             (vtable.set_component_state)(controller, stream.as_mut_ptr())
         })
+    }
+
+    pub fn midi_mapping(&self) -> HostResult<Option<Vst3MidiMapping>> {
+        let interface_tuid = parse_tuid_hex(VST3_I_MIDI_MAPPING_IID)
+            .ok_or_else(|| HostError::InvalidInterfaceId(VST3_I_MIDI_MAPPING_IID.to_string()))?;
+        let mut object: *mut c_void = std::ptr::null_mut();
+        let result = unsafe {
+            // SAFETY: controller/vtable were validated by from_raw. object is
+            // writable stack storage for the optional queried interface.
+            (self.vtable().query_interface)(
+                self.controller.as_ptr(),
+                interface_tuid.as_ptr().cast(),
+                &mut object,
+            )
+        };
+
+        if result == K_RESULT_FALSE {
+            return Ok(None);
+        }
+        if result != K_RESULT_OK {
+            return Err(HostError::InterfaceQueryFailed {
+                interface_id: VST3_I_MIDI_MAPPING_IID.to_string(),
+                result,
+            });
+        }
+        if object.is_null() {
+            return Err(HostError::InterfaceReturnedNull {
+                interface_id: VST3_I_MIDI_MAPPING_IID.to_string(),
+            });
+        }
+
+        // SAFETY: queryInterface returned a referenced IMidiMapping pointer.
+        unsafe { Vst3MidiMapping::from_raw(object.cast()) }.map(Some)
     }
 
     fn set_component_handler(&mut self) -> HostResult<()> {

@@ -19,6 +19,7 @@ export {
   type BridgeWorkerAudioStreamOptions,
   type BridgeWorkerClientOptions,
   type BridgeWorkerMidiEventOptions,
+  type BridgeWorkerParameterEventOptions,
 } from "./worker-client.js";
 export {
   LoopbackCounter,
@@ -85,6 +86,7 @@ export {
   AUDIO_FRAME_MAGIC,
   AUDIO_FRAME_VERSION,
   MIDI_EVENT_BYTES,
+  PARAMETER_AUTOMATION_EVENT_BYTES,
   AudioSampleFormat,
   AudioFrameFlags,
   MidiEventKind,
@@ -93,14 +95,20 @@ export {
   decodeAudioFrameHeader,
   decodeMidiEvent,
   decodeMidiEvents,
+  decodeParameterAutomationEvent,
+  decodeParameterAutomationEvents,
   encodeAudioFrame,
   encodeAudioFrameHeader,
   encodeMidiEvent,
   encodeMidiEvents,
+  encodeParameterAutomationEvent,
+  encodeParameterAutomationEvents,
   midiEventPayloadBytes,
+  parameterAutomationEventPayloadBytes,
   type AudioFrameHeader,
   type DecodedAudioFrame,
   type MidiEvent,
+  type ParameterAutomationEvent,
 } from "./protocol.js";
 export {
   createWVSTAudioDeviceSession,

@@ -7,8 +7,8 @@ use crate::vst3_abi::{
 };
 use crate::{
     HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3BusType,
-    Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState, Vst3ProcessBuffers,
-    Vst3ProcessingConfig, state_stream::Vst3StateStream,
+    Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState, Vst3ParameterChange,
+    Vst3ProcessBuffers, Vst3ProcessingConfig, state_stream::Vst3StateStream,
 };
 
 #[derive(Debug)]
@@ -149,7 +149,7 @@ impl Vst3ComponentInstance {
         input: &[f32],
         output: &mut [f32],
     ) -> HostResult<()> {
-        self.process_interleaved_f32_with_events(frames, input, &[], output)
+        self.process_interleaved_f32_with_events_and_parameters(frames, input, &[], &[], output)
     }
 
     pub fn process_interleaved_f32_with_events(
@@ -159,9 +159,22 @@ impl Vst3ComponentInstance {
         events: &[Vst3InputEvent],
         output: &mut [f32],
     ) -> HostResult<()> {
+        self.process_interleaved_f32_with_events_and_parameters(frames, input, events, &[], output)
+    }
+
+    pub fn process_interleaved_f32_with_events_and_parameters(
+        &mut self,
+        frames: usize,
+        input: &[f32],
+        events: &[Vst3InputEvent],
+        parameter_changes: &[Vst3ParameterChange],
+        output: &mut [f32],
+    ) -> HostResult<()> {
         self.require_state("process", &[Vst3LifecycleState::Processing])?;
         self.buffers.prepare_interleaved_f32(frames, input)?;
         self.buffers.prepare_input_events(frames, events)?;
+        self.buffers
+            .prepare_input_parameter_changes(frames, parameter_changes)?;
         self.processor.process(&mut self.buffers)?;
         self.buffers.copy_output_to_interleaved(frames, output)
     }

@@ -1,5 +1,5 @@
 import type { LoopbackSharedBuffers } from "./loopback.js";
-import type { MidiEvent } from "./protocol.js";
+import type { MidiEvent, ParameterAutomationEvent } from "./protocol.js";
 import type { JsonValue } from "./transport.js";
 
 export interface BridgeWorkerClientOptions {
@@ -18,6 +18,11 @@ export interface BridgeWorkerAudioStreamOptions {
 export interface BridgeWorkerMidiEventOptions {
   streamId: number;
   events: MidiEvent[];
+}
+
+export interface BridgeWorkerParameterEventOptions {
+  streamId: number;
+  events: ParameterAutomationEvent[];
 }
 
 type BridgeWorkerResult = JsonValue | ArrayBuffer | null;
@@ -85,6 +90,13 @@ export class WVSTBridgeWorkerClient {
 
   sendMidiEvents(options: BridgeWorkerMidiEventOptions): Promise<void> {
     return this.command("sendMidiEvents", {
+      streamId: options.streamId,
+      events: options.events,
+    }).then(() => undefined);
+  }
+
+  sendParameterEvents(options: BridgeWorkerParameterEventOptions): Promise<void> {
+    return this.command("sendParameterEvents", {
       streamId: options.streamId,
       events: options.events,
     }).then(() => undefined);

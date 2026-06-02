@@ -1,6 +1,6 @@
 # WVST Implementation Gap Analysis
 
-更新日期：2026-06-02
+更新日期：2026-06-03
 
 ## 当前已完成能力
 
@@ -35,6 +35,7 @@
 - Web session 已校验 `AudioContext.sampleRate` 与 instance `sampleRate` 一致，提供 `restartAudioStream()` 重启 Bridge worker audio pump，并通过 `getMetrics()` 暴露 loopback underflow/overflow 和 pending quantum 指标。
 - `wvst-protocol` 和 Web SDK 已定义固定 16 字节 MIDI/note event schema，事件包含 sample offset、kind、channel、data bytes 和 note id；audio frame payload 已能表达 audio samples 后追加 event section。
 - Web SDK 已提供 `sendMidiEvents()` 路径，DedicatedWorker 会缓存 MIDI events、按 sample offset 排序，并随下一块 audio frame 发送到 Bridge；Bridge/worker 音频 IPC 已能接受 event section，worker 会将 note on/off、poly pressure 和对应 raw MIDI note 事件转换为 VST3 `IEventList` 输入。
+- `wvst-protocol` 和 Web SDK 已新增固定 16 字节 parameter automation event schema，audio frame header 使用保留字段携带 `parameterEventCount`，payload 现在可表达 audio samples + MIDI events + parameter events。
 - Rust audio frame 协议已允许 `channels = 0`，passthrough worker 路径已支持 zero-input instrument frame 并覆盖测试。
 - `wvst-vst3-host` 已增加 VST3 FUID 规范化、`IPluginFactory::createInstance` ABI skeleton 和 macOS `create_vst3_component_probe()` safe facade；`wvst-host-worker component-probe <plugin.vst3> <class-id>` 可在隔离 worker 内验证 component 创建并释放。
 - VST3 ABI 边界已补入 `IPluginBase`、`IComponent`、`IAudioProcessor`、`IHostApplication`、`ProcessSetup`、`AudioBusBuffers` 和 `ProcessData` 的 Rust repr(C) skeleton，`queryInterface` 已改为传递 16-byte TUID 而非 FUID 字符串，后续真实 process path 可以继续在 `wvst-vst3-host` 内收敛 unsafe。
@@ -42,6 +43,7 @@
 - `wvst-vst3-host` 已加入纯 Rust `Vst3Lifecycle` 状态机和 `Vst3ProcessingConfig`，覆盖 `created -> initialized -> setup-done -> activated -> processing -> stopped -> terminated` 的合法顺序和非法转移测试。
 - `wvst-vst3-host` 已加入 `Vst3ProcessBuffers`，能预分配 planar input/output buffer，将 interleaved f32 输入转换为 VST3 channel buffers，并把 planar 输出复制回 interleaved f32；同时覆盖无输入音源 VST 的 buffer 路径。
 - `wvst-vst3-host` 已加入 VST3 `IEventList` / `Event` ABI skeleton 和 `Vst3EventList` safe wrapper，`ProcessData.input_events` 现在指向稳定的预分配事件列表，每个 block 会清空旧事件并填充新的 note/poly pressure 事件。
+- `wvst-vst3-host` 已加入 VST3 `IParameterChanges` / `IParamValueQueue` ABI skeleton 和 `Vst3ParameterChanges` safe wrapper，`ProcessData.input_parameter_changes` 现在指向稳定的 host-owned 参数队列，每个 block 会按 ParamID 分组填充 sample-accurate normalized automation points。
 - `wvst-vst3-host` 已加入 `Vst3AudioProcessor` facade，能封装 owned `IAudioProcessor` 指针并调用 `canProcessSampleSize`、`setupProcessing`、`setProcessing`、`process`、latency/tail 查询；fake ABI fixture 已覆盖真实 `ProcessData` 指针链路。
 - `wvst-vst3-host` 已加入 `Vst3ComponentInstance` holder，能持有 owned `IComponent` + `Vst3AudioProcessor`，并将 initialize、setupProcessing、setActive、setProcessing、process、terminate 串入 `Vst3Lifecycle`；fake component/processor fixture 已覆盖完整生命周期和错误传播。
 - `wvst-vst3-host` 已接入基础 audio bus 配置：`setupProcessing` 前调用 `setBusArrangements` 设置 mono/stereo 或 zero-input instrument arrangement，`activate/terminate` 会开关主 audio input/output bus，并覆盖 `setActive` 失败后的 bus rollback。
@@ -53,6 +55,7 @@
 - worker create response、worker metrics、Bridge instance record 和 Web SDK `InstanceDescriptor` 已暴露 backend、`latencySamples`、`tailSamples`，Web 侧可以在挂载后读取插件处理延迟和 tail 信息。
 - VST3 controller 基础链路已接入：component 可查询 controller class id，macOS factory runtime 会创建可选 `IEditController`，worker 初始化 controller 并注册 no-op `IComponentHandler`，Bridge/worker 控制面已暴露参数列表、normalized 参数读写和 controller state base64 get/set。
 - `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler` host callback 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入和生命周期释放。
+- `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
 - Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址并主动 shutdown。
 
 ## 距离完整能力的主要差距
@@ -83,7 +86,7 @@
 仍缺少：
 
 - 更完整的 host context extension、多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、audio bus 查询、selected-bus activation，并支持单个主 bus 的 mono/stereo/常见 3.0 到 7.1 speaker arrangement。
-- `IEditController`、参数列表、normalized 参数读写、controller state 和 component/controller state get 聚合已有首版；仍缺少完整 set 聚合、program list、unit metadata、parameter-change queue/sample-accurate automation 和真实第三方 controller 兼容验证。
+- `IEditController`、参数列表、normalized 参数读写、controller state、component/controller state get 聚合以及 parameter-change queue/sample-accurate automation 已有首版；仍缺少完整 set 聚合、program list、unit metadata 和真实第三方 controller/automation 兼容验证。
 - 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
 
 ### 4. 低延迟音频数据面
@@ -103,7 +106,7 @@
 
 仍缺少：
 
-- MIDI/note event schema、Web/Bridge/worker 数据面传输和 VST3 `IEventList` note/poly pressure 转换已有首版；仍缺少 CC、pitch bend、channel aftertouch 到 VST3 parameter/controller path 的正式映射。
+- MIDI/note event schema、Web/Bridge/worker 数据面传输、VST3 `IEventList` note/poly pressure 转换，以及 CC、pitch bend、channel aftertouch 经 `IMidiMapping` 到 VST3 parameter-change path 的映射已有首版。
 - 更完整的按 block sequence + sample offset 事件排序、背压和 late-event 策略。
 - 音源 VST 的 zero-input audio buffer/session/passthrough worker plumbing 已有首版；note on/off 已能随 block 进入真实 VST3 `process()`，仍缺少真实第三方 instrument 兼容测试和 timing 诊断。
 - Web MIDI adapter 和虚拟键盘示例。
@@ -118,8 +121,9 @@
 
 ## 建议下一阶段
 
-1. 扩展 host context message/attribute 对象、补齐多声道 `setBusArrangements` 和 active bus 策略，并用真实 macOS VST3 effect fixture 验证 2-in/2-out `process()`。
-2. 给 worker runtime backend 增加真实插件测试 fixture、兼容失败诊断和更细粒度 runtime capability。
-3. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
-4. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
-5. 为 audio IPC 增加 backpressure/late-frame 指标和 p50/p95/p99 延迟统计。
+1. 用真实 macOS VST3 effect/instrument fixture 验证 2-in/2-out process、parameter automation、MIDI mapping 和 zero-input instrument timing。
+2. 补齐 VST3 program list、unit metadata、component/controller state set 聚合，以及 host context message/attribute extension。
+3. 给 worker runtime backend 增加兼容失败诊断和更细粒度 runtime capability。
+4. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
+5. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
+6. 为 audio IPC 增加 backpressure/late-frame 指标和 p50/p95/p99 延迟统计。

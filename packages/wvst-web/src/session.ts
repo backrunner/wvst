@@ -12,7 +12,7 @@ import {
   type LoopbackMetrics,
   type LoopbackSharedBuffers,
 } from "./loopback.js";
-import type { MidiEvent } from "./protocol.js";
+import type { MidiEvent, ParameterAutomationEvent } from "./protocol.js";
 import type {
   BridgeWorkerAudioStreamOptions,
   WVSTBridgeWorkerClient,
@@ -46,6 +46,7 @@ export interface WVSTAudioDeviceSession {
   setInputDevice(options?: WVSTAudioInputSwitchOptions): Promise<void>;
   setOutputDevice(deviceId: string): Promise<boolean>;
   sendMidiEvents(events: MidiEvent[]): Promise<void>;
+  sendParameterEvents(events: ParameterAutomationEvent[]): Promise<void>;
   restartAudioStream(): Promise<void>;
   getMetrics(): LoopbackMetrics;
   startOutput(): Promise<void>;
@@ -214,6 +215,16 @@ function createSession(
       }
 
       return options.bridgeWorker.sendMidiEvents({
+        streamId: options.instance.streamId,
+        events,
+      });
+    },
+    sendParameterEvents: (events: ParameterAutomationEvent[]) => {
+      if (stopped) {
+        throw new Error("WVST audio device session is stopped");
+      }
+
+      return options.bridgeWorker.sendParameterEvents({
         streamId: options.instance.streamId,
         events,
       });

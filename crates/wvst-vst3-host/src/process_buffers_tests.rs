@@ -1,5 +1,7 @@
 use super::*;
 use crate::event_list::{Vst3InputEvent, Vst3NoteEvent};
+use crate::parameter_changes::Vst3ParameterChange;
+use crate::vst3_abi::IParameterChanges;
 use crate::vst3_abi::{Event, IEventList, VST3_EVENT_TYPE_NOTE_ON};
 
 #[test]
@@ -199,6 +201,78 @@ fn clears_prepared_input_events_between_blocks() {
 
     let event_list = buffers.process_data.input_events.cast::<IEventList>();
     let count = unsafe { ((*(*event_list).vtable).get_event_count)(event_list) };
+
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn exposes_prepared_parameter_changes_to_process_data() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
+    buffers
+        .prepare_input_parameter_changes(
+            64,
+            &[
+                Vst3ParameterChange {
+                    sample_offset: 12,
+                    parameter_id: 42,
+                    value_normalized: 0.25,
+                },
+                Vst3ParameterChange {
+                    sample_offset: 18,
+                    parameter_id: 42,
+                    value_normalized: 0.75,
+                },
+            ],
+        )
+        .expect("parameter changes");
+
+    let changes = buffers
+        .process_data
+        .input_parameter_changes
+        .cast::<IParameterChanges>();
+    let count = unsafe { ((*(*changes).vtable).get_parameter_count)(changes) };
+    let queue = unsafe { ((*(*changes).vtable).get_parameter_data)(changes, 0) };
+    let point_count = unsafe { ((*(*queue).vtable).get_point_count)(queue) };
+    let parameter_id = unsafe { ((*(*queue).vtable).get_parameter_id)(queue) };
+    let mut sample_offset = 0;
+    let mut value = 0.0;
+    let result =
+        unsafe { ((*(*queue).vtable).get_point)(queue, 1, &mut sample_offset, &mut value) };
+
+    assert!(!changes.is_null());
+    assert_eq!(count, 1);
+    assert_eq!(parameter_id, 42);
+    assert_eq!(point_count, 2);
+    assert_eq!(result, 0);
+    assert_eq!(sample_offset, 18);
+    assert_eq!(value, 0.75);
+}
+
+#[test]
+fn clears_prepared_parameter_changes_between_blocks() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
+    buffers
+        .prepare_input_parameter_changes(
+            64,
+            &[Vst3ParameterChange {
+                sample_offset: 0,
+                parameter_id: 42,
+                value_normalized: 0.5,
+            }],
+        )
+        .expect("parameter changes");
+
+    buffers
+        .prepare_interleaved_f32(64, &[])
+        .expect("next block");
+
+    let changes = buffers
+        .process_data
+        .input_parameter_changes
+        .cast::<IParameterChanges>();
+    let count = unsafe { ((*(*changes).vtable).get_parameter_count)(changes) };
 
     assert_eq!(count, 0);
 }

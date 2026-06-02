@@ -8,5 +8,6 @@
   "channels": 2,
   "format": 1,
   "flags": 1,
-  "eventCount": 0
+  "eventCount": 0,
+  "parameterEventCount": 0
 }

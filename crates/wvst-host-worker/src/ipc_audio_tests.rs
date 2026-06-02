@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId};
 use wvst_protocol::{
     AUDIO_FRAME_HEADER_LEN, AudioFrameChannelCount, AudioFrameFlags, AudioFrameHeader,
-    MIDI_EVENT_LEN, MidiEvent, MidiEventKind, WorkerAudioIpcMessage,
+    MIDI_EVENT_LEN, MidiEvent, MidiEventKind, PARAMETER_AUTOMATION_EVENT_LEN,
+    ParameterAutomationEvent, WorkerAudioIpcMessage,
 };
-use wvst_vst3_host::Vst3InputEvent;
+use wvst_vst3_host::{VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3InputEvent, Vst3ParameterChange};
 
 use super::*;
 
@@ -70,10 +71,20 @@ fn maps_midi_note_events_to_vst3_input_events() {
     ];
     let payload = midi_event_payload(&events);
     let mut destination = Vec::new();
+    let mut parameter_changes = Vec::new();
 
-    decode_midi_events_into(header, &payload, 2, &mut destination).expect("events");
+    decode_midi_events_into(
+        header,
+        &payload,
+        2,
+        &mut destination,
+        &mut parameter_changes,
+        |_, _| None,
+    )
+    .expect("events");
 
     assert_eq!(destination.len(), 2);
+    assert!(parameter_changes.is_empty());
     assert!(matches!(
         destination[0],
         Vst3InputEvent::NoteOn(event)
@@ -95,11 +106,83 @@ fn rejects_midi_event_sample_offsets_outside_block() {
     let event = MidiEvent::new(2, MidiEventKind::NoteOn, 0, 60, 100).expect("note on");
     let payload = midi_event_payload(&[event]);
     let mut destination = Vec::new();
+    let mut parameter_changes = Vec::new();
 
-    let error =
-        decode_midi_events_into(header, &payload, 2, &mut destination).expect_err("bad offset");
+    let error = decode_midi_events_into(
+        header,
+        &payload,
+        2,
+        &mut destination,
+        &mut parameter_changes,
+        |_, _| None,
+    )
+    .expect_err("bad offset");
 
     assert!(error.contains("outside block"));
+}
+
+#[test]
+fn decodes_parameter_automation_events() {
+    let header = test_header_with_event_counts(8, 0, 2);
+    let events = [
+        ParameterAutomationEvent::new(0, 10, 0.25).expect("parameter event"),
+        ParameterAutomationEvent::new(7, 11, 0.75).expect("parameter event"),
+    ];
+    let payload = parameter_event_payload(&events);
+    let mut destination = Vec::new();
+
+    decode_parameter_events_into(header, &payload, 8, &mut destination).expect("parameter events");
+
+    assert_eq!(
+        destination,
+        vec![
+            Vst3ParameterChange {
+                sample_offset: 0,
+                parameter_id: 10,
+                value_normalized: 0.25,
+            },
+            Vst3ParameterChange {
+                sample_offset: 7,
+                parameter_id: 11,
+                value_normalized: 0.75,
+            },
+        ]
+    );
+}
+
+#[test]
+fn maps_midi_controller_events_to_parameter_changes() {
+    let header = test_header_with_events(8, 2);
+    let events = [
+        MidiEvent::new(3, MidiEventKind::ControlChange, 2, 7, 64).expect("cc"),
+        MidiEvent::new(4, MidiEventKind::PitchBend, 2, 0, 64).expect("pitch bend"),
+    ];
+    let payload = midi_event_payload(&events);
+    let mut destination = Vec::new();
+    let mut parameter_changes = Vec::new();
+
+    decode_midi_events_into(
+        header,
+        &payload,
+        8,
+        &mut destination,
+        &mut parameter_changes,
+        |channel, controller| match (channel, controller) {
+            (2, 7) => Some(100),
+            (2, VST3_MIDI_CONTROLLER_PITCH_BEND) => Some(101),
+            _ => None,
+        },
+    )
+    .expect("events");
+
+    assert!(destination.is_empty());
+    assert_eq!(parameter_changes.len(), 2);
+    assert_eq!(parameter_changes[0].sample_offset, 3);
+    assert_eq!(parameter_changes[0].parameter_id, 100);
+    assert!((parameter_changes[0].value_normalized - (64.0 / 127.0)).abs() < f64::EPSILON);
+    assert_eq!(parameter_changes[1].sample_offset, 4);
+    assert_eq!(parameter_changes[1].parameter_id, 101);
+    assert!((parameter_changes[1].value_normalized - (8192.0 / 16_383.0)).abs() < f64::EPSILON);
 }
 
 fn create_instance(state: &mut WorkerIpcState, input_channels: usize, output_channels: usize) {
@@ -121,6 +204,14 @@ fn start_processing(state: &mut WorkerIpcState) {
 }
 
 fn test_header_with_events(frames: u16, event_count: u16) -> AudioFrameHeader {
+    test_header_with_event_counts(frames, event_count, 0)
+}
+
+fn test_header_with_event_counts(
+    frames: u16,
+    event_count: u16,
+    parameter_event_count: u16,
+) -> AudioFrameHeader {
     AudioFrameHeader::new_f32(
         StreamId::new(9),
         11,
@@ -131,7 +222,7 @@ fn test_header_with_events(frames: u16, event_count: u16) -> AudioFrameHeader {
         AudioFrameFlags::empty(),
     )
     .expect("header")
-    .with_event_count(event_count)
+    .with_event_counts(event_count, parameter_event_count)
     .expect("event header")
 }
 
@@ -141,6 +232,16 @@ fn midi_event_payload(events: &[MidiEvent]) -> Vec<u8> {
         event
             .encode(&mut payload[index * MIDI_EVENT_LEN..])
             .expect("encode event");
+    }
+    payload
+}
+
+fn parameter_event_payload(events: &[ParameterAutomationEvent]) -> Vec<u8> {
+    let mut payload = vec![0; events.len() * PARAMETER_AUTOMATION_EVENT_LEN];
+    for (index, event) in events.iter().enumerate() {
+        event
+            .encode(&mut payload[index * PARAMETER_AUTOMATION_EVENT_LEN..])
+            .expect("encode parameter event");
     }
     payload
 }

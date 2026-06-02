@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 
 pub type HostResult<T> = Result<T, HostError>;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HostError {
     AudioProcessorCallFailed {
         method: &'static str,
@@ -75,6 +75,14 @@ pub enum HostError {
     InvalidEventSampleOffset {
         frames: usize,
         actual: usize,
+    },
+    InvalidParameterChangeCount {
+        max: usize,
+        actual: usize,
+    },
+    InvalidParameterChangeValue {
+        parameter_id: u32,
+        value: f64,
     },
 }
 
@@ -212,6 +220,21 @@ impl Display for HostError {
                 write!(
                     formatter,
                     "invalid VST3 event sample offset: frames={frames}, offset={actual}"
+                )
+            }
+            Self::InvalidParameterChangeCount { max, actual } => {
+                write!(
+                    formatter,
+                    "invalid VST3 parameter change count: max {max}, got {actual}"
+                )
+            }
+            Self::InvalidParameterChangeValue {
+                parameter_id,
+                value,
+            } => {
+                write!(
+                    formatter,
+                    "invalid normalized VST3 parameter value: parameter={parameter_id}, value={value}"
                 )
             }
         }

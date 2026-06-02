@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
-use wvst_vst3_host::{DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3InputEvent};
+use wvst_vst3_host::{
+    DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
+    Vst3InputEvent, Vst3ParameterChange,
+};
 
 #[path = "ipc_audio.rs"]
 mod ipc_audio;
@@ -15,6 +18,8 @@ mod ipc_backend;
 mod ipc_buffers;
 #[path = "ipc_midi.rs"]
 mod ipc_midi;
+#[path = "ipc_parameter_events.rs"]
+mod ipc_parameter_events;
 #[path = "ipc_parameters.rs"]
 mod ipc_parameters;
 
@@ -38,6 +43,7 @@ struct WorkerInstance {
     backend: WorkerBackend,
     buffers: AudioScratchBuffers,
     events: Vec<Vst3InputEvent>,
+    parameter_changes: Vec<Vst3ParameterChange>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -240,6 +246,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
             backend,
             buffers,
             events: Vec::with_capacity(DEFAULT_MAX_VST3_EVENTS_PER_BLOCK),
+            parameter_changes: Vec::with_capacity(DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK),
         },
     );
 
@@ -344,6 +351,7 @@ fn worker_hello() -> Value {
             "vst3AudioProcessorProbe": true,
             "vst3RuntimeInstance": true,
             "vst3Parameters": true,
+            "vst3ParameterAutomation": true,
             "vst3ControllerState": true,
             "preallocatedAudioBuffers": true,
             "sampleRateValidation": true

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ProtocolError {
     BufferTooSmall { min: usize, actual: usize },
     InvalidMagic(u32),
@@ -14,6 +14,7 @@ pub enum ProtocolError {
     InvalidMidiEventKind(u8),
     InvalidMidiChannel(u8),
     InvalidMidiData { field: &'static str, value: u8 },
+    InvalidParameterValue(f64),
     InvalidPayloadLength { expected: u32, actual: u32 },
     PayloadTooLarge,
     InvalidCoreValue(String),
@@ -51,6 +52,9 @@ impl Display for ProtocolError {
             }
             Self::InvalidMidiData { field, value } => {
                 write!(formatter, "invalid MIDI {field}: {value}")
+            }
+            Self::InvalidParameterValue(value) => {
+                write!(formatter, "invalid normalized parameter value: {value}")
             }
             Self::InvalidPayloadLength { expected, actual } => {
                 write!(
