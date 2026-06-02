@@ -67,6 +67,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
             Duration::from_secs(5),
         )),
         instances: Arc::new(InstanceRegistry::new()),
+        events: BridgeEventBus::new(),
         metrics: Arc::new(BridgeMetrics::new()),
         plugins: Arc::new(plugins),
         workers: Arc::new(WorkerSupervisor::new_for_test_with_audio(
@@ -97,6 +98,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
             config: &state.config,
             host_worker: &state.host_worker,
             instances: &state.instances,
+            events: &state.events,
             metrics: &state.metrics,
             plugins: &state.plugins,
             origin: None,
@@ -126,6 +128,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
             config: &state.config,
             host_worker: &state.host_worker,
             instances: &state.instances,
+            events: &state.events,
             metrics: &state.metrics,
             plugins: &state.plugins,
             origin: None,

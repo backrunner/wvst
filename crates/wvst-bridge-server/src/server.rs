@@ -14,17 +14,19 @@ use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameFlags, AudioFrameHeader};
 use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
 use crate::error::BridgeResult;
+use crate::events::{BridgeEvent, BridgeEventBus, BridgeEventKind};
 use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::{InstanceRecord, InstanceRegistry, InstanceState, StreamState};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
-use crate::worker_supervisor::WorkerSupervisor;
+use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorOptions};
 
 #[derive(Debug, Clone)]
 struct BridgeState {
     config: Arc<BridgeConfig>,
     host_worker: Arc<HostWorkerClient>,
     instances: Arc<InstanceRegistry>,
+    events: BridgeEventBus,
     metrics: Arc<BridgeMetrics>,
     plugins: Arc<PluginRegistry>,
     workers: Arc<WorkerSupervisor>,
@@ -37,10 +39,31 @@ pub struct BridgeServer {
 
 impl BridgeServer {
     pub async fn bind(config: BridgeConfig) -> BridgeResult<Self> {
+        Self::bind_with_host_worker(config, HostWorkerClient::from_env()).await
+    }
+
+    pub async fn bind_with_host_worker(
+        config: BridgeConfig,
+        host_worker: HostWorkerClient,
+    ) -> BridgeResult<Self> {
+        Self::bind_with_host_worker_and_events(config, host_worker, BridgeEventBus::new()).await
+    }
+
+    pub async fn bind_with_host_worker_and_events(
+        config: BridgeConfig,
+        host_worker: HostWorkerClient,
+        events: BridgeEventBus,
+    ) -> BridgeResult<Self> {
         let listener = TcpListener::bind(config.bind_addr()).await?;
 
-        let host_worker = HostWorkerClient::from_env();
-        let workers = WorkerSupervisor::new(host_worker.executable_path().to_path_buf());
+        events.emit(BridgeEventKind::ServerStarting);
+        let workers = WorkerSupervisor::with_options(
+            WorkerSupervisorOptions::new(host_worker.executable_path().to_path_buf())
+                .with_timeout(host_worker.timeout()),
+        );
+        if let Ok(local_addr) = listener.local_addr() {
+            events.emit(BridgeEventKind::ServerStarted { local_addr });
+        }
 
         Ok(Self {
             listener,
@@ -48,6 +71,7 @@ impl BridgeServer {
                 config: Arc::new(config),
                 host_worker: Arc::new(host_worker),
                 instances: Arc::new(InstanceRegistry::new()),
+                events,
                 metrics: Arc::new(BridgeMetrics::new()),
                 plugins: Arc::new(PluginRegistry::new()),
                 workers: Arc::new(workers),
@@ -57,6 +81,14 @@ impl BridgeServer {
 
     pub fn local_addr(&self) -> BridgeResult<SocketAddr> {
         Ok(self.listener.local_addr()?)
+    }
+
+    pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<BridgeEvent> {
+        self.state.events.subscribe()
+    }
+
+    pub fn recent_events(&self, after_sequence: Option<u64>) -> Vec<BridgeEvent> {
+        self.state.events.recent_since(after_sequence)
     }
 
     pub async fn serve(self) -> BridgeResult<()> {
@@ -71,7 +103,11 @@ impl BridgeServer {
 
         loop {
             tokio::select! {
-                _ = &mut shutdown => return Ok(()),
+                _ = &mut shutdown => {
+                    self.state.events.emit(BridgeEventKind::ServerStopping);
+                    self.state.events.emit(BridgeEventKind::ServerStopped);
+                    return Ok(());
+                },
                 accepted = self.listener.accept() => {
                     let (stream, _) = accepted?;
                     let state = self.state.clone();
@@ -121,6 +157,7 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
                         config: &state.config,
                         host_worker: &state.host_worker,
                         instances: &state.instances,
+                        events: &state.events,
                         metrics: &state.metrics,
                         plugins: &state.plugins,
                         origin: origin.as_deref(),

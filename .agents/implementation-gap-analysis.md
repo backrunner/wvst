@@ -18,7 +18,9 @@
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
 - Bridge `instance.status` 已加入可配置的 worker 自动恢复策略：heartbeat 失败后默认尝试重启同一实例并保留 `instanceId` / `streamId`，如果实例原先处于 `processing` 会重新进入 processing；Bridge metrics 已暴露 `workerAutoRestarts`。
-- Bridge/Web SDK 已提供 `instance.start` / `instance.stop` 处理生命周期控制，实例状态可从 `ready` 切到 `processing` / `stopped`。
+- Bridge/Web SDK 已提供 `instance.start` / `instance.stop` 处理生命周期控制，实例状态可从 `ready` 切到 `processing` / `stopped`，并已补入 `starting` / `stopping` / `recovering` 瞬态状态。
+- Bridge 已提供运行时事件总线和 `bridge.events` 控制面查询；Web SDK 已暴露 `client.events()`，可观察 server lifecycle、worker start/ready/processing/stopped/failed/recovering/recovered/quarantine 事件。
+- Bridge worker supervisor 已提供 quarantine TTL 释放策略，过期释放会清空累计失败计数并可通过事件观测。
 - Bridge 音频路由现在要求实例处于 `processing` 状态；未 start、已 stop 或处理失败都会返回带 `silence` / `process-error` 的诊断静音帧，而不是继续把音频送进 worker。
 - Instance heartbeat 已避免把正在 `processing` 的实例误降回 `ready`，降低控制面状态刷新对数据面的干扰。
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion`、`instanceLifecycle` 和 `binaryAudioProcess` capability，避免 Bridge 与不兼容 worker 继续创建实例。
@@ -59,7 +61,7 @@
 - `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler` host callback 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入和生命周期释放。
 - `wvst-vst3-host` 已提供可选 `IUnitInfo` facade，能读取 units、program lists、program names 和 selected unit；`wvst-host-worker` / Bridge / Web SDK 已提供 `instance.units` / `client.instances.units()` 查询 API。
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
-- Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址并主动 shutdown。
+- Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址、主动 shutdown、runtime event subscription、最近事件快照、外部 worker executable 注入和 worker timeout 配置。
 
 ## 距离完整能力的主要差距
 
@@ -67,8 +69,8 @@
 
 仍缺少：
 
-- `ready` 之后的 `processing` / `stopped` 生命周期已有首版控制 API；仍缺少 `starting`、`stopping`、自动恢复中等瞬态状态和事件推送。
-- 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；仍缺少崩溃事件推送和策略化资源回收。
+- `ready` 之后的 `processing` / `stopped` 生命周期已有控制 API，`starting`、`stopping`、自动恢复中等瞬态状态和事件推送已有首版；仍缺少客户端侧长连接主动事件推送协议和更细粒度生命周期事件。
+- 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；崩溃/恢复/quarantine 事件已有首版，仍缺少更完整的策略化资源回收和应用级资源上限。
 - 同一插件 N 个实例的 worker 池化、调度和资源上限策略；当前更接近一实例一 worker 的保守隔离原型。
 
 ### 2. 持久 worker IPC
@@ -77,9 +79,9 @@
 
 仍缺少：
 
-- 更完整的 Bridge worker supervisor 生命周期管理，包括主动 crash event 推送、恢复中状态广播和 quarantine 解除策略。
+- 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照和 quarantine 解除策略首版；仍缺少真正的 WebSocket server-push 事件订阅、进程树 kill/wait 审计和更多失败分类。
 - 正式 framed control IPC，替换当前 JSON-line 控制面原型。
-- 超时后的全链路 kill/wait 审计、restart 指标和 crash quarantine 解除策略。
+- 超时后的全链路 kill/wait 审计、细粒度 restart 诊断和 crash quarantine 策略调优。
 - 更完整的 worker capability negotiation，包括按数据面、MIDI、参数自动化和诊断能力分层协商。
 
 ### 3. 真实 VST3 component/controller lifecycle
@@ -118,7 +120,7 @@
 
 仍缺少：
 
-- `wvst-embed` 已有基础 runtime API；仍缺少更完整的嵌入式配置、事件订阅、外部 worker executable 注入和应用生命周期集成示例。
+- `wvst-embed` 已有 runtime builder、事件订阅、事件快照、外部 worker executable 注入和 timeout 配置；仍缺少应用生命周期集成示例、日志/诊断集成和打包脚本。
 - macOS 安装、启动、授权、日志和诊断命令。
 - Windows/Linux worker supervision backend。
 
@@ -127,6 +129,6 @@
 1. 用真实 macOS VST3 effect/instrument fixture 验证 2-in/2-out process、parameter automation、MIDI mapping 和 zero-input instrument timing。
 2. 补齐 VST3 host context message/attribute extension，并用真实第三方插件验证 controller/automation/unit-info/program-data 兼容性。
 3. 给 worker runtime backend 增加兼容失败诊断和更细粒度 runtime capability。
-4. 给 Bridge worker supervisor 增加恢复中状态/事件回传、quarantine 解除策略和 worker crash 事件回传。
-5. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
+4. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
+5. 增加 WebSocket server-push 事件订阅、进程树 kill/wait 审计和资源上限策略。
 6. 为 audio IPC 增加 backpressure/late-frame/jitter 指标，并把 Bridge route latency 扩展到端到端 WebAudio 往返测量。

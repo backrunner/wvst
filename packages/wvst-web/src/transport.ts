@@ -22,6 +22,46 @@ export interface BridgeMetrics {
   audioRouteLatency: BridgeLatencyMetrics;
 }
 
+export interface BridgeEventsOptions {
+  afterSequence?: number;
+}
+
+export interface BridgeEventsResult {
+  events: BridgeEvent[];
+  lastSequence: number | null;
+}
+
+export interface BridgeEvent {
+  sequence: number;
+  kind: BridgeEventKind;
+}
+
+export type BridgeEventKind =
+  | { type: "server-starting" }
+  | { type: "server-started"; localAddr: string }
+  | { type: "server-stopping" }
+  | { type: "server-stopped" }
+  | { type: "worker-starting"; instanceId: number; pluginId: string }
+  | { type: "worker-ready"; instanceId: number; pluginId: string }
+  | { type: "worker-processing"; instanceId: number }
+  | { type: "worker-stopped"; instanceId: number }
+  | {
+      type: "worker-failed";
+      instanceId: number;
+      pluginId: string;
+      code: number;
+      message: string;
+    }
+  | { type: "worker-recovering"; instanceId: number; pluginId: string }
+  | {
+      type: "worker-recovered";
+      instanceId: number;
+      pluginId: string;
+      processingRestored: boolean;
+    }
+  | { type: "worker-quarantined"; pluginId: string; failures: number }
+  | { type: "worker-quarantine-released"; pluginId: string };
+
 export interface BridgeLatencyMetrics {
   count: number;
   p50Us: number | null;

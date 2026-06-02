@@ -169,9 +169,12 @@ pub struct InstanceRecord {
 #[serde(rename_all = "kebab-case")]
 pub enum InstanceState {
     Allocated,
+    Starting,
     Ready,
     Processing,
+    Stopping,
     Stopped,
+    Recovering,
     Failed,
     Destroyed,
 }
@@ -180,9 +183,12 @@ pub enum InstanceState {
 #[serde(rename_all = "kebab-case")]
 pub enum WorkerState {
     NotStarted,
+    Starting,
     Ready,
     Processing,
+    Stopping,
     Stopped,
+    Recovering,
     Failed,
 }
 
@@ -347,6 +353,21 @@ impl InstanceRegistry {
         self.mark_worker_ready_inner(instance_id, None)
     }
 
+    pub fn mark_worker_starting(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?;
+        let record = records
+            .get_mut(&instance_id)
+            .ok_or(InstanceError::InstanceNotFound(instance_id))?;
+
+        record.state = InstanceState::Starting;
+        record.worker_state = WorkerState::Starting;
+
+        Ok(record.clone())
+    }
+
     pub fn mark_worker_ready_with_runtime(
         &self,
         instance_id: u64,
@@ -401,6 +422,24 @@ impl InstanceRegistry {
         Ok(record.clone())
     }
 
+    pub fn mark_worker_recovering(
+        &self,
+        instance_id: u64,
+    ) -> Result<InstanceRecord, InstanceError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?;
+        let record = records
+            .get_mut(&instance_id)
+            .ok_or(InstanceError::InstanceNotFound(instance_id))?;
+
+        record.state = InstanceState::Recovering;
+        record.worker_state = WorkerState::Recovering;
+
+        Ok(record.clone())
+    }
+
     pub fn mark_processing(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
         let mut records = self
             .records
@@ -412,6 +451,21 @@ impl InstanceRegistry {
 
         record.state = InstanceState::Processing;
         record.worker_state = WorkerState::Processing;
+
+        Ok(record.clone())
+    }
+
+    pub fn mark_stopping(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| InstanceError::RegistryUnavailable)?;
+        let record = records
+            .get_mut(&instance_id)
+            .ok_or(InstanceError::InstanceNotFound(instance_id))?;
+
+        record.state = InstanceState::Stopping;
+        record.worker_state = WorkerState::Stopping;
 
         Ok(record.clone())
     }

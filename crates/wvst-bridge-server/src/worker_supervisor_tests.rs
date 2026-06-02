@@ -30,6 +30,36 @@ async fn quarantines_plugin_after_repeated_start_failures() {
     ));
 }
 
+#[tokio::test]
+async fn releases_quarantine_after_duration() {
+    let supervisor = WorkerSupervisor::new_for_test_with_quarantine(
+        PathBuf::from("missing-wvst-worker"),
+        Duration::from_millis(50),
+        Duration::from_millis(1),
+    );
+    let record = record();
+
+    for _ in 0..QUARANTINE_FAILURES {
+        let _ = supervisor.start_instance(&record).await;
+    }
+    assert_eq!(
+        supervisor.quarantine_failures(&record.plugin_id).await,
+        Some(QUARANTINE_FAILURES)
+    );
+
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    assert_eq!(
+        supervisor
+            .release_expired_quarantine(&record.plugin_id)
+            .await,
+        Some(QUARANTINE_FAILURES)
+    );
+    assert_eq!(
+        supervisor.quarantine_failures(&record.plugin_id).await,
+        None
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn rejects_incompatible_worker_ipc_version() {

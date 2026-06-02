@@ -2,6 +2,7 @@ use super::*;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::events::{BridgeEventBus, BridgeEventKind};
 use crate::instance_registry::InstanceRegistry;
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
@@ -12,6 +13,7 @@ async fn responds_to_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let workers = test_workers();
@@ -19,6 +21,7 @@ async fn responds_to_hello() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        events: &events,
         metrics: &metrics,
         plugins: &plugins,
         origin: Some("http://localhost:5173"),
@@ -43,6 +46,7 @@ async fn rejects_denied_origin() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let workers = test_workers();
@@ -50,6 +54,7 @@ async fn rejects_denied_origin() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        events: &events,
         metrics: &metrics,
         plugins: &plugins,
         origin: Some("https://example.com"),
@@ -73,6 +78,7 @@ async fn rejects_plugin_list_before_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let workers = test_workers();
@@ -80,6 +86,7 @@ async fn rejects_plugin_list_before_hello() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        events: &events,
         metrics: &metrics,
         plugins: &plugins,
         origin: None,
@@ -99,6 +106,7 @@ async fn lists_cached_plugins_after_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let workers = test_workers();
@@ -106,6 +114,7 @@ async fn lists_cached_plugins_after_hello() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        events: &events,
         metrics: &metrics,
         plugins: &plugins,
         origin: None,
@@ -126,6 +135,47 @@ async fn lists_cached_plugins_after_hello() {
     );
 }
 
+#[tokio::test]
+async fn returns_recent_bridge_events() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
+    let metrics = BridgeMetrics::new();
+    let plugins = PluginRegistry::new();
+    let workers = test_workers();
+    events.emit(BridgeEventKind::ServerStarting);
+    events.emit(BridgeEventKind::ServerStopped);
+    let context = ControlContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        origin: None,
+        session_authorized: true,
+        workers: &workers,
+    };
+
+    let response = handle_control_text(
+        r#"{"id":1,"method":"bridge.events","params":{"afterSequence":1}}"#,
+        context,
+    )
+    .await;
+    let value: Value = serde_json::from_str(&response.text).expect("valid json");
+
+    assert_eq!(
+        value["result"]["events"].as_array().expect("events").len(),
+        1
+    );
+    assert_eq!(
+        value["result"]["events"][0]["kind"]["type"],
+        "server-stopped"
+    );
+    assert_eq!(value["result"]["lastSequence"], 2);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn routes_factory_info_to_host_worker() {
@@ -133,6 +183,7 @@ async fn routes_factory_info_to_host_worker() {
     let worker_path = factory_info_worker_script();
     let host_worker = HostWorkerClient::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let workers = test_workers();
@@ -140,6 +191,7 @@ async fn routes_factory_info_to_host_worker() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        events: &events,
         metrics: &metrics,
         plugins: &plugins,
         origin: None,

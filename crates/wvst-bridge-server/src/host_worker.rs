@@ -35,15 +35,19 @@ pub enum HostWorkerError {
 }
 
 impl HostWorkerClient {
+    pub fn new(executable: PathBuf, timeout: Duration) -> Self {
+        Self {
+            executable,
+            timeout,
+        }
+    }
+
     pub fn from_env() -> Self {
         let executable = std::env::var_os(HOST_WORKER_ENV)
             .map(PathBuf::from)
             .unwrap_or_else(default_worker_executable);
 
-        Self {
-            executable,
-            timeout: DEFAULT_TIMEOUT,
-        }
+        Self::new(executable, DEFAULT_TIMEOUT)
     }
 
     pub async fn factory_info(
@@ -55,6 +59,10 @@ impl HostWorkerClient {
 
     pub fn executable_path(&self) -> &Path {
         &self.executable
+    }
+
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     async fn run_json(&self, command: &str, plugin_path: &Path) -> Result<Value, HostWorkerError> {
@@ -195,10 +203,7 @@ fn truncate_text(bytes: &[u8]) -> String {
 #[cfg(test)]
 impl HostWorkerClient {
     pub fn new_for_test(executable: PathBuf, timeout: Duration) -> Self {
-        Self {
-            executable,
-            timeout,
-        }
+        Self::new(executable, timeout)
     }
 }
 

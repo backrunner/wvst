@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::events::BridgeEventBus;
 use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::{InstanceRegistry, InstanceState, WorkerState};
 use crate::metrics::BridgeMetrics;
@@ -11,16 +12,37 @@ use crate::worker_supervisor::WorkerSupervisor;
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Clone, Copy)]
+struct RequestContext<'a> {
+    config: &'a BridgeConfig,
+    host_worker: &'a HostWorkerClient,
+    instances: &'a InstanceRegistry,
+    events: &'a BridgeEventBus,
+    metrics: &'a BridgeMetrics,
+    plugins: &'a PluginRegistry,
+    workers: &'a WorkerSupervisor,
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn creates_lists_and_destroys_instance() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let worker_path = serve_worker_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        workers: &workers,
+    };
 
     let create_request = serde_json::json!({
         "id": 1,
@@ -35,16 +57,7 @@ async fn creates_lists_and_destroys_instance() {
         }
     })
     .to_string();
-    let create_value = request_json(
-        &create_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let create_value = request_json(&create_request, context).await;
     assert!(create_value.get("error").is_none(), "{create_value}");
     let instance_id = create_value["result"]["instanceId"]
         .as_u64()
@@ -57,16 +70,8 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(create_value["result"]["latencySamples"], 0);
     assert_eq!(create_value["result"]["tailSamples"], 0);
 
-    let list_value = request_json(
-        r#"{"id":2,"method":"instance.list","params":{}}"#,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let list_value =
+        request_json(r#"{"id":2,"method":"instance.list","params":{}}"#, context).await;
     assert_eq!(list_value["result"].as_array().expect("instances").len(), 1);
 
     let status_request = serde_json::json!({
@@ -75,16 +80,7 @@ async fn creates_lists_and_destroys_instance() {
         "params": { "instanceId": instance_id }
     })
     .to_string();
-    let status_value = request_json(
-        &status_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let status_value = request_json(&status_request, context).await;
     assert_eq!(status_value["result"]["instance"]["workerState"], "ready");
     assert_eq!(status_value["result"]["worker"]["ipcVersion"], 1);
     assert_eq!(status_value["result"]["worker"]["instances"], 1);
@@ -95,16 +91,7 @@ async fn creates_lists_and_destroys_instance() {
         "params": { "instanceId": instance_id }
     })
     .to_string();
-    let parameters_value = request_json(
-        &parameters_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let parameters_value = request_json(&parameters_request, context).await;
     assert_eq!(parameters_value["result"]["parameters"][0]["id"], 42);
     assert_eq!(parameters_value["result"]["parameters"][0]["title"], "Gain");
 
@@ -114,16 +101,7 @@ async fn creates_lists_and_destroys_instance() {
         "params": { "instanceId": instance_id }
     })
     .to_string();
-    let close_stream_value = request_json(
-        &close_stream_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let close_stream_value = request_json(&close_stream_request, context).await;
     assert_eq!(close_stream_value["result"]["streamState"], "closed");
 
     let open_stream_request = serde_json::json!({
@@ -132,16 +110,7 @@ async fn creates_lists_and_destroys_instance() {
         "params": { "instanceId": instance_id }
     })
     .to_string();
-    let open_stream_value = request_json(
-        &open_stream_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let open_stream_value = request_json(&open_stream_request, context).await;
     assert_eq!(open_stream_value["result"]["streamState"], "open");
 
     let start_request = serde_json::json!({
@@ -150,16 +119,7 @@ async fn creates_lists_and_destroys_instance() {
         "params": { "instanceId": instance_id }
     })
     .to_string();
-    let start_value = request_json(
-        &start_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let start_value = request_json(&start_request, context).await;
     assert_eq!(start_value["result"]["instance"]["state"], "processing");
     assert_eq!(start_value["result"]["worker"]["workerState"], "processing");
 
@@ -169,18 +129,22 @@ async fn creates_lists_and_destroys_instance() {
         "params": { "instanceId": instance_id }
     })
     .to_string();
-    let stop_value = request_json(
-        &stop_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let stop_value = request_json(&stop_request, context).await;
     assert_eq!(stop_value["result"]["instance"]["state"], "stopped");
     assert_eq!(stop_value["result"]["worker"]["workerState"], "stopped");
+
+    let events_value =
+        request_json(r#"{"id":71,"method":"bridge.events","params":{}}"#, context).await;
+    let event_types = events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .map(|event| event["kind"]["type"].as_str().expect("event type"))
+        .collect::<Vec<_>>();
+    assert!(event_types.contains(&"worker-starting"));
+    assert!(event_types.contains(&"worker-ready"));
+    assert!(event_types.contains(&"worker-processing"));
+    assert!(event_types.contains(&"worker-stopped"));
 
     let destroy_request = serde_json::json!({
         "id": 8,
@@ -188,16 +152,7 @@ async fn creates_lists_and_destroys_instance() {
         "params": { "instanceId": instance_id }
     })
     .to_string();
-    let destroy_value = request_json(
-        &destroy_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let destroy_value = request_json(&destroy_request, context).await;
     assert_eq!(destroy_value["result"]["state"], "destroyed");
     assert!(instances.list().is_empty());
 
@@ -212,22 +167,23 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         .with_worker_auto_restart(false);
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        workers: &workers,
+    };
 
     let create_request = instance_create_request(1, &plugin_id);
-    let create_value = request_json(
-        &create_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let create_value = request_json(&create_request, context).await;
     assert!(create_value.get("error").is_none(), "{create_value}");
     let instance_id = create_value["result"]["instanceId"]
         .as_u64()
@@ -235,12 +191,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
 
     let status_value = request_json(
         &instance_request(2, "instance.status", instance_id),
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
+        context,
     )
     .await;
     assert_eq!(status_value["error"]["code"], 5037);
@@ -260,45 +211,33 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        workers: &workers,
+    };
 
-    let create_value = request_json(
-        &instance_create_request(1, &plugin_id),
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let create_value = request_json(&instance_create_request(1, &plugin_id), context).await;
     let instance_id = create_value["result"]["instanceId"]
         .as_u64()
         .expect("instance id");
 
-    let start_value = request_json(
-        &instance_request(2, "instance.start", instance_id),
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let start_value =
+        request_json(&instance_request(2, "instance.start", instance_id), context).await;
     assert_eq!(start_value["result"]["instance"]["state"], "processing");
 
     let status_value = request_json(
         &instance_request(3, "instance.status", instance_id),
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
+        context,
     )
     .await;
     assert_eq!(status_value["result"]["recovered"], true);
@@ -312,28 +251,26 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
         "processing"
     );
 
-    let metrics_value = request_json(
-        r#"{"id":4,"method":"bridge.metrics","params":{}}"#,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let metrics_value =
+        request_json(r#"{"id":4,"method":"bridge.metrics","params":{}}"#, context).await;
     assert_eq!(metrics_value["result"]["workerFailures"], 1);
     assert_eq!(metrics_value["result"]["workerRestarts"], 1);
     assert_eq!(metrics_value["result"]["workerAutoRestarts"], 1);
 
+    let events_value =
+        request_json(r#"{"id":41,"method":"bridge.events","params":{}}"#, context).await;
+    let event_types = events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .map(|event| event["kind"]["type"].as_str().expect("event type"))
+        .collect::<Vec<_>>();
+    assert!(event_types.contains(&"worker-recovering"));
+    assert!(event_types.contains(&"worker-recovered"));
+
     let _ = request_json(
         &instance_request(5, "instance.destroy", instance_id),
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
+        context,
     )
     .await;
 
@@ -348,22 +285,23 @@ async fn restarts_failed_instance_with_same_stream() {
         .with_worker_auto_restart(false);
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        workers: &workers,
+    };
 
     let create_request = instance_create_request(1, &plugin_id);
-    let create_value = request_json(
-        &create_request,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let create_value = request_json(&create_request, context).await;
     let instance_id = create_value["result"]["instanceId"]
         .as_u64()
         .expect("instance id");
@@ -373,24 +311,14 @@ async fn restarts_failed_instance_with_same_stream() {
 
     let failing_status_value = request_json(
         &instance_request(2, "instance.status", instance_id),
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
+        context,
     )
     .await;
     assert_eq!(failing_status_value["error"]["code"], 5037);
 
     let restart_value = request_json(
         &instance_request(3, "instance.restart", instance_id),
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
+        context,
     )
     .await;
     assert_eq!(
@@ -407,27 +335,14 @@ async fn restarts_failed_instance_with_same_stream() {
     assert_eq!(restart_value["result"]["instance"]["tailSamples"], 0);
     assert_eq!(restart_value["result"]["worker"]["workerState"], "ready");
 
-    let metrics_value = request_json(
-        r#"{"id":4,"method":"bridge.metrics","params":{}}"#,
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
-    )
-    .await;
+    let metrics_value =
+        request_json(r#"{"id":4,"method":"bridge.metrics","params":{}}"#, context).await;
     assert_eq!(metrics_value["result"]["workerFailures"], 1);
     assert_eq!(metrics_value["result"]["workerRestarts"], 1);
 
     let _ = request_json(
         &instance_request(5, "instance.destroy", instance_id),
-        &config,
-        &host_worker,
-        &instances,
-        &metrics,
-        &plugins,
-        &workers,
+        context,
     )
     .await;
 
@@ -435,26 +350,19 @@ async fn restarts_failed_instance_with_same_stream() {
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
 }
 
-async fn request_json(
-    text: &str,
-    config: &BridgeConfig,
-    host_worker: &HostWorkerClient,
-    instances: &InstanceRegistry,
-    metrics: &BridgeMetrics,
-    plugins: &PluginRegistry,
-    workers: &WorkerSupervisor,
-) -> Value {
+async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
     let response = handle_control_text(
         text,
         ControlContext {
-            config,
-            host_worker,
-            instances,
-            metrics,
-            plugins,
+            config: context.config,
+            host_worker: context.host_worker,
+            instances: context.instances,
+            events: context.events,
+            metrics: context.metrics,
+            plugins: context.plugins,
             origin: None,
             session_authorized: true,
-            workers,
+            workers: context.workers,
         },
     )
     .await;

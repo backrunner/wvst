@@ -4,6 +4,7 @@ use wvst_core::ProtocolVersion;
 use wvst_protocol::{AUDIO_FRAME_VERSION, negotiate_protocol};
 
 use crate::config::BridgeConfig;
+use crate::events::BridgeEventBus;
 use crate::host_worker::{HostWorkerClient, HostWorkerError};
 use crate::instance_registry::{InstanceError, InstanceRegistry};
 use crate::metrics::BridgeMetrics;
@@ -14,6 +15,7 @@ pub struct ControlContext<'a> {
     pub config: &'a BridgeConfig,
     pub host_worker: &'a HostWorkerClient,
     pub instances: &'a InstanceRegistry,
+    pub events: &'a BridgeEventBus,
     pub metrics: &'a BridgeMetrics,
     pub plugins: &'a PluginRegistry,
     pub origin: Option<&'a str>,
@@ -81,6 +83,13 @@ struct PluginFactoryInfoParams {
     path: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeEventsParams {
+    #[serde(default)]
+    after_sequence: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 struct WireProtocolVersion {
     major: u16,
@@ -127,6 +136,10 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
         "bridge.hello" => handle_hello(request.id, request.params, context),
         "bridge.metrics" => ControlResponse::new(
             response_result(request.id, json!(context.metrics.snapshot())),
+            session_authorized,
+        ),
+        "bridge.events" => ControlResponse::new(
+            handle_bridge_events(request.id, request.params, context),
             session_authorized,
         ),
         "plugin.scan" => ControlResponse::new(
@@ -305,6 +318,19 @@ fn handle_plugin_scan(id: Value, params: Value, context: ControlContext<'_>) -> 
     };
 
     response_result(id, json!(report))
+}
+
+fn handle_bridge_events(id: Value, params: Value, context: ControlContext<'_>) -> String {
+    let params = parse_params::<BridgeEventsParams>(params).unwrap_or_default();
+    let events = context.events.recent_since(params.after_sequence);
+
+    response_result(
+        id,
+        json!({
+            "events": events,
+            "lastSequence": events.last().map(|event| event.sequence),
+        }),
+    )
 }
 
 fn handle_plugin_list(id: Value, params: Value, context: ControlContext<'_>) -> String {

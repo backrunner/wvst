@@ -10,6 +10,10 @@ export {
 export {
   WebSocketRpcTransport,
   WVSTBridgeError,
+  type BridgeEvent,
+  type BridgeEventKind,
+  type BridgeEventsOptions,
+  type BridgeEventsResult,
   type BridgeMetrics,
   type JsonValue,
   type RpcTransport,

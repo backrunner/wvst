@@ -20,8 +20,24 @@ export interface InstanceDescriptor {
   maxBlockFrames: number;
   inputChannels: number;
   outputChannels: number;
-  state: "allocated" | "ready" | "processing" | "stopped" | "failed";
-  workerState: "not-started" | "ready" | "processing" | "stopped" | "failed";
+  state:
+    | "allocated"
+    | "starting"
+    | "ready"
+    | "processing"
+    | "stopping"
+    | "stopped"
+    | "recovering"
+    | "failed";
+  workerState:
+    | "not-started"
+    | "starting"
+    | "ready"
+    | "processing"
+    | "stopping"
+    | "stopped"
+    | "recovering"
+    | "failed";
   streamState: "open" | "closed";
   backend?: string;
   controllerClassId?: string;

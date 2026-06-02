@@ -45,6 +45,12 @@ fn marks_worker_ready() {
     let plugin = plugin();
     let record = registry.create(create_params(), &plugin).expect("instance");
 
+    let starting = registry
+        .mark_worker_starting(record.instance_id)
+        .expect("starting");
+    assert_eq!(starting.state, InstanceState::Starting);
+    assert_eq!(starting.worker_state, WorkerState::Starting);
+
     let ready = registry
         .mark_worker_ready(record.instance_id)
         .expect("ready");
@@ -125,6 +131,20 @@ fn marks_worker_failed() {
 }
 
 #[test]
+fn marks_worker_recovering() {
+    let registry = InstanceRegistry::new();
+    let plugin = plugin();
+    let record = registry.create(create_params(), &plugin).expect("instance");
+
+    let recovering = registry
+        .mark_worker_recovering(record.instance_id)
+        .expect("recovering");
+
+    assert_eq!(recovering.state, InstanceState::Recovering);
+    assert_eq!(recovering.worker_state, WorkerState::Recovering);
+}
+
+#[test]
 fn marks_processing_and_stopped() {
     let registry = InstanceRegistry::new();
     let plugin = plugin();
@@ -135,6 +155,12 @@ fn marks_processing_and_stopped() {
         .expect("processing");
     assert_eq!(processing.state, InstanceState::Processing);
     assert_eq!(processing.worker_state, WorkerState::Processing);
+
+    let stopping = registry
+        .mark_stopping(record.instance_id)
+        .expect("stopping");
+    assert_eq!(stopping.state, InstanceState::Stopping);
+    assert_eq!(stopping.worker_state, WorkerState::Stopping);
 
     let stopped = registry.mark_stopped(record.instance_id).expect("stopped");
     assert_eq!(stopped.state, InstanceState::Stopped);

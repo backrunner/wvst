@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -14,6 +14,7 @@ use tokio::time::timeout;
 use crate::instance_registry::InstanceRecord;
 
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_QUARANTINE_DURATION: Duration = Duration::from_secs(60);
 const EXPECTED_WORKER_IPC_VERSION: u16 = 1;
 const QUARANTINE_FAILURES: u32 = 3;
 const STDERR_TAIL_BYTES: usize = 4096;
@@ -36,7 +37,16 @@ pub struct WorkerSupervisor {
     use_audio_ipc: bool,
     failures: Mutex<BTreeMap<String, u32>>,
     processes: Mutex<BTreeMap<u64, Arc<Mutex<WorkerProcess>>>>,
-    quarantined: Mutex<BTreeMap<String, u32>>,
+    quarantine_duration: Duration,
+    quarantined: Mutex<BTreeMap<String, QuarantineRecord>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkerSupervisorOptions {
+    executable: PathBuf,
+    timeout: Duration,
+    quarantine_duration: Duration,
+    use_audio_ipc: bool,
 }
 
 #[derive(Debug)]
@@ -47,6 +57,12 @@ struct WorkerProcess {
     stderr: StderrTail,
     audio: Option<WorkerAudioConnection>,
     next_request_id: u64,
+}
+
+#[derive(Debug, Clone)]
+struct QuarantineRecord {
+    failures: u32,
+    release_at: Instant,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -113,12 +129,17 @@ pub enum WorkerSupervisorError {
 
 impl WorkerSupervisor {
     pub fn new(executable: PathBuf) -> Self {
+        Self::with_options(WorkerSupervisorOptions::new(executable))
+    }
+
+    pub fn with_options(options: WorkerSupervisorOptions) -> Self {
         Self {
-            executable,
-            timeout: DEFAULT_IPC_TIMEOUT,
-            use_audio_ipc: true,
+            executable: options.executable,
+            timeout: options.timeout,
+            use_audio_ipc: options.use_audio_ipc,
             failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
+            quarantine_duration: options.quarantine_duration,
             quarantined: Mutex::new(BTreeMap::new()),
         }
     }
@@ -140,7 +161,7 @@ impl WorkerSupervisor {
                 Ok(ready)
             }
             Err(error) => {
-                self.record_failure(&record.plugin_id).await;
+                let _ = self.record_failure(&record.plugin_id).await;
                 Err(error)
             }
         }
@@ -197,6 +218,53 @@ impl WorkerSupervisor {
                 Err(error)
             }
         }
+    }
+
+    pub async fn quarantine_failures(&self, plugin_id: &str) -> Option<u32> {
+        self.quarantined
+            .lock()
+            .await
+            .get(plugin_id)
+            .map(|record| record.failures)
+    }
+
+    pub async fn release_expired_quarantine(&self, plugin_id: &str) -> Option<u32> {
+        let mut quarantined = self.quarantined.lock().await;
+        let record = quarantined.get(plugin_id)?;
+        if Instant::now() < record.release_at {
+            return None;
+        }
+
+        let failures = record.failures;
+        quarantined.remove(plugin_id);
+        self.failures.lock().await.remove(plugin_id);
+        Some(failures)
+    }
+}
+
+impl WorkerSupervisorOptions {
+    pub fn new(executable: PathBuf) -> Self {
+        Self {
+            executable,
+            timeout: DEFAULT_IPC_TIMEOUT,
+            quarantine_duration: DEFAULT_QUARANTINE_DURATION,
+            use_audio_ipc: true,
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_quarantine_duration(mut self, duration: Duration) -> Self {
+        self.quarantine_duration = duration;
+        self
+    }
+
+    pub fn with_audio_ipc(mut self, enabled: bool) -> Self {
+        self.use_audio_ipc = enabled;
+        self
     }
 }
 
@@ -412,17 +480,24 @@ impl WorkerSupervisor {
     }
 
     async fn reject_if_quarantined(&self, plugin_id: &str) -> Result<(), WorkerSupervisorError> {
-        if let Some(failures) = self.quarantined.lock().await.get(plugin_id).copied() {
-            return Err(WorkerSupervisorError::Quarantined {
-                plugin_id: plugin_id.to_string(),
-                failures,
-            });
+        let mut quarantined = self.quarantined.lock().await;
+        if let Some(record) = quarantined.get(plugin_id) {
+            if Instant::now() < record.release_at {
+                return Err(WorkerSupervisorError::Quarantined {
+                    plugin_id: plugin_id.to_string(),
+                    failures: record.failures,
+                });
+            }
+        }
+        if quarantined.remove(plugin_id).is_some() {
+            drop(quarantined);
+            self.failures.lock().await.remove(plugin_id);
         }
 
         Ok(())
     }
 
-    async fn record_failure(&self, plugin_id: &str) {
+    async fn record_failure(&self, plugin_id: &str) -> Option<u32> {
         let mut failures = self.failures.lock().await;
         let count = failures
             .entry(plugin_id.to_string())
@@ -430,11 +505,17 @@ impl WorkerSupervisor {
             .or_insert(1);
 
         if *count >= QUARANTINE_FAILURES {
-            self.quarantined
-                .lock()
-                .await
-                .insert(plugin_id.to_string(), *count);
+            self.quarantined.lock().await.insert(
+                plugin_id.to_string(),
+                QuarantineRecord {
+                    failures: *count,
+                    release_at: Instant::now() + self.quarantine_duration,
+                },
+            );
+            return Some(*count);
         }
+
+        None
     }
 
     async fn clear_failures(&self, plugin_id: &str) {
@@ -507,25 +588,28 @@ fn instance_create_params(record: &InstanceRecord) -> Value {
 #[cfg(test)]
 impl WorkerSupervisor {
     pub fn new_for_test(executable: PathBuf, timeout: Duration) -> Self {
-        Self {
-            executable,
-            timeout,
-            use_audio_ipc: false,
-            failures: Mutex::new(BTreeMap::new()),
-            processes: Mutex::new(BTreeMap::new()),
-            quarantined: Mutex::new(BTreeMap::new()),
-        }
+        Self::with_options(
+            WorkerSupervisorOptions::new(executable)
+                .with_timeout(timeout)
+                .with_audio_ipc(false),
+        )
     }
 
     pub fn new_for_test_with_audio(executable: PathBuf, timeout: Duration) -> Self {
-        Self {
-            executable,
-            timeout,
-            use_audio_ipc: true,
-            failures: Mutex::new(BTreeMap::new()),
-            processes: Mutex::new(BTreeMap::new()),
-            quarantined: Mutex::new(BTreeMap::new()),
-        }
+        Self::with_options(WorkerSupervisorOptions::new(executable).with_timeout(timeout))
+    }
+
+    pub fn new_for_test_with_quarantine(
+        executable: PathBuf,
+        timeout: Duration,
+        quarantine_duration: Duration,
+    ) -> Self {
+        Self::with_options(
+            WorkerSupervisorOptions::new(executable)
+                .with_timeout(timeout)
+                .with_quarantine_duration(quarantine_duration)
+                .with_audio_ipc(false),
+        )
     }
 }
 
