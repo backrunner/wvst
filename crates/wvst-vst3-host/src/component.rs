@@ -2,12 +2,12 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
-    BusInfo, FUnknown, IComponent, IComponentVTable, K_RESULT_OK, VST3_BUS_DIRECTION_INPUT,
-    VST3_BUS_DIRECTION_OUTPUT, VST3_MEDIA_TYPE_AUDIO,
+    BusInfo, FUnknown, IComponent, IComponentVTable, K_RESULT_OK, VST3_MEDIA_TYPE_AUDIO,
 };
 use crate::{
-    HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3HostContext,
-    Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState, Vst3ProcessBuffers, Vst3ProcessingConfig,
+    HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3BusType,
+    Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState, Vst3ProcessBuffers,
+    Vst3ProcessingConfig,
 };
 
 #[derive(Debug)]
@@ -229,18 +229,32 @@ impl Vst3ComponentHandle {
         active: bool,
     ) -> HostResult<()> {
         if config.input_channels > 0 {
-            self.activate_audio_bus(VST3_BUS_DIRECTION_INPUT, active)?;
+            self.activate_selected_audio_bus(
+                Vst3BusDirection::Input,
+                config.input_channels,
+                active,
+            )?;
         }
-        self.activate_audio_bus(VST3_BUS_DIRECTION_OUTPUT, active)
+        self.activate_selected_audio_bus(Vst3BusDirection::Output, config.output_channels, active)
     }
 
-    fn activate_audio_bus(&mut self, direction: i32, active: bool) -> HostResult<()> {
+    fn activate_selected_audio_bus(
+        &mut self,
+        direction: Vst3BusDirection,
+        channels: u16,
+        active: bool,
+    ) -> HostResult<()> {
+        let buses = self.audio_buses(direction)?;
+        let index = select_audio_bus_index(&buses, channels);
+        self.activate_audio_bus(direction.as_abi(), index, active)
+    }
+
+    fn activate_audio_bus(&mut self, direction: i32, index: i32, active: bool) -> HostResult<()> {
         let state = if active { 1 } else { 0 };
         self.call_result("activateBus", |component, vtable| unsafe {
             // SAFETY: component and vtable were validated by from_raw; WVST's
-            // MVP process buffers expose at most one main audio bus per
-            // direction, so index 0 is the only bus activated here.
-            (vtable.activate_bus)(component, VST3_MEDIA_TYPE_AUDIO, direction, 0, state)
+            // MVP process buffers expose one selected audio bus per direction.
+            (vtable.activate_bus)(component, VST3_MEDIA_TYPE_AUDIO, direction, index, state)
         })
     }
 
@@ -319,6 +333,52 @@ impl Drop for Vst3ComponentHandle {
         // handle; Drop releases that reference exactly once.
         unsafe {
             (vtable.release)(component);
+        }
+    }
+}
+
+fn select_audio_bus_index(buses: &[Vst3AudioBusInfo], requested_channels: u16) -> i32 {
+    let requested_channels = i32::from(requested_channels);
+    buses
+        .iter()
+        .find(|bus| bus.bus_type == Vst3BusType::Main && bus.channel_count == requested_channels)
+        .or_else(|| {
+            buses.iter().find(|bus| {
+                bus.bus_type == Vst3BusType::Main && bus.default_active && bus.channel_count > 0
+            })
+        })
+        .or_else(|| buses.iter().find(|bus| bus.channel_count > 0))
+        .map_or(0, |bus| bus.index)
+}
+
+#[cfg(test)]
+mod bus_selection_tests {
+    use super::*;
+
+    #[test]
+    fn prefers_main_bus_matching_requested_channels() {
+        let buses = [
+            test_bus(0, 1, true, Vst3BusType::Main),
+            test_bus(2, 2, false, Vst3BusType::Main),
+        ];
+
+        assert_eq!(select_audio_bus_index(&buses, 2), 2);
+    }
+
+    fn test_bus(
+        index: i32,
+        channel_count: i32,
+        default_active: bool,
+        bus_type: Vst3BusType,
+    ) -> Vst3AudioBusInfo {
+        Vst3AudioBusInfo {
+            index,
+            direction: Vst3BusDirection::Output,
+            channel_count,
+            bus_type,
+            default_active,
+            control_voltage: false,
+            name: None,
         }
     }
 }

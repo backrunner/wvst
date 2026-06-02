@@ -46,6 +46,7 @@
 - `wvst-vst3-host` 已加入 `Vst3ComponentInstance` holder，能持有 owned `IComponent` + `Vst3AudioProcessor`，并将 initialize、setupProcessing、setActive、setProcessing、process、terminate 串入 `Vst3Lifecycle`；fake component/processor fixture 已覆盖完整生命周期和错误传播。
 - `wvst-vst3-host` 已接入基础 audio bus 配置：`setupProcessing` 前调用 `setBusArrangements` 设置 mono/stereo 或 zero-input instrument arrangement，`activate/terminate` 会开关主 audio input/output bus，并覆盖 `setActive` 失败后的 bus rollback。
 - `wvst-vst3-host` 已补入 VST3 `BusInfo` ABI 和 `Vst3AudioBusInfo` safe facade，component holder 可查询 audio input/output bus count、channel count、bus type、default active flag 和 UTF-16 bus name。
+- component holder 的 audio bus activation 已从固定 index 0 改为基于查询结果选择 bus：优先匹配目标 channel count 的 main bus，其次 default-active main bus，再回退到第一个可用 bus。
 - macOS factory runtime 已提供 `create_vst3_component_instance()`，可通过 `IPluginFactory::createInstance(IComponent)` 和 `queryInterface(IAudioProcessor)` 创建 `Vst3LoadedComponent`，并保持 bundle 生命周期覆盖 component/processor holder。
 - `Vst3ComponentInstance::initialize()` 已传入 WVST `IHostApplication` host context，插件可通过 `queryInterface(IHostApplication)` 读取宿主名称；host-side `createInstance()` 仍暂不提供 message/attribute 对象。
 - `wvst-host-worker serve` 已接入首版 runtime backend：instance create 可持久保存 `Vst3LoadedComponent`，`instance.start/stop/destroy` 会驱动真实 VST3 lifecycle，worker audio IPC 可调用真实 `process()`；invalid class id 或非 bundle 路径仍回退 passthrough 以保持测试和开发路径可用。
@@ -78,7 +79,7 @@
 
 仍缺少：
 
-- 更完整的 host context extension、多 bus arrangement 和 active bus 策略；当前 holder 已提供基础 `IHostApplication` 和 audio bus 查询，但仍仅支持主 mono/stereo audio bus 与 zero-input instrument。
+- 更完整的 host context extension、多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、audio bus 查询和 selected-bus activation，但仍仅支持单个主 mono/stereo audio bus 与 zero-input instrument。
 - controller 对象仍未接入，参数、state、program list、unit metadata 仍缺少。
 - 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
 
