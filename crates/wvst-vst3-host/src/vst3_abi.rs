@@ -29,6 +29,8 @@ pub const VST3_I_PROGRAM_LIST_DATA_IID: &str = "8683B01F7B354F70A2651DEC353AF4FF
 pub const VST3_I_UNIT_DATA_IID: &str = "6C389611D391455DB870B83394A0EFDD";
 pub const VST3_I_COMPONENT_HANDLER_IID: &str = "93A0BEA30BD045DB8E890B0CC1E46AC6";
 pub const VST3_I_HOST_APPLICATION_IID: &str = "58E595CCDB2D49698B6AAF8C36A664E5";
+pub const VST3_I_ATTRIBUTE_LIST_IID: &str = "1E5F0AEBCC7F4533A254401138AD5EE4";
+pub const VST3_I_MESSAGE_IID: &str = "936F033BC6C047DBBB0882F813C1E613";
 pub const VST3_IBSTREAM_IID: &str = "C3BF6EA2309947529B6BF9901EE33E9B";
 pub const VST3_PROCESS_MODE_REALTIME: i32 = 0;
 pub const VST3_SAMPLE_32: i32 = 0;
@@ -67,6 +69,7 @@ pub type ProgramListId = i32;
 pub type SampleRate = f64;
 pub type SpeakerArrangement = u64;
 pub type String128 = [u16; 128];
+pub type FidString = *const c_char;
 
 #[repr(C)]
 pub struct FUnknown {
@@ -321,6 +324,74 @@ pub struct IParamValueQueueVTable {
         value: ParamValue,
         index: *mut i32,
     ) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IAttributeList {
+    pub vtable: *const IAttributeListVTable,
+}
+
+#[repr(C)]
+pub struct IAttributeListVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IAttributeList,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IAttributeList) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IAttributeList) -> u32,
+    pub set_int:
+        unsafe extern "system" fn(this: *mut IAttributeList, id: FidString, value: i64) -> i32,
+    pub get_int:
+        unsafe extern "system" fn(this: *mut IAttributeList, id: FidString, value: *mut i64) -> i32,
+    pub set_float:
+        unsafe extern "system" fn(this: *mut IAttributeList, id: FidString, value: f64) -> i32,
+    pub get_float:
+        unsafe extern "system" fn(this: *mut IAttributeList, id: FidString, value: *mut f64) -> i32,
+    pub set_string: unsafe extern "system" fn(
+        this: *mut IAttributeList,
+        id: FidString,
+        value: *const u16,
+    ) -> i32,
+    pub get_string: unsafe extern "system" fn(
+        this: *mut IAttributeList,
+        id: FidString,
+        value: *mut u16,
+        size_in_bytes: u32,
+    ) -> i32,
+    pub set_binary: unsafe extern "system" fn(
+        this: *mut IAttributeList,
+        id: FidString,
+        data: *const c_void,
+        size_in_bytes: u32,
+    ) -> i32,
+    pub get_binary: unsafe extern "system" fn(
+        this: *mut IAttributeList,
+        id: FidString,
+        data: *mut *const c_void,
+        size_in_bytes: *mut u32,
+    ) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IMessage {
+    pub vtable: *const IMessageVTable,
+}
+
+#[repr(C)]
+pub struct IMessageVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IMessage,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IMessage) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IMessage) -> u32,
+    pub get_message_id: unsafe extern "system" fn(this: *mut IMessage) -> FidString,
+    pub set_message_id: unsafe extern "system" fn(this: *mut IMessage, id: FidString),
+    pub get_attributes: unsafe extern "system" fn(this: *mut IMessage) -> *mut IAttributeList,
 }
 
 #[repr(C)]

@@ -2,9 +2,12 @@ use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::host_attributes::Vst3HostAttributeList;
+use crate::host_message::Vst3HostMessage;
 use crate::vst3_abi::{
     FUnknown, IHostApplication, IHostApplicationVTable, K_RESULT_FALSE, K_RESULT_OK, String128,
-    TUid, VST3_FUNKNOWN_IID, VST3_I_HOST_APPLICATION_IID, parse_tuid_hex,
+    TUid, VST3_FUNKNOWN_IID, VST3_I_ATTRIBUTE_LIST_IID, VST3_I_HOST_APPLICATION_IID,
+    VST3_I_MESSAGE_IID, parse_tuid_hex,
 };
 
 #[derive(Debug)]
@@ -108,13 +111,29 @@ unsafe extern "system" fn host_get_name(this: *mut IHostApplication, name: *mut 
 
 unsafe extern "system" fn host_create_instance(
     _this: *mut IHostApplication,
-    _cid: *mut TUid,
-    _iid: *mut TUid,
+    cid: *mut TUid,
+    iid: *mut TUid,
     obj: *mut *mut c_void,
 ) -> i32 {
-    if !obj.is_null() {
-        unsafe { *obj = ptr::null_mut() };
+    if obj.is_null() {
+        return K_RESULT_FALSE;
     }
+    unsafe { *obj = ptr::null_mut() };
+    if cid.is_null() || iid.is_null() {
+        return K_RESULT_FALSE;
+    }
+
+    let cid = unsafe { *cid };
+    let iid = unsafe { *iid };
+    if cid == tuid(VST3_I_MESSAGE_IID) && iid == tuid(VST3_I_MESSAGE_IID) {
+        unsafe { *obj = Vst3HostMessage::new().into_raw().cast::<c_void>() };
+        return K_RESULT_OK;
+    }
+    if cid == tuid(VST3_I_ATTRIBUTE_LIST_IID) && iid == tuid(VST3_I_ATTRIBUTE_LIST_IID) {
+        unsafe { *obj = Vst3HostAttributeList::new().into_raw().cast::<c_void>() };
+        return K_RESULT_OK;
+    }
+
     K_RESULT_FALSE
 }
 
@@ -191,5 +210,73 @@ mod tests {
 
         assert_eq!(result, K_RESULT_OK);
         assert_eq!(object, host.cast::<c_void>());
+    }
+
+    #[test]
+    fn creates_host_message_instances() {
+        let mut context = Vst3HostContext::new("WVST");
+        let host = context.as_funknown_ptr().cast::<IHostApplication>();
+        let mut cid = parse_tuid_hex(VST3_I_MESSAGE_IID).expect("message cid");
+        let mut iid = parse_tuid_hex(VST3_I_MESSAGE_IID).expect("message iid");
+        let mut object = ptr::null_mut();
+
+        let result =
+            unsafe { ((*(*host).vtable).create_instance)(host, &mut cid, &mut iid, &mut object) };
+
+        assert_eq!(result, K_RESULT_OK);
+        assert!(!object.is_null());
+
+        let message = object.cast::<crate::vst3_abi::IMessage>();
+        let message_id = std::ffi::CString::new("TextMessage").expect("message id");
+        let attribute_key = std::ffi::CString::new("payload").expect("attribute key");
+        let attribute_value = [b'o' as u16, b'k' as u16, 0];
+        let mut output = [0_u16; 8];
+        unsafe {
+            ((*(*message).vtable).set_message_id)(message, message_id.as_ptr());
+            let attributes = ((*(*message).vtable).get_attributes)(message);
+            assert!(!attributes.is_null());
+            assert_eq!(
+                ((*(*attributes).vtable).set_string)(
+                    attributes,
+                    attribute_key.as_ptr(),
+                    attribute_value.as_ptr(),
+                ),
+                K_RESULT_OK
+            );
+            assert_eq!(
+                ((*(*attributes).vtable).get_string)(
+                    attributes,
+                    attribute_key.as_ptr(),
+                    output.as_mut_ptr(),
+                    (output.len() * 2) as u32,
+                ),
+                K_RESULT_OK
+            );
+            ((*(*attributes).vtable).release)(attributes);
+        }
+        assert_eq!(&output[..3], &attribute_value);
+        unsafe {
+            ((*(*message).vtable).release)(message);
+        }
+    }
+
+    #[test]
+    fn creates_host_attribute_list_instances() {
+        let mut context = Vst3HostContext::new("WVST");
+        let host = context.as_funknown_ptr().cast::<IHostApplication>();
+        let mut cid = parse_tuid_hex(VST3_I_ATTRIBUTE_LIST_IID).expect("attribute cid");
+        let mut iid = parse_tuid_hex(VST3_I_ATTRIBUTE_LIST_IID).expect("attribute iid");
+        let mut object = ptr::null_mut();
+
+        let result =
+            unsafe { ((*(*host).vtable).create_instance)(host, &mut cid, &mut iid, &mut object) };
+
+        assert_eq!(result, K_RESULT_OK);
+        assert!(!object.is_null());
+
+        let attributes = object.cast::<crate::vst3_abi::IAttributeList>();
+        unsafe {
+            ((*(*attributes).vtable).release)(attributes);
+        }
     }
 }

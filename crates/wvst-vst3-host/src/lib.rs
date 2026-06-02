@@ -6,7 +6,9 @@ pub mod edit_controller;
 pub mod error;
 pub mod event_list;
 pub mod factory;
+pub mod host_attributes;
 pub mod host_context;
+pub mod host_message;
 pub mod lifecycle;
 pub mod metadata;
 pub mod midi_mapping;
@@ -33,7 +35,9 @@ pub use factory::{
     Vst3ComponentProbe, Vst3FactoryClass, Vst3FactoryInfo, Vst3LoadedComponent,
     create_vst3_component_instance, create_vst3_component_probe, load_vst3_factory_info,
 };
+pub use host_attributes::Vst3HostAttributeList;
 pub use host_context::Vst3HostContext;
+pub use host_message::Vst3HostMessage;
 pub use lifecycle::{Vst3Lifecycle, Vst3LifecycleState, Vst3ProcessingConfig};
 pub use metadata::HeadlessPluginMetadata;
 pub use midi_mapping::Vst3MidiMapping;
