@@ -46,6 +46,21 @@ export {
   type StreamLifecycleOptions,
 } from "./instances.js";
 export {
+  createWVSTAudioInputSource,
+  createWVSTMediaElementOutputRoute,
+  listWVSTAudioDevices,
+  requestWVSTAudioInput,
+  selectWVSTAudioOutputDevice,
+  setWVSTAudioContextOutputDevice,
+  setWVSTMediaElementOutputDevice,
+  type WVSTAudioDeviceList,
+  type WVSTAudioInputOptions,
+  type WVSTAudioInputSource,
+  type WVSTMediaElementOutputRoute,
+  type WVSTMediaElementOutputRouteOptions,
+  type WVSTOutputDeviceOptions,
+} from "./devices.js";
+export {
   type PluginApi,
   type PluginClass,
   type PluginDescriptor,

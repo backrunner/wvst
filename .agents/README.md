@@ -9,6 +9,7 @@
 - [technical-feasibility.md](technical-feasibility.md)：WebAudio、本地桥接、VST3、WASM 和跨平台可行性调研。
 - [requirements.md](requirements.md)：产品目标、功能需求、非功能需求、性能和安全边界。
 - [module-design.md](module-design.md)：程序模块、进程架构、Web API、协议和嵌入式接口设计。
+- [web-device-routing.md](web-device-routing.md)：Web 侧指定音频输入/输出设备与 VST stream/channel 的边界设计。
 - [roadmap.md](roadmap.md)：从 macOS MVP 到跨平台生产可用版本的阶段计划。
 - [development-standards.md](development-standards.md)：Rust/TS 实时音频、高性能、测试、代码规模和提交规范。
 - [implementation-gap-analysis.md](implementation-gap-analysis.md)：当前实现状态、完整能力差距和下一阶段顺序。
