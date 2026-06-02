@@ -34,6 +34,7 @@
 - `create_vst3_component_probe()` 现在会通过 `queryInterface` 验证 component 是否暴露 `IAudioProcessor`；`wvst-host-worker serve` 在 instance create 时只把可音频处理的 component 标记为 VST3 probe 后端，否则返回明确错误或回退 passthrough。
 - `wvst-vst3-host` 已加入纯 Rust `Vst3Lifecycle` 状态机和 `Vst3ProcessingConfig`，覆盖 `created -> initialized -> setup-done -> activated -> processing -> stopped -> terminated` 的合法顺序和非法转移测试。
 - `wvst-vst3-host` 已加入 `Vst3ProcessBuffers`，能预分配 planar input/output buffer，将 interleaved f32 输入转换为 VST3 channel buffers，并把 planar 输出复制回 interleaved f32；同时覆盖无输入音源 VST 的 buffer 路径。
+- `wvst-vst3-host` 已加入 `Vst3AudioProcessor` facade，能封装 owned `IAudioProcessor` 指针并调用 `canProcessSampleSize`、`setupProcessing`、`setProcessing`、`process`、latency/tail 查询；fake ABI fixture 已覆盖真实 `ProcessData` 指针链路。
 
 ## 距离完整能力的主要差距
 
@@ -60,13 +61,13 @@
 
 ### 3. 真实 VST3 component/controller lifecycle
 
-当前已完成 factory info 读取、`IPluginFactory::createInstance` component probe、`IAudioProcessor` 接口探测、基础 ABI skeleton 和纯 Rust lifecycle 状态机，尚未进入完整 component/controller 运行态。
+当前已完成 factory info 读取、`IPluginFactory::createInstance` component probe、`IAudioProcessor` 接口探测、基础 ABI skeleton、纯 Rust lifecycle 状态机和 processor facade，尚未进入完整 component/controller 运行态。
 
 仍缺少：
 
 - 持久持有 component/controller 对象的 worker 内状态模型。
 - 将 `Vst3Lifecycle` 状态机绑定到真实 component/controller 调用，包括 host context、bus arrangement、sample rate、max block size。
-- `setProcessing`、`process`、latency/tail 查询。
+- 将 processor facade 接入真实插件对象和 worker audio path；当前 `setProcessing`、`process`、latency/tail 仅在 fake ABI fixture 上验证。
 - 参数、state、program list、unit metadata。
 
 ### 4. 低延迟音频数据面
@@ -78,7 +79,7 @@
 - stream open/close 已有首版控制 API；仍缺少 end-of-stream 帧语义、close 后 drain 策略和 WebAudio 端自动重开策略。
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，仍缺少共享内存/预分配 buffer 和背压语义。
-- worker passthrough 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；host crate 已具备 VST3 process buffer binding，但仍缺少持久 processor 对象和 worker 到真实 VST `process()` 的调用接入。
+- worker passthrough 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；host crate 已具备 VST3 process buffer binding 和 processor facade，但仍缺少持久 processor 对象和 worker 到真实 VST `process()` 的调用接入。
 - late/drop/underflow/overflow 策略和 p50/p95/p99 指标；当前只有 route/fallback/failure 计数，还没有时延分位数。
 
 ### 5. MIDI 与音源 VST
@@ -101,7 +102,7 @@
 ## 建议下一阶段
 
 1. 在 `createInstance` / `IAudioProcessor` probe 之后实现持久 VST3 component/controller holder，并把 `Vst3Lifecycle` 绑定到真实 initialize、bus arrangement、setupProcessing 和 setProcessing 调用。
-2. 将 `Vst3ProcessBuffers` 接入持久 VST3 processor holder，把 worker passthrough audio path 替换为真实 VST3 2-in/2-out effect `process()`，并用 fake ABI fixture 覆盖 CI。
+2. 将 `Vst3ProcessBuffers` 与 `Vst3AudioProcessor` 接入持久 VST3 processor holder，把 worker passthrough audio path 替换为真实 VST3 2-in/2-out effect `process()`。
 3. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
 4. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
 5. 为 audio IPC 增加 backpressure/late-frame 指标和 p50/p95/p99 延迟统计。

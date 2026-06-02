@@ -1,0 +1,132 @@
+use std::ffi::c_void;
+use std::ptr::NonNull;
+
+use crate::vst3_abi::{
+    IAudioProcessor, IAudioProcessorVTable, K_RESULT_OK, ProcessSetup, VST3_SAMPLE_32,
+};
+use crate::{HostError, HostResult, Vst3ProcessBuffers, Vst3ProcessingConfig};
+
+#[derive(Debug)]
+pub struct Vst3AudioProcessor {
+    processor: NonNull<IAudioProcessor>,
+    processing: bool,
+}
+
+impl Vst3AudioProcessor {
+    /// # Safety
+    ///
+    /// `processor` must be an owned, valid VST3 `IAudioProcessor` pointer with
+    /// a non-null vtable. This wrapper calls `release` exactly once on drop.
+    pub unsafe fn from_raw(processor: *mut c_void) -> HostResult<Self> {
+        let processor = NonNull::new(processor.cast::<IAudioProcessor>())
+            .ok_or(HostError::AudioProcessorReturnedNull)?;
+
+        // SAFETY: The caller guarantees the pointer is a valid IAudioProcessor
+        // object for the lifetime transferred to this wrapper.
+        let vtable = unsafe { processor.as_ref().vtable };
+        if vtable.is_null() {
+            return Err(HostError::AudioProcessorVTableMissing);
+        }
+
+        Ok(Self {
+            processor,
+            processing: false,
+        })
+    }
+
+    pub const fn is_processing(&self) -> bool {
+        self.processing
+    }
+
+    pub fn setup_realtime_f32(&mut self, config: Vst3ProcessingConfig) -> HostResult<()> {
+        self.call_result("canProcessSampleSize", |processor, vtable| unsafe {
+            // SAFETY: vtable and processor were validated by from_raw; the
+            // sample-size value is a VST3 ABI constant.
+            (vtable.can_process_sample_size)(processor, VST3_SAMPLE_32)
+        })?;
+
+        let mut setup = ProcessSetup::realtime_f32(
+            i32::from(config.max_block_frames),
+            config.sample_rate as f64,
+        );
+        self.call_result("setupProcessing", |processor, vtable| unsafe {
+            // SAFETY: setup points to a stack ProcessSetup with repr(C) layout
+            // and is valid for the duration of the ABI call.
+            (vtable.setup_processing)(processor, &mut setup)
+        })
+    }
+
+    pub fn set_processing(&mut self, processing: bool) -> HostResult<()> {
+        let state = if processing { 1 } else { 0 };
+        self.call_result("setProcessing", |processor, vtable| unsafe {
+            // SAFETY: vtable and processor were validated by from_raw; VST3
+            // TBool accepts 0/1 state values.
+            (vtable.set_processing)(processor, state)
+        })?;
+        self.processing = processing;
+
+        Ok(())
+    }
+
+    pub fn process(&mut self, buffers: &mut Vst3ProcessBuffers) -> HostResult<()> {
+        self.call_result("process", |processor, vtable| unsafe {
+            // SAFETY: Vst3ProcessBuffers owns stable repr(C) ProcessData,
+            // AudioBusBuffers and channel pointer arrays for the ABI call.
+            (vtable.process)(processor, buffers.process_data_mut())
+        })
+    }
+
+    pub fn latency_samples(&self) -> u32 {
+        let processor = self.processor.as_ptr();
+        let vtable = self.vtable();
+
+        // SAFETY: vtable and processor were validated by from_raw; this VST3
+        // query takes no additional pointers.
+        unsafe { (vtable.get_latency_samples)(processor) }
+    }
+
+    pub fn tail_samples(&self) -> u32 {
+        let processor = self.processor.as_ptr();
+        let vtable = self.vtable();
+
+        // SAFETY: vtable and processor were validated by from_raw; this VST3
+        // query takes no additional pointers.
+        unsafe { (vtable.get_tail_samples)(processor) }
+    }
+
+    fn call_result(
+        &mut self,
+        method: &'static str,
+        call: impl FnOnce(*mut IAudioProcessor, &IAudioProcessorVTable) -> i32,
+    ) -> HostResult<()> {
+        let result = call(self.processor.as_ptr(), self.vtable());
+        if result == K_RESULT_OK {
+            Ok(())
+        } else {
+            Err(HostError::AudioProcessorCallFailed { method, result })
+        }
+    }
+
+    fn vtable(&self) -> &IAudioProcessorVTable {
+        // SAFETY: from_raw validated both the object pointer and the vtable
+        // pointer. The wrapper owns the reference until Drop calls release.
+        unsafe { &*self.processor.as_ref().vtable }
+    }
+}
+
+impl Drop for Vst3AudioProcessor {
+    fn drop(&mut self) {
+        let processor = self.processor.as_ptr();
+        let vtable = self.vtable();
+
+        // SAFETY: from_raw transfers one owned IAudioProcessor reference to this
+        // wrapper; Drop releases that reference exactly once.
+        unsafe {
+            (vtable.release)(processor);
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "audio_processor_tests.rs"]
+mod audio_processor_tests;

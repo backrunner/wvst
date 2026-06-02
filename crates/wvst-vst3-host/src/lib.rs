@@ -1,3 +1,4 @@
+pub mod audio_processor;
 pub mod error;
 pub mod factory;
 pub mod lifecycle;
@@ -7,6 +8,7 @@ pub mod process_buffers;
 pub mod processor;
 mod vst3_abi;
 
+pub use audio_processor::Vst3AudioProcessor;
 pub use error::{HostError, HostResult};
 pub use factory::{
     Vst3ComponentProbe, Vst3FactoryClass, Vst3FactoryInfo, create_vst3_component_probe,

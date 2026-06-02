@@ -146,6 +146,10 @@ impl Vst3ProcessBuffers {
             .map(|range| &mut self.output_samples[range])
     }
 
+    pub(crate) fn process_data_mut(&mut self) -> &mut ProcessData {
+        &mut self.process_data
+    }
+
     fn validate_frames(&self, frames: usize) -> HostResult<()> {
         if frames > self.max_frames {
             return Err(HostError::InvalidBufferLength {

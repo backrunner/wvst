@@ -5,6 +5,12 @@ pub type HostResult<T> = Result<T, HostError>;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum HostError {
+    AudioProcessorCallFailed {
+        method: &'static str,
+        result: i32,
+    },
+    AudioProcessorReturnedNull,
+    AudioProcessorVTableMissing,
     BundleExecutableNotFound(String),
     FactoryCallFailed {
         method: &'static str,
@@ -43,6 +49,18 @@ pub enum HostError {
 impl Display for HostError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::AudioProcessorCallFailed { method, result } => {
+                write!(
+                    formatter,
+                    "VST3 audio processor call failed: {method} returned {result}"
+                )
+            }
+            Self::AudioProcessorReturnedNull => {
+                formatter.write_str("VST3 audio processor pointer is null")
+            }
+            Self::AudioProcessorVTableMissing => {
+                formatter.write_str("VST3 audio processor vtable is null")
+            }
             Self::BundleExecutableNotFound(path) => {
                 write!(formatter, "VST3 executable not found in bundle: {path}")
             }
