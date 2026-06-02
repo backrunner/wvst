@@ -23,12 +23,23 @@ async fn quarantines_plugin_after_repeated_start_failures() {
         .expect_err("quarantined");
 
     assert!(matches!(
-        error,
+        &error,
         WorkerSupervisorError::Quarantined {
             failures: QUARANTINE_FAILURES,
             ..
         }
     ));
+    assert!(
+        error.rpc_data()["releaseAfterMs"]
+            .as_u64()
+            .is_some_and(|value| value > 0)
+    );
+    let status = supervisor
+        .quarantine_status(&record.plugin_id)
+        .await
+        .expect("quarantine status");
+    assert_eq!(status.failures, QUARANTINE_FAILURES);
+    assert!(status.release_after_ms > 0);
 }
 
 #[tokio::test]

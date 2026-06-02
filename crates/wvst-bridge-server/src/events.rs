@@ -110,6 +110,7 @@ pub enum BridgeEventKind {
     WorkerQuarantined {
         plugin_id: String,
         failures: u32,
+        release_after_ms: u128,
     },
     WorkerQuarantineReleased {
         plugin_id: String,
@@ -260,4 +261,23 @@ pub fn bridge_event_notification(event: BridgeEvent) -> Value {
         method: "bridge.event",
         params: BridgeEventNotificationParams { event },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_worker_quarantine_release_after_ms() {
+        let value = json!(BridgeEventKind::WorkerQuarantined {
+            plugin_id: "vst3:test".to_string(),
+            failures: 3,
+            release_after_ms: 1_500,
+        });
+
+        assert_eq!(value["type"], "worker-quarantined");
+        assert_eq!(value["pluginId"], "vst3:test");
+        assert_eq!(value["failures"], 3);
+        assert_eq!(value["releaseAfterMs"], 1_500);
+    }
 }

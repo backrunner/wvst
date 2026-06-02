@@ -34,8 +34,11 @@ impl WorkerSupervisorError {
             Self::Quarantined {
                 plugin_id,
                 failures,
+                release_after_ms,
             } => {
-                format!("worker quarantined for plugin {plugin_id} after {failures} failures")
+                format!(
+                    "worker quarantined for plugin {plugin_id} after {failures} failures; retry after {release_after_ms}ms"
+                )
             }
             Self::IncompatibleWorker { reason, .. } => {
                 format!("worker incompatible: {reason}")
@@ -79,8 +82,9 @@ impl WorkerSupervisorError {
             Self::Quarantined {
                 plugin_id,
                 failures,
+                release_after_ms,
             } => {
-                json!({ "kind": "quarantined", "pluginId": plugin_id, "failures": failures })
+                json!({ "kind": "quarantined", "pluginId": plugin_id, "failures": failures, "releaseAfterMs": release_after_ms })
             }
             Self::IncompatibleWorker {
                 reason,

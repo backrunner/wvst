@@ -85,10 +85,11 @@ pub async fn handle_instance_create(
                 instance_id: record.instance_id,
             });
             emit_worker_error(&context, record.instance_id, &record.plugin_id, &error);
-            if let Some(failures) = context.workers.quarantine_failures(&record.plugin_id).await {
+            if let Some(status) = context.workers.quarantine_status(&record.plugin_id).await {
                 context.events.emit(BridgeEventKind::WorkerQuarantined {
                     plugin_id: record.plugin_id.clone(),
-                    failures,
+                    failures: status.failures,
+                    release_after_ms: status.release_after_ms,
                 });
             }
             response_worker_supervisor_error(id, error)
@@ -470,11 +471,13 @@ fn emit_worker_error(
     if let WorkerSupervisorError::Quarantined {
         plugin_id,
         failures,
+        release_after_ms,
     } = error
     {
         context.events.emit(BridgeEventKind::WorkerQuarantined {
             plugin_id: plugin_id.clone(),
             failures: *failures,
+            release_after_ms: *release_after_ms,
         });
     }
 

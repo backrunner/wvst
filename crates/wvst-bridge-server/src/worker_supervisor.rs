@@ -82,6 +82,12 @@ struct QuarantineRecord {
     release_at: Instant,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct WorkerQuarantineStatus {
+    pub failures: u32,
+    pub release_after_ms: u128,
+}
+
 #[derive(Debug, Clone, Default)]
 struct StderrTail {
     buffer: Arc<Mutex<String>>,
@@ -125,6 +131,7 @@ pub enum WorkerSupervisorError {
     Quarantined {
         plugin_id: String,
         failures: u32,
+        release_after_ms: u128,
     },
     IncompatibleWorker {
         reason: String,
@@ -251,11 +258,17 @@ impl WorkerSupervisor {
     }
 
     pub async fn quarantine_failures(&self, plugin_id: &str) -> Option<u32> {
+        self.quarantine_status(plugin_id)
+            .await
+            .map(|status| status.failures)
+    }
+
+    pub async fn quarantine_status(&self, plugin_id: &str) -> Option<WorkerQuarantineStatus> {
         self.quarantined
             .lock()
             .await
             .get(plugin_id)
-            .map(|record| record.failures)
+            .map(quarantine_status)
     }
 
     pub async fn release_expired_quarantine(&self, plugin_id: &str) -> Option<u32> {
@@ -658,6 +671,7 @@ impl WorkerSupervisor {
                 return Err(WorkerSupervisorError::Quarantined {
                     plugin_id: plugin_id.to_string(),
                     failures: record.failures,
+                    release_after_ms: remaining_ms(record.release_at),
                 });
             }
         }
@@ -729,6 +743,19 @@ impl WorkerSupervisor {
         let audit = process.lock().await.shutdown().await;
         self.record_shutdown(audit);
     }
+}
+
+fn quarantine_status(record: &QuarantineRecord) -> WorkerQuarantineStatus {
+    WorkerQuarantineStatus {
+        failures: record.failures,
+        release_after_ms: remaining_ms(record.release_at),
+    }
+}
+
+fn remaining_ms(release_at: Instant) -> u128 {
+    release_at
+        .saturating_duration_since(Instant::now())
+        .as_millis()
 }
 
 fn record_worker_shutdown(metrics: Option<&Arc<BridgeMetrics>>, audit: WorkerShutdownAudit) {
