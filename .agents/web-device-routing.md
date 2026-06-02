@@ -45,6 +45,8 @@ SDK 暴露：
 - `createWVSTMediaElementOutputRoute(audioContext, { outputDeviceId })`
 - `createWVSTAudioDeviceSession(options)`
 - `session.setOutputDevice(deviceId)`
+- `session.restartAudioStream()`
+- `session.getMetrics()`
 
 如果输出选择 API 不可用，SDK 返回 `false` 或抛出明确错误，应用不应静默假装设备已切换。
 
@@ -61,11 +63,13 @@ WVST AudioWorklet/SAB -> MediaStreamAudioDestinationNode -> selected output devi
 它负责：
 
 - 按 instance 的 `inputChannels` / `outputChannels` 创建 SAB buffers。
+- 校验 `AudioContext.sampleRate` 与 instance `sampleRate` 一致，避免隐式重采样导致 VST 处理时钟错误。
 - 创建并配置 `wvst-loopback` AudioWorkletNode。
 - 当 instance `inputChannels > 0` 时按 `inputDeviceId` 打开输入设备；0-input 音源 VST 不打开麦克风。
 - 按 `outputDeviceId` 创建 media-element 输出 route。
 - 启动 `WVSTBridgeWorkerClient.startAudioStream()`。
 - 运行中通过 `session.setInputDevice()` / `session.setOutputDevice()` 切换 Web 物理设备。
+- 运行中通过 `session.restartAudioStream()` 重启 Bridge worker audio pump，并通过 `session.getMetrics()` 读取 underflow/overflow 和 pending quantum 指标。
 - 失败或停止时释放 media tracks、断开 graph、停止 bridge audio pump。
 
 它不负责：
@@ -83,9 +87,9 @@ Web 指定的是物理音频设备；VST instance create 指定的是插件处�
 - `sampleRate`
 - `maxBlockFrames`
 
-两者需要由应用协调。例如选择单声道麦克风时，可以用 `inputChannels: 1` 创建实例；选择双声道输出时，可以用 `outputChannels: 2`。Bridge 只验证 stream/channel 约束，不负责选择硬件设备。
+两者需要由应用协调。例如选择单声道麦克风时，可以用 `inputChannels: 1` 创建实例；选择双声道输出时，可以用 `outputChannels: 2`。Bridge 只验证 stream/channel 约束，不负责选择硬件设备。应用创建 instance 时应使用当前 `AudioContext.sampleRate`，否则高层 session 会拒绝启动。
 
 ## 后续缺口
 
-- 真实端到端设备切换仍需要测量 sample rate change、stream restart 和 underflow/overflow 行为。
+- 真实端到端设备切换仍需要测量 sample rate change 和跨浏览器 stream restart 行为；SDK 已提供 restart/metrics 基础入口。
 - 浏览器输出选择能力不一致，SDK 已提供 capability API，但仍需要示例和兼容性矩阵。

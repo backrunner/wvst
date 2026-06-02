@@ -174,6 +174,12 @@ class AudioStreamPump {
       LoopbackCounter.InputConsumedSequence,
       inputSequence,
     );
+    const outputSequence = Atomics.load(this.counters, LoopbackCounter.OutputSequence);
+    Atomics.store(
+      this.counters,
+      LoopbackCounter.OutputConsumedSequence,
+      outputSequence,
+    );
   }
 
   start(): void {

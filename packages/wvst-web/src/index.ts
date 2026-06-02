@@ -25,8 +25,10 @@ export {
   createLoopbackAudioWorkletNode,
   createLoopbackSharedBuffers,
   readLoopbackOutput,
+  readLoopbackMetrics,
   writeLoopbackInput,
   type LoopbackBufferOptions,
+  type LoopbackMetrics,
   type LoopbackNodeOptions,
   type LoopbackSharedBuffers,
 } from "./loopback.js";

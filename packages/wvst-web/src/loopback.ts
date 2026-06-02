@@ -30,6 +30,19 @@ export interface LoopbackSharedBuffers {
   counters: Int32Array;
 }
 
+export interface LoopbackMetrics {
+  inputFrames: number;
+  outputFrames: number;
+  underflows: number;
+  overflows: number;
+  inputSequence: number;
+  inputConsumedSequence: number;
+  outputSequence: number;
+  outputConsumedSequence: number;
+  pendingInputQuanta: number;
+  pendingOutputQuanta: number;
+}
+
 export enum LoopbackCounter {
   InputFrames = 0,
   OutputFrames = 1,
@@ -190,6 +203,32 @@ export function configureLoopbackAudioWorkletNode(
     outputBuffer: buffers.outputBuffer,
     countersBuffer: buffers.countersBuffer,
   });
+}
+
+export function readLoopbackMetrics(buffers: LoopbackSharedBuffers): LoopbackMetrics {
+  const inputSequence = Atomics.load(buffers.counters, LoopbackCounter.InputSequence);
+  const inputConsumedSequence = Atomics.load(
+    buffers.counters,
+    LoopbackCounter.InputConsumedSequence,
+  );
+  const outputSequence = Atomics.load(buffers.counters, LoopbackCounter.OutputSequence);
+  const outputConsumedSequence = Atomics.load(
+    buffers.counters,
+    LoopbackCounter.OutputConsumedSequence,
+  );
+
+  return {
+    inputFrames: Atomics.load(buffers.counters, LoopbackCounter.InputFrames),
+    outputFrames: Atomics.load(buffers.counters, LoopbackCounter.OutputFrames),
+    underflows: Atomics.load(buffers.counters, LoopbackCounter.Underflows),
+    overflows: Atomics.load(buffers.counters, LoopbackCounter.Overflows),
+    inputSequence,
+    inputConsumedSequence,
+    outputSequence,
+    outputConsumedSequence,
+    pendingInputQuanta: Math.max(0, inputSequence - inputConsumedSequence),
+    pendingOutputQuanta: Math.max(0, outputSequence - outputConsumedSequence),
+  };
 }
 
 function inputSlotOffset(buffers: LoopbackSharedBuffers, sequence: number): number {

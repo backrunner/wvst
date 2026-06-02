@@ -8,9 +8,14 @@ import type { InstanceDescriptor } from "./instances.js";
 import {
   createLoopbackAudioWorkletNode,
   createLoopbackSharedBuffers,
+  readLoopbackMetrics,
+  type LoopbackMetrics,
   type LoopbackSharedBuffers,
 } from "./loopback.js";
-import type { WVSTBridgeWorkerClient } from "./worker-client.js";
+import type {
+  BridgeWorkerAudioStreamOptions,
+  WVSTBridgeWorkerClient,
+} from "./worker-client.js";
 
 export interface WVSTAudioDeviceSessionOptions {
   context: AudioContext;
@@ -39,6 +44,8 @@ export interface WVSTAudioDeviceSession {
   output: WVSTMediaElementOutputRoute;
   setInputDevice(options?: WVSTAudioInputSwitchOptions): Promise<void>;
   setOutputDevice(deviceId: string): Promise<boolean>;
+  restartAudioStream(): Promise<void>;
+  getMetrics(): LoopbackMetrics;
   startOutput(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -47,6 +54,7 @@ export async function createWVSTAudioDeviceSession(
   options: WVSTAudioDeviceSessionOptions,
 ): Promise<WVSTAudioDeviceSession> {
   const frames = options.frames ?? 128;
+  assertSampleRateMatchesContext(options);
   const buffers = createLoopbackSharedBuffers({
     frames,
     inputChannels: options.instance.inputChannels,
@@ -70,14 +78,7 @@ export async function createWVSTAudioDeviceSession(
     });
     input?.node.connect(workletNode);
     workletNode.connect(output.destination);
-    await options.bridgeWorker.startAudioStream({
-      streamId: options.instance.streamId,
-      sampleRate: options.instance.sampleRate,
-      frames,
-      inputChannels: options.instance.inputChannels,
-      outputChannels: options.instance.outputChannels,
-      buffers,
-    });
+    await startBridgeAudioStream(options, buffers, frames);
   } catch (error) {
     cleanupGraph(workletNode, input, output);
     throw error;
@@ -121,6 +122,40 @@ function cleanupGraph(
   output?.stop();
 }
 
+function startBridgeAudioStream(
+  options: WVSTAudioDeviceSessionOptions,
+  buffers: LoopbackSharedBuffers,
+  frames: number,
+): Promise<void> {
+  return options.bridgeWorker.startAudioStream(
+    streamOptions(options, buffers, frames),
+  );
+}
+
+function streamOptions(
+  options: WVSTAudioDeviceSessionOptions,
+  buffers: LoopbackSharedBuffers,
+  frames: number,
+): BridgeWorkerAudioStreamOptions {
+  return {
+    streamId: options.instance.streamId,
+    sampleRate: options.instance.sampleRate,
+    frames,
+    inputChannels: options.instance.inputChannels,
+    outputChannels: options.instance.outputChannels,
+    buffers,
+  };
+}
+
+function assertSampleRateMatchesContext(options: WVSTAudioDeviceSessionOptions): void {
+  const contextSampleRate = Math.round(options.context.sampleRate);
+  if (contextSampleRate !== options.instance.sampleRate) {
+    throw new Error(
+      `WVST session sample rate mismatch: AudioContext is ${contextSampleRate} Hz, instance is ${options.instance.sampleRate} Hz`,
+    );
+  }
+}
+
 function createSession(
   options: WVSTAudioDeviceSessionOptions,
   buffers: LoopbackSharedBuffers,
@@ -129,6 +164,7 @@ function createSession(
   output: WVSTMediaElementOutputRoute,
 ): WVSTAudioDeviceSession {
   let stopped = false;
+  let streamActive = true;
   let currentInput = input;
 
   const session: WVSTAudioDeviceSession = {
@@ -170,6 +206,19 @@ function createSession(
 
       return output.setOutputDevice(deviceId);
     },
+    restartAudioStream: async () => {
+      if (stopped) {
+        throw new Error("WVST audio device session is stopped");
+      }
+
+      if (streamActive) {
+        await options.bridgeWorker.stopAudioStream(options.instance.streamId);
+        streamActive = false;
+      }
+      await startBridgeAudioStream(options, buffers, buffers.frames);
+      streamActive = true;
+    },
+    getMetrics: () => readLoopbackMetrics(buffers),
     startOutput: () => {
       if (stopped) {
         throw new Error("WVST audio device session is stopped");
@@ -183,7 +232,10 @@ function createSession(
       }
       stopped = true;
       try {
-        await options.bridgeWorker.stopAudioStream(options.instance.streamId);
+        if (streamActive) {
+          await options.bridgeWorker.stopAudioStream(options.instance.streamId);
+          streamActive = false;
+        }
       } finally {
         cleanupGraph(workletNode, currentInput, output);
         currentInput = undefined;
