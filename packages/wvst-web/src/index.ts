@@ -47,13 +47,18 @@ export {
 } from "./instances.js";
 export {
   createWVSTAudioInputSource,
+  createWVSTAudioDeviceWatcher,
   createWVSTMediaElementOutputRoute,
+  getWVSTAudioDeviceCapabilities,
   listWVSTAudioDevices,
   requestWVSTAudioInput,
   selectWVSTAudioOutputDevice,
   setWVSTAudioContextOutputDevice,
   setWVSTMediaElementOutputDevice,
+  type WVSTAudioDeviceCapabilities,
   type WVSTAudioDeviceList,
+  type WVSTAudioDeviceWatcher,
+  type WVSTAudioDeviceWatcherOptions,
   type WVSTAudioInputOptions,
   type WVSTAudioInputSource,
   type WVSTMediaElementOutputRoute,
@@ -89,4 +94,5 @@ export {
   createWVSTAudioDeviceSession,
   type WVSTAudioDeviceSession,
   type WVSTAudioDeviceSessionOptions,
+  type WVSTAudioInputSwitchOptions,
 } from "./session.js";

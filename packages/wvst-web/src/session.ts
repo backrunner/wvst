@@ -26,12 +26,19 @@ export interface WVSTAudioDeviceSessionOptions {
   startOutput?: boolean;
 }
 
+export interface WVSTAudioInputSwitchOptions {
+  inputDeviceId?: string;
+  inputConstraints?: MediaTrackConstraints;
+}
+
 export interface WVSTAudioDeviceSession {
   instance: InstanceDescriptor;
   buffers: LoopbackSharedBuffers;
   workletNode: AudioWorkletNode;
   input?: WVSTAudioInputSource;
   output: WVSTMediaElementOutputRoute;
+  setInputDevice(options?: WVSTAudioInputSwitchOptions): Promise<void>;
+  setOutputDevice(deviceId: string): Promise<boolean>;
   startOutput(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -122,14 +129,54 @@ function createSession(
   output: WVSTMediaElementOutputRoute,
 ): WVSTAudioDeviceSession {
   let stopped = false;
+  let currentInput = input;
 
-  return {
+  const session: WVSTAudioDeviceSession = {
     instance: options.instance,
     buffers,
     workletNode,
-    input,
+    input: currentInput,
     output,
-    startOutput: () => output.start(),
+    setInputDevice: async (switchOptions: WVSTAudioInputSwitchOptions = {}) => {
+      if (stopped) {
+        throw new Error("WVST audio device session is stopped");
+      }
+      if (options.instance.inputChannels === 0) {
+        throw new Error("WVST audio device session has no input bus");
+      }
+
+      const nextInput = await createWVSTAudioInputSource(options.context, {
+        deviceId: switchOptions.inputDeviceId,
+        channelCount: options.instance.inputChannels,
+        constraints: switchOptions.inputConstraints,
+      });
+
+      try {
+        nextInput.node.connect(workletNode);
+      } catch (error) {
+        nextInput.stop();
+        throw error;
+      }
+
+      currentInput?.node.disconnect();
+      currentInput?.stop();
+      currentInput = nextInput;
+      session.input = nextInput;
+    },
+    setOutputDevice: (deviceId: string) => {
+      if (stopped) {
+        throw new Error("WVST audio device session is stopped");
+      }
+
+      return output.setOutputDevice(deviceId);
+    },
+    startOutput: () => {
+      if (stopped) {
+        throw new Error("WVST audio device session is stopped");
+      }
+
+      return output.start();
+    },
     stop: async () => {
       if (stopped) {
         return;
@@ -138,8 +185,12 @@ function createSession(
       try {
         await options.bridgeWorker.stopAudioStream(options.instance.streamId);
       } finally {
-        cleanupGraph(workletNode, input, output);
+        cleanupGraph(workletNode, currentInput, output);
+        currentInput = undefined;
+        session.input = undefined;
       }
     },
   };
+
+  return session;
 }

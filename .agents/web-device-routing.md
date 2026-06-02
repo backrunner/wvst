@@ -20,6 +20,8 @@ Web 通过 `navigator.mediaDevices.enumerateDevices()` 获取 `audioinput` 列�
 - `listWVSTAudioDevices()`
 - `requestWVSTAudioInput({ deviceId, channelCount })`
 - `createWVSTAudioInputSource(audioContext, options)`
+- `getWVSTAudioDeviceCapabilities(audioContext?)`
+- `createWVSTAudioDeviceWatcher({ onChange })`
 
 典型图：
 
@@ -42,6 +44,7 @@ SDK 暴露：
 - `setWVSTMediaElementOutputDevice(audioElement, { deviceId })`
 - `createWVSTMediaElementOutputRoute(audioContext, { outputDeviceId })`
 - `createWVSTAudioDeviceSession(options)`
+- `session.setOutputDevice(deviceId)`
 
 如果输出选择 API 不可用，SDK 返回 `false` 或抛出明确错误，应用不应静默假装设备已切换。
 
@@ -62,6 +65,7 @@ WVST AudioWorklet/SAB -> MediaStreamAudioDestinationNode -> selected output devi
 - 当 instance `inputChannels > 0` 时按 `inputDeviceId` 打开输入设备；0-input 音源 VST 不打开麦克风。
 - 按 `outputDeviceId` 创建 media-element 输出 route。
 - 启动 `WVSTBridgeWorkerClient.startAudioStream()`。
+- 运行中通过 `session.setInputDevice()` / `session.setOutputDevice()` 切换 Web 物理设备。
 - 失败或停止时释放 media tracks、断开 graph、停止 bridge audio pump。
 
 它不负责：
@@ -83,5 +87,5 @@ Web 指定的是物理音频设备；VST instance create 指定的是插件处�
 
 ## 后续缺口
 
-- 输出设备选择在不同浏览器中能力不一致，需要 capability API 和示例说明。
-- 真实端到端设备切换需要测量 device change、sample rate change、stream restart 和 underflow/overflow 行为。
+- 真实端到端设备切换仍需要测量 sample rate change、stream restart 和 underflow/overflow 行为。
+- 浏览器输出选择能力不一致，SDK 已提供 capability API，但仍需要示例和兼容性矩阵。

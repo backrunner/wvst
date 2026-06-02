@@ -3,6 +3,31 @@ export interface WVSTAudioDeviceList {
   outputs: MediaDeviceInfo[];
 }
 
+export interface WVSTAudioDeviceCapabilities {
+  mediaDevices: boolean;
+  enumerateDevices: boolean;
+  getUserMedia: boolean;
+  deviceChangeEvents: boolean;
+  selectAudioOutput: boolean;
+  mediaElementSinkId: boolean;
+  audioContextSinkId: boolean;
+  secureContext: boolean;
+  crossOriginIsolated: boolean;
+  sharedArrayBuffer: boolean;
+}
+
+export interface WVSTAudioDeviceWatcherOptions {
+  immediate?: boolean;
+  onChange(devices: WVSTAudioDeviceList): void | Promise<void>;
+  onError?(error: Error): void;
+}
+
+export interface WVSTAudioDeviceWatcher {
+  capabilities: WVSTAudioDeviceCapabilities;
+  refresh(): Promise<WVSTAudioDeviceList>;
+  stop(): void;
+}
+
 export interface WVSTAudioInputOptions {
   deviceId?: string;
   channelCount?: number;
@@ -39,6 +64,82 @@ interface MediaDevicesWithAudioOutput extends MediaDevices {
 
 interface AudioContextWithSinkId extends AudioContext {
   setSinkId?: (sinkId: string) => Promise<void>;
+}
+
+export function getWVSTAudioDeviceCapabilities(
+  context?: AudioContext,
+): WVSTAudioDeviceCapabilities {
+  const mediaDevices =
+    typeof navigator === "object" ? navigator.mediaDevices : undefined;
+  const mediaDevicesWithOutput = mediaDevices as MediaDevicesWithAudioOutput | undefined;
+
+  return {
+    mediaDevices: mediaDevices !== undefined,
+    enumerateDevices: typeof mediaDevices?.enumerateDevices === "function",
+    getUserMedia: typeof mediaDevices?.getUserMedia === "function",
+    deviceChangeEvents:
+      typeof mediaDevices?.addEventListener === "function" &&
+      "ondevicechange" in (mediaDevices ?? {}),
+    selectAudioOutput: typeof mediaDevicesWithOutput?.selectAudioOutput === "function",
+    mediaElementSinkId:
+      typeof HTMLMediaElement === "function" &&
+      "setSinkId" in HTMLMediaElement.prototype,
+    audioContextSinkId: hasAudioContextSinkId(context),
+    secureContext:
+      typeof globalThis.isSecureContext === "boolean"
+        ? globalThis.isSecureContext
+        : false,
+    crossOriginIsolated:
+      typeof globalThis.crossOriginIsolated === "boolean"
+        ? globalThis.crossOriginIsolated
+        : false,
+    sharedArrayBuffer: typeof globalThis.SharedArrayBuffer === "function",
+  };
+}
+
+export async function createWVSTAudioDeviceWatcher(
+  options: WVSTAudioDeviceWatcherOptions,
+): Promise<WVSTAudioDeviceWatcher> {
+  const mediaDevices = requireMediaDevices();
+  const capabilities = getWVSTAudioDeviceCapabilities();
+  let stopped = false;
+
+  const refresh = async (): Promise<WVSTAudioDeviceList> => listWVSTAudioDevices();
+  const notify = async (): Promise<void> => {
+    if (stopped) {
+      return;
+    }
+
+    try {
+      const devices = await refresh();
+      if (!stopped) {
+        await options.onChange(devices);
+      }
+    } catch (error) {
+      options.onError?.(toError(error));
+    }
+  };
+  const onDeviceChange = () => {
+    void notify();
+  };
+
+  if (capabilities.deviceChangeEvents) {
+    mediaDevices.addEventListener("devicechange", onDeviceChange);
+  }
+  if (options.immediate ?? true) {
+    await notify();
+  }
+
+  return {
+    capabilities,
+    refresh,
+    stop: () => {
+      stopped = true;
+      if (capabilities.deviceChangeEvents) {
+        mediaDevices.removeEventListener("devicechange", onDeviceChange);
+      }
+    },
+  };
 }
 
 export async function listWVSTAudioDevices(): Promise<WVSTAudioDeviceList> {
@@ -170,4 +271,16 @@ function requireMediaDevices(): MediaDevices {
   }
 
   return navigator.mediaDevices;
+}
+
+function hasAudioContextSinkId(context: AudioContext | undefined): boolean {
+  if (context) {
+    return typeof (context as AudioContextWithSinkId).setSinkId === "function";
+  }
+
+  return typeof AudioContext === "function" && "setSinkId" in AudioContext.prototype;
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
