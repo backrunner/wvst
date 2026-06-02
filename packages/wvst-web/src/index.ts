@@ -5,6 +5,11 @@ export {
   type HelloParams,
   type HelloRequest,
   type LowLatencyPrerequisites,
+  type MetadataInvalidationRefreshErrorListener,
+  type MetadataInvalidationRefreshListener,
+  type MetadataInvalidationRefreshOptions,
+  type MetadataInvalidationRefreshResult,
+  type MetadataInvalidationSubscriptionOptions,
   type ProtocolVersion,
 } from "./client.js";
 export {

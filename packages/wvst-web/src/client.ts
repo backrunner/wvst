@@ -65,12 +65,15 @@ import type {
 } from "./plugins.js";
 import {
   WebSocketRpcTransport,
+  type BridgeEvent,
   type BridgeEventListener,
+  type BridgeEventKind,
   type BridgeEventsOptions,
   type BridgeEventsResult,
   type BridgeMetrics,
   type JsonValue,
   type RpcTransport,
+  type Vst3MetadataInvalidationReason,
 } from "./transport.js";
 
 export interface ConnectOptions {
@@ -125,7 +128,37 @@ export interface LowLatencyPrerequisites {
   crossOriginIsolated: boolean;
 }
 
+export interface MetadataInvalidationRefreshOptions {
+  includeParameterValues?: boolean;
+  maxParameterValues?: number;
+}
+
+export interface MetadataInvalidationRefreshResult {
+  event: Extract<BridgeEventKind, { type: "vst3-metadata-invalidated" }>;
+  status: InstanceStatusResult;
+  parameters?: InstanceParametersResult;
+  units?: InstanceUnitsResult;
+  parameterValues?: InstanceParameterGetResult[];
+  skippedParameterValues?: number;
+  refreshed: Vst3MetadataInvalidationReason[];
+}
+
+export type MetadataInvalidationRefreshListener = (
+  result: MetadataInvalidationRefreshResult,
+) => void | Promise<void>;
+
+export type MetadataInvalidationRefreshErrorListener = (
+  event: Extract<BridgeEventKind, { type: "vst3-metadata-invalidated" }>,
+  error: unknown,
+) => void;
+
+export interface MetadataInvalidationSubscriptionOptions
+  extends MetadataInvalidationRefreshOptions {
+  onError?: MetadataInvalidationRefreshErrorListener;
+}
+
 const DEFAULT_ENDPOINT = "ws://127.0.0.1:35876";
+const DEFAULT_MAX_PARAMETER_VALUES = 128;
 
 export class WVSTClient {
   public readonly instances: InstanceApi;
@@ -280,6 +313,63 @@ export class WVSTClient {
     return this.transport.onBridgeEvent(listener);
   }
 
+  async refreshMetadataForInvalidation(
+    event: Extract<BridgeEventKind, { type: "vst3-metadata-invalidated" }>,
+    options: MetadataInvalidationRefreshOptions = {},
+  ): Promise<MetadataInvalidationRefreshResult> {
+    const status = await this.instances.status({ instanceId: event.instanceId });
+    const result: MetadataInvalidationRefreshResult = {
+      event,
+      status,
+      refreshed: [...event.reasons],
+    };
+
+    if (shouldRefreshParameters(event.reasons)) {
+      result.parameters = await this.instances.parameters({
+        instanceId: event.instanceId,
+      });
+      if (options.includeParameterValues || event.reasons.includes("parameter-values")) {
+        const maxParameterValues = options.maxParameterValues ?? DEFAULT_MAX_PARAMETER_VALUES;
+        const parameters = result.parameters.parameters.slice(0, maxParameterValues);
+        result.parameterValues = await Promise.all(
+          parameters.map((parameter) =>
+            this.instances.parameterGet({
+              instanceId: event.instanceId,
+              parameterId: parameter.id,
+            }),
+          ),
+        );
+        const skipped = result.parameters.parameters.length - parameters.length;
+        if (skipped > 0) {
+          result.skippedParameterValues = skipped;
+        }
+      }
+    }
+
+    if (shouldRefreshUnits(event.reasons)) {
+      result.units = await this.instances.units({ instanceId: event.instanceId });
+    }
+
+    return result;
+  }
+
+  onMetadataInvalidated(
+    listener: MetadataInvalidationRefreshListener,
+    options: MetadataInvalidationSubscriptionOptions = {},
+  ): () => void {
+    return this.onEvent((event: BridgeEvent) => {
+      if (event.kind.type !== "vst3-metadata-invalidated") {
+        return;
+      }
+      const metadataEvent = event.kind;
+      void this.refreshMetadataForInvalidation(metadataEvent, options)
+        .then(listener)
+        .catch((error: unknown) => {
+          options.onError?.(metadataEvent, error);
+        });
+    });
+  }
+
   echoAudioFrame(frame: ArrayBuffer): Promise<ArrayBuffer> {
     return this.transport.sendBinary(frame);
   }
@@ -307,6 +397,27 @@ function createHelloParams(
     token,
     origin: currentOrigin(),
   };
+}
+
+function shouldRefreshParameters(reasons: readonly Vst3MetadataInvalidationReason[]): boolean {
+  return reasons.some(
+    (reason) =>
+      reason === "parameter-info" ||
+      reason === "parameter-values" ||
+      reason === "reload-component",
+  );
+}
+
+function shouldRefreshUnits(reasons: readonly Vst3MetadataInvalidationReason[]): boolean {
+  return reasons.some(
+    (reason) =>
+      reason === "audio-io" ||
+      reason === "routing-info" ||
+      reason === "midi-mapping" ||
+      reason === "note-expression" ||
+      reason === "keyswitches" ||
+      reason === "reload-component",
+  );
 }
 
 function currentOrigin(): string | undefined {
