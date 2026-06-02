@@ -298,36 +298,36 @@ impl WorkerBackend {
         }
     }
 
-    pub(super) fn begin_param_edit(&self, id: u32) -> Result<(), String> {
+    pub(super) fn begin_param_edit(&mut self, id: u32) -> Result<(), String> {
         match self {
             Self::Passthrough(_) => Err("edit controller not available".to_string()),
             Self::Vst3Runtime(runtime) => runtime
                 .component
-                .controller()
+                .controller_mut()
                 .ok_or_else(|| "edit controller not available".to_string())
-                .map(|controller| controller.begin_edit(id)),
+                .and_then(|controller| controller.begin_edit(id).map_err(error_message)),
         }
     }
 
-    pub(super) fn perform_param_edit(&self, id: u32, value: f64) -> Result<(), String> {
+    pub(super) fn perform_param_edit(&mut self, id: u32, value: f64) -> Result<(), String> {
         match self {
             Self::Passthrough(_) => Err("edit controller not available".to_string()),
             Self::Vst3Runtime(runtime) => runtime
                 .component
-                .controller()
+                .controller_mut()
                 .ok_or_else(|| "edit controller not available".to_string())
                 .and_then(|controller| controller.perform_edit(id, value).map_err(error_message)),
         }
     }
 
-    pub(super) fn end_param_edit(&self, id: u32) -> Result<(), String> {
+    pub(super) fn end_param_edit(&mut self, id: u32) -> Result<(), String> {
         match self {
             Self::Passthrough(_) => Err("edit controller not available".to_string()),
             Self::Vst3Runtime(runtime) => runtime
                 .component
-                .controller()
+                .controller_mut()
                 .ok_or_else(|| "edit controller not available".to_string())
-                .map(|controller| controller.end_edit(id)),
+                .and_then(|controller| controller.end_edit(id).map_err(error_message)),
         }
     }
 
@@ -834,6 +834,12 @@ fn host_error_kind(error: &HostError) -> &'static str {
         HostError::ConnectionPointReturnedNull => "connection-point-returned-null",
         HostError::ConnectionPointVTableMissing => "connection-point-vtable-missing",
         HostError::EditControllerCallFailed { .. } => "edit-controller-call-failed",
+        HostError::EditControllerParameterEditAlreadyActive { .. } => {
+            "edit-controller-parameter-edit-already-active"
+        }
+        HostError::EditControllerParameterEditNotActive { .. } => {
+            "edit-controller-parameter-edit-not-active"
+        }
         HostError::EditControllerReturnedNull => "edit-controller-returned-null",
         HostError::EditControllerVTableMissing => "edit-controller-vtable-missing",
         HostError::FactoryCallFailed { .. } => "factory-call-failed",

@@ -29,6 +29,12 @@ pub enum HostError {
         method: &'static str,
         result: i32,
     },
+    EditControllerParameterEditAlreadyActive {
+        parameter_id: u32,
+    },
+    EditControllerParameterEditNotActive {
+        parameter_id: u32,
+    },
     EditControllerReturnedNull,
     EditControllerVTableMissing,
     FactoryCallFailed {
@@ -138,6 +144,18 @@ impl Display for HostError {
                 write!(
                     formatter,
                     "VST3 edit controller call failed: {method} returned {result}"
+                )
+            }
+            Self::EditControllerParameterEditAlreadyActive { parameter_id } => {
+                write!(
+                    formatter,
+                    "VST3 parameter edit gesture is already active: parameter={parameter_id}"
+                )
+            }
+            Self::EditControllerParameterEditNotActive { parameter_id } => {
+                write!(
+                    formatter,
+                    "VST3 parameter edit gesture is not active: parameter={parameter_id}"
                 )
             }
             Self::EditControllerReturnedNull => {

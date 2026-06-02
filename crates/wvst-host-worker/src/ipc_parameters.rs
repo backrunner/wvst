@@ -385,7 +385,7 @@ pub(super) fn handle_instance_parameter_begin_edit(
             );
         }
     };
-    let Some(instance) = state.instances.get(&params.instance_id) else {
+    let Some(instance) = state.instances.get_mut(&params.instance_id) else {
         return response_error(
             id,
             4040,
@@ -423,7 +423,7 @@ pub(super) fn handle_instance_parameter_perform_edit(
     if !is_normalized_value(params.value_normalized) {
         return response_error(id, 4220, "valueNormalized must be finite in [0, 1]");
     }
-    let Some(instance) = state.instances.get(&params.instance_id) else {
+    let Some(instance) = state.instances.get_mut(&params.instance_id) else {
         return response_error(
             id,
             4040,
@@ -461,7 +461,7 @@ pub(super) fn handle_instance_parameter_end_edit(
             );
         }
     };
-    let Some(instance) = state.instances.get(&params.instance_id) else {
+    let Some(instance) = state.instances.get_mut(&params.instance_id) else {
         return response_error(
             id,
             4040,

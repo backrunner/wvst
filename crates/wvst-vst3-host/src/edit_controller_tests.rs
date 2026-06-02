@@ -19,9 +19,9 @@ fn initializes_reads_parameters_and_releases_controller() {
     controller
         .set_param_normalized(42, 0.75)
         .expect("set parameter");
-    controller.begin_edit(42);
+    controller.begin_edit(42).expect("begin edit");
     controller.perform_edit(42, 0.8).expect("perform edit");
-    controller.end_edit(42);
+    controller.end_edit(42).expect("end edit");
     let handler_snapshot = controller.component_handler_snapshot();
     let value_string = controller
         .param_string_by_value(42, 0.25)
@@ -66,6 +66,55 @@ fn initializes_reads_parameters_and_releases_controller() {
     assert_eq!(state, [1, 2, 3]);
     assert_eq!(fake.terminate_calls, 1);
     assert_eq!(fake.release_calls, 1);
+}
+
+#[test]
+fn enforces_parameter_edit_gesture_order() {
+    let mut fake = FakeEditController::new();
+    let mut controller =
+        unsafe { Vst3EditController::from_raw(fake.raw_controller()) }.expect("controller");
+    controller.initialize().expect("initialize");
+
+    let perform_without_begin = controller
+        .perform_edit(42, 0.7)
+        .expect_err("perform without begin");
+    let end_without_begin = controller.end_edit(42).expect_err("end without begin");
+    controller.begin_edit(42).expect("begin edit");
+    let duplicate_begin = controller.begin_edit(42).expect_err("duplicate begin");
+    controller.perform_edit(42, 0.8).expect("perform edit");
+    controller.end_edit(42).expect("end edit");
+    let duplicate_end = controller.end_edit(42).expect_err("duplicate end");
+    let handler_snapshot = controller.component_handler_snapshot();
+
+    assert!(matches!(
+        perform_without_begin,
+        HostError::EditControllerParameterEditNotActive { parameter_id: 42 }
+    ));
+    assert!(matches!(
+        end_without_begin,
+        HostError::EditControllerParameterEditNotActive { parameter_id: 42 }
+    ));
+    assert!(matches!(
+        duplicate_begin,
+        HostError::EditControllerParameterEditAlreadyActive { parameter_id: 42 }
+    ));
+    assert!(matches!(
+        duplicate_end,
+        HostError::EditControllerParameterEditNotActive { parameter_id: 42 }
+    ));
+    assert_eq!(handler_snapshot.total_events, 3);
+    assert_eq!(
+        handler_snapshot.recent_events[0].kind,
+        crate::Vst3ComponentHandlerEventKind::BeginEdit
+    );
+    assert_eq!(
+        handler_snapshot.recent_events[1].kind,
+        crate::Vst3ComponentHandlerEventKind::PerformEdit
+    );
+    assert_eq!(
+        handler_snapshot.recent_events[2].kind,
+        crate::Vst3ComponentHandlerEventKind::EndEdit
+    );
 }
 
 #[repr(C)]

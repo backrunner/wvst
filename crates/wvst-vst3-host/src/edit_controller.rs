@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
@@ -22,6 +23,7 @@ pub struct Vst3EditController {
     host_context: Vst3HostContext,
     component_handler: Vst3ComponentHandler,
     initialized: bool,
+    active_parameter_edits: BTreeSet<ParamId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,6 +73,7 @@ impl Vst3EditController {
             host_context: Vst3HostContext::new("WVST"),
             component_handler: Vst3ComponentHandler::new(),
             initialized: false,
+            active_parameter_edits: BTreeSet::new(),
         })
     }
 
@@ -100,6 +103,7 @@ impl Vst3EditController {
             (vtable.terminate)(controller)
         })?;
         self.initialized = false;
+        self.active_parameter_edits.clear();
         Ok(())
     }
 
@@ -150,18 +154,29 @@ impl Vst3EditController {
         })
     }
 
-    pub fn begin_edit(&self, id: ParamId) {
+    pub fn begin_edit(&mut self, id: ParamId) -> HostResult<()> {
+        if !self.active_parameter_edits.insert(id) {
+            return Err(HostError::EditControllerParameterEditAlreadyActive { parameter_id: id });
+        }
         self.component_handler.begin_edit(id);
+        Ok(())
     }
 
-    pub fn perform_edit(&self, id: ParamId, value: ParamValue) -> HostResult<()> {
+    pub fn perform_edit(&mut self, id: ParamId, value: ParamValue) -> HostResult<()> {
+        if !self.active_parameter_edits.contains(&id) {
+            return Err(HostError::EditControllerParameterEditNotActive { parameter_id: id });
+        }
         self.set_param_normalized(id, value)?;
         self.component_handler.perform_edit(id, value);
         Ok(())
     }
 
-    pub fn end_edit(&self, id: ParamId) {
+    pub fn end_edit(&mut self, id: ParamId) -> HostResult<()> {
+        if !self.active_parameter_edits.remove(&id) {
+            return Err(HostError::EditControllerParameterEditNotActive { parameter_id: id });
+        }
         self.component_handler.end_edit(id);
+        Ok(())
     }
 
     pub fn param_string_by_value(
