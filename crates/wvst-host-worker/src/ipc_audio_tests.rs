@@ -66,6 +66,25 @@ fn rejects_audio_frame_before_processing_starts() {
 }
 
 #[test]
+fn encodes_structured_process_error_body() {
+    let error = AudioProcessError {
+        status_code: AUDIO_ERROR_INVALID_REQUEST,
+        message: "VST3 process failed".to_string(),
+        data: Some(serde_json::json!({
+            "kind": "vst3-runtime-process",
+            "stage": "component.process",
+            "hostError": "audio-processor-call-failed",
+            "message": "VST3 process failed"
+        })),
+    };
+    let body: serde_json::Value = serde_json::from_str(&error.body()).expect("json body");
+
+    assert_eq!(body["message"], "VST3 process failed");
+    assert_eq!(body["data"]["kind"], "vst3-runtime-process");
+    assert_eq!(body["data"]["stage"], "component.process");
+}
+
+#[test]
 fn maps_midi_note_events_to_vst3_input_events() {
     let header = test_header_with_events(2, 2);
     let events = [

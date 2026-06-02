@@ -3,6 +3,7 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use serde_json::{Value, json};
 use wvst_core::ChannelCount;
 use wvst_protocol::{
     AUDIO_FRAME_HEADER_LEN, AudioFrameHeader, WORKER_AUDIO_IPC_HEADER_LEN, WorkerAudioIpcHeader,
@@ -49,7 +50,7 @@ fn serve_audio_connection(address: &str, state: Arc<Mutex<WorkerIpcState>>) -> R
             )?,
             Err(error) => {
                 response_body.clear();
-                response_body.extend_from_slice(error.message.as_bytes());
+                response_body.extend_from_slice(error.body().as_bytes());
                 write_ipc_message(
                     &mut stream,
                     WorkerAudioMessageKind::ProcessError,
@@ -220,7 +221,7 @@ fn process_message_into(
             output,
             &mut instance.process_output,
         )
-        .map_err(AudioProcessError::invalid)?;
+        .map_err(AudioProcessError::from_backend_error)?;
 
     encode_output_frame_into(
         input_header,
@@ -349,6 +350,7 @@ fn write_ipc_message(
 struct AudioProcessError {
     status_code: u16,
     message: String,
+    data: Option<Value>,
 }
 
 impl AudioProcessError {
@@ -356,6 +358,7 @@ impl AudioProcessError {
         Self {
             status_code: AUDIO_ERROR_INVALID_REQUEST,
             message: message.into(),
+            data: None,
         }
     }
 
@@ -363,6 +366,26 @@ impl AudioProcessError {
         Self {
             status_code: AUDIO_ERROR_NOT_FOUND,
             message: message.into(),
+            data: None,
+        }
+    }
+
+    fn from_backend_error(error: super::ipc_backend::WorkerBackendError) -> Self {
+        Self {
+            status_code: AUDIO_ERROR_INVALID_REQUEST,
+            message: error.message().to_string(),
+            data: error.data().cloned(),
+        }
+    }
+
+    fn body(&self) -> String {
+        match self.data.as_ref() {
+            Some(data) => json!({
+                "message": self.message,
+                "data": data,
+            })
+            .to_string(),
+            None => self.message.clone(),
         }
     }
 }

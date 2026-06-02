@@ -482,14 +482,14 @@ impl WorkerBackend {
         parameter_changes: &[Vst3ParameterChange],
         output: &mut [f32],
         process_output: &mut Vst3ProcessOutput,
-    ) -> Result<(), String> {
+    ) -> Result<(), WorkerBackendError> {
         process_output.clear();
         match self {
             Self::Passthrough(passthrough) => passthrough
                 .plugin
                 .process_interleaved_f32(frames, input, output)
                 .map(|_| ())
-                .map_err(error_message),
+                .map_err(WorkerBackendError::plain),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .instance_mut()
@@ -501,7 +501,7 @@ impl WorkerBackend {
                     output,
                     process_output,
                 )
-                .map_err(error_message),
+                .map_err(|error| WorkerBackendError::vst3_process("component.process", error)),
         }
     }
 
@@ -577,6 +577,19 @@ impl WorkerBackendError {
             message: message.clone(),
             data: Some(json!({
                 "kind": "vst3-runtime-init",
+                "stage": stage,
+                "hostError": host_error_kind(&error),
+                "message": message,
+            })),
+        }
+    }
+
+    fn vst3_process(stage: &'static str, error: HostError) -> Self {
+        let message = error.to_string();
+        Self {
+            message: message.clone(),
+            data: Some(json!({
+                "kind": "vst3-runtime-process",
                 "stage": stage,
                 "hostError": host_error_kind(&error),
                 "message": message,

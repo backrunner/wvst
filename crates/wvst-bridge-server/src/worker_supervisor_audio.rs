@@ -1,3 +1,5 @@
+use serde::Deserialize;
+use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -107,12 +109,15 @@ impl WorkerAudioConnection {
 
         match response.header.kind {
             WorkerAudioMessageKind::ProcessResponse => Ok(response.body),
-            WorkerAudioMessageKind::ProcessError => Err(WorkerSupervisorError::WorkerRejected {
-                code: i64::from(response.header.status_code),
-                message: String::from_utf8_lossy(&response.body).into_owned(),
-                data: None,
-                stderr: String::new(),
-            }),
+            WorkerAudioMessageKind::ProcessError => {
+                let error = decode_process_error_body(&response.body);
+                Err(WorkerSupervisorError::WorkerRejected {
+                    code: i64::from(response.header.status_code),
+                    message: error.message,
+                    data: error.data,
+                    stderr: String::new(),
+                })
+            }
             WorkerAudioMessageKind::ProcessRequest => Err(WorkerSupervisorError::Protocol {
                 message: "worker returned request on response path".to_string(),
                 stderr: String::new(),
@@ -151,5 +156,66 @@ impl WorkerAudioConnection {
             .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?;
 
         Ok(WorkerAudioIpcMessage { header, body })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerAudioErrorBody {
+    message: String,
+    #[serde(default)]
+    data: Option<Value>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct DecodedWorkerAudioError {
+    pub(super) message: String,
+    pub(super) data: Option<Value>,
+}
+
+pub(super) fn decode_process_error_body(body: &[u8]) -> DecodedWorkerAudioError {
+    match serde_json::from_slice::<WorkerAudioErrorBody>(body) {
+        Ok(error) => DecodedWorkerAudioError {
+            message: error.message,
+            data: error.data,
+        },
+        Err(_) => DecodedWorkerAudioError {
+            message: String::from_utf8_lossy(body).into_owned(),
+            data: None,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn decodes_structured_process_error_body() {
+        let body = json!({
+            "message": "VST3 process failed",
+            "data": {
+                "kind": "vst3-runtime-process",
+                "stage": "component.process",
+            }
+        })
+        .to_string();
+
+        let error = decode_process_error_body(body.as_bytes());
+
+        assert_eq!(error.message, "VST3 process failed");
+        assert_eq!(
+            error.data.expect("worker data")["kind"],
+            "vst3-runtime-process"
+        );
+    }
+
+    #[test]
+    fn keeps_legacy_text_process_error_body() {
+        let error = decode_process_error_body(b"legacy process error");
+
+        assert_eq!(error.message, "legacy process error");
+        assert_eq!(error.data, None);
     }
 }
