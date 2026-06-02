@@ -36,7 +36,7 @@
 - Bridge 已加入按 stream 的音频序号诊断 tracker，能统计 sequence gap 事件/缺失帧估算、重复帧、乱序帧、late flag 和 interarrival jitter 分位数；stream close/open/destroy 会重置 tracker，避免 Web 端重开流后的误报。
 - Bridge 音频路由已加入每 stream in-flight limiter：同一 stream 的上一块音频仍在 worker 处理时，新 block 会被判定为 backpressure drop，并返回带 `silence` / `late` flag 的诊断静音帧；Bridge/Web metrics 已暴露 `audioBackpressureDrops`。
 - Bridge/Web SDK 已提供 `stream.open` / `stream.close` 控制 API，实例记录包含 `streamState`，Bridge 只将 open stream 的音频帧路由到 worker。
-- 对于已知 stream 的关闭或处理失败场景，Bridge 会返回带 `silence` / `end-of-stream` / `process-error` flag 的诊断静音音频帧，避免把异常伪装成正常 echo；`stream.close` 控制面会等待同 stream 的在途音频块释放或超时后再返回，避免 close 与最后一个 block 竞争。
+- 对于已知 stream 的关闭或处理失败场景，Bridge 会返回带 `silence` / `end-of-stream` / `process-error` flag 的诊断静音音频帧，避免把异常伪装成正常 echo；`stream.close` 控制面会等待同 stream 的在途音频块释放或超时后再返回，避免 close 与最后一个 block 竞争；Bridge event bus 已发布 `stream-opened`、`stream-closing` 和带 `drainTimedOut` 的 `stream-closed` 事件。
 - Web `bridge-worker` 已具备从 SAB input ring 读取 quantum、编码 WVST binary audio frame、发送 Bridge 并写回 output ring 的基础 audio pump；AudioWorklet processor 已支持通过 SAB ring 和计数器交换音频块。
 - Web SDK 已提供 `WVSTBridgeWorkerClient`，封装 bridge worker 的 connect/request/sendBinary/startAudioStream/stopAudioStream 命令，避免应用侧手写 worker message protocol。
 - Web SDK 已提供音频设备选择 helper：可枚举 `audioinput`/`audiooutput`，按 `deviceId` 请求输入 `MediaStream`，创建 `MediaStreamAudioSourceNode`，并通过 `AudioContext.setSinkId()` 或 `MediaStreamAudioDestinationNode + HTMLMediaElement.setSinkId()` 指定输出设备。
@@ -86,7 +86,7 @@
 
 仍缺少：
 
-- `ready` 之后的 `processing` / `stopped` 生命周期已有控制 API，`starting`、`stopping`、自动恢复中等瞬态状态和事件推送已有首版；WebSocket server-push notification 已能把 Bridge event 主动发给授权 Web 客户端，且 start/stop/destroy 已补充更细粒度的 `worker-processing-starting`、`worker-processing-stopping`、`worker-destroying` 和 `worker-destroyed` 事件；仍缺少更完整的应用级生命周期策略事件。
+- `ready` 之后的 `processing` / `stopped` 生命周期已有控制 API，`starting`、`stopping`、自动恢复中等瞬态状态和事件推送已有首版；WebSocket server-push notification 已能把 Bridge event 主动发给授权 Web 客户端，start/stop/destroy 已补充更细粒度的 `worker-processing-starting`、`worker-processing-stopping`、`worker-destroying` 和 `worker-destroyed` 事件，stream open/close 已补充 `stream-opened`、`stream-closing` 和 `stream-closed` 事件；仍缺少更完整的应用级策略决策事件。
 - 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；崩溃/恢复/quarantine 事件、worker 实例数量上限、memory hard cap 和 CPU time hard cap 已有首版，仍缺少更完整的策略化资源回收、Linux cgroup CPU/memory quota 和池化调度策略。
 - 同一插件 N 个实例的 worker 池化、调度和资源上限策略；当前更接近一实例一 worker 的保守隔离原型。
 

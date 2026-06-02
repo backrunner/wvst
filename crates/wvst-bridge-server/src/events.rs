@@ -74,6 +74,22 @@ pub enum BridgeEventKind {
         plugin_id: String,
         stream_id: u64,
     },
+    StreamOpened {
+        instance_id: u64,
+        plugin_id: String,
+        stream_id: u64,
+    },
+    StreamClosing {
+        instance_id: u64,
+        plugin_id: String,
+        stream_id: u64,
+    },
+    StreamClosed {
+        instance_id: u64,
+        plugin_id: String,
+        stream_id: u64,
+        drain_timed_out: bool,
+    },
     WorkerFailed {
         instance_id: u64,
         plugin_id: String,

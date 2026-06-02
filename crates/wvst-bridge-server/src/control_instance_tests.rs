@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::audio_in_flight::AudioInFlightLimiter;
 use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::component_handler_events::ComponentHandlerEventPublisher;
-use crate::events::BridgeEventBus;
+use crate::events::{BridgeEventBus, BridgeEventKind};
 use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::{
     InstanceCreateParams, InstanceRegistry, InstanceState, WorkerState,
@@ -783,6 +783,45 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
             .stream_state,
         crate::instance_registry::StreamState::Closed
     );
+    let close_events = events.recent_since(None);
+    assert_eq!(close_events.len(), 2);
+    assert!(matches!(
+        &close_events[0].kind,
+        BridgeEventKind::StreamClosing {
+            instance_id,
+            plugin_id: _,
+            stream_id,
+        } if *instance_id == record.instance_id && *stream_id == record.stream_id
+    ));
+    assert!(matches!(
+        &close_events[1].kind,
+        BridgeEventKind::StreamClosed {
+            instance_id,
+            plugin_id: _,
+            stream_id,
+            drain_timed_out: false,
+        } if *instance_id == record.instance_id && *stream_id == record.stream_id
+    ));
+
+    let open_request = serde_json::json!({
+        "id": 2,
+        "method": "stream.open",
+        "params": { "instanceId": record.instance_id }
+    })
+    .to_string();
+    let open_value = request_json(&open_request, context).await;
+
+    assert_eq!(open_value["result"]["streamState"], "open");
+    let open_events = events.recent_since(close_events.last().map(|event| event.sequence));
+    assert_eq!(open_events.len(), 1);
+    assert!(matches!(
+        &open_events[0].kind,
+        BridgeEventKind::StreamOpened {
+            instance_id,
+            plugin_id: _,
+            stream_id,
+        } if *instance_id == record.instance_id && *stream_id == record.stream_id
+    ));
 
     let _ = std::fs::remove_dir_all(root);
 }

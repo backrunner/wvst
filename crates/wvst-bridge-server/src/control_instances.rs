@@ -933,6 +933,11 @@ pub fn handle_stream_open(id: Value, params: Value, context: ControlContext<'_>)
     match context.instances.open_stream(params) {
         Ok(record) => {
             context.stream_tracker.reset(record.stream_id);
+            context.events.emit(BridgeEventKind::StreamOpened {
+                instance_id: record.instance_id,
+                plugin_id: record.plugin_id.clone(),
+                stream_id: record.stream_id,
+            });
             response_result(id, json!(record))
         }
         Err(error) => response_instance_error(id, error),
@@ -949,11 +954,22 @@ pub async fn handle_stream_close(id: Value, params: Value, context: ControlConte
 
     match context.instances.close_stream(params) {
         Ok(record) => {
-            context
+            context.events.emit(BridgeEventKind::StreamClosing {
+                instance_id: record.instance_id,
+                plugin_id: record.plugin_id.clone(),
+                stream_id: record.stream_id,
+            });
+            let drained = context
                 .audio_in_flight
                 .wait_until_idle(record.stream_id, STREAM_CLOSE_DRAIN_TIMEOUT)
                 .await;
             context.stream_tracker.reset(record.stream_id);
+            context.events.emit(BridgeEventKind::StreamClosed {
+                instance_id: record.instance_id,
+                plugin_id: record.plugin_id.clone(),
+                stream_id: record.stream_id,
+                drain_timed_out: !drained,
+            });
             response_result(id, json!(record))
         }
         Err(error) => response_instance_error(id, error),
