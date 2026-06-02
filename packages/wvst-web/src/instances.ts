@@ -297,6 +297,24 @@ export interface InstanceSetStateResult {
   stateBytes: number | null;
 }
 
+export interface InstanceConnectionNotifyOptions {
+  instanceId: number;
+  messageId: string;
+  attributes?: Record<string, Vst3MessageAttribute>;
+}
+
+export interface InstanceConnectionNotifyResult extends InstanceConnectionNotifyOptions {
+  target: "component" | "controller";
+  notified: boolean;
+  attributeCount: number;
+}
+
+export type Vst3MessageAttribute =
+  | { type: "int"; value: number }
+  | { type: "float"; value: number }
+  | { type: "string"; value: string }
+  | { type: "binary"; valueBase64: string };
+
 export interface InstanceWorkerMetrics {
   ipcVersion: number;
   instances: number;
@@ -414,6 +432,12 @@ export interface InstanceApi {
   setUnitData(options: InstanceSetUnitDataOptions): Promise<InstanceSetUnitDataResult>;
   getState(options: InstanceGetStateOptions): Promise<InstanceGetStateResult>;
   setState(options: InstanceSetStateOptions): Promise<InstanceSetStateResult>;
+  notifyComponent(
+    options: InstanceConnectionNotifyOptions,
+  ): Promise<InstanceConnectionNotifyResult>;
+  notifyController(
+    options: InstanceConnectionNotifyOptions,
+  ): Promise<InstanceConnectionNotifyResult>;
   destroy(options: InstanceDestroyOptions): Promise<InstanceDestroyResult>;
   openStream(options: StreamLifecycleOptions): Promise<InstanceDescriptor>;
   closeStream(options: StreamLifecycleOptions): Promise<InstanceDescriptor>;

@@ -64,11 +64,12 @@
 - `wvst-host-worker serve` 已接入首版 runtime backend：instance create 可持久保存 `Vst3LoadedComponent`，`instance.start/stop/destroy` 会驱动真实 VST3 lifecycle，worker audio IPC 可调用真实 `process()`；invalid class id 或非 bundle 路径仍回退 passthrough 以保持测试和开发路径可用。
 - worker create response、worker metrics、Bridge instance record 和 Web SDK `InstanceDescriptor` 已暴露 backend、`latencySamples`、`tailSamples`，Web 侧可以在挂载后读取插件处理延迟和 tail 信息。
 - VST3 controller 基础链路已接入：component 可查询 controller class id，macOS factory runtime 会创建可选 `IEditController`，worker 初始化 controller、注册可记录 begin/perform/end edit、restartComponent、dirty/editor/group-edit 的 `IComponentHandler`/`IComponentHandler2`，并在 component/controller 都支持 `IConnectionPoint` 时建立/释放双向连接；Bridge/worker/Web 控制面已暴露参数列表、unit/program metadata、normalized 参数读写、normalized/plain/display string 转换、component/controller state base64 get/set 聚合、unit selection、unit-by-bus 查询、`setUnitProgramData`、`IProgramListData` 和 `IUnitData` 数据读写。
-- `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler`/`IComponentHandler2` host callback 事件快照、`IConnectionPoint` component/controller 通信 facade 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入、handler edit/restart/dirty/editor/group-edit callbacks、连接点 connect/disconnect 和生命周期释放。
+- `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler`/`IComponentHandler2` host callback 事件快照、`IConnectionPoint` component/controller 通信 facade、`IConnectionPoint::notify(IMessage*)`、host-owned `IMessage` typed attributes helper 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入、handler edit/restart/dirty/editor/group-edit callbacks、连接点 connect/disconnect/notify 和生命周期释放。
 - `wvst-host-worker` metrics 已暴露 VST3 runtime diagnostics，其中包含 controller `IComponentHandler` 最近事件和累计事件数；Bridge 已在 `instance.status` heartbeat 路径上把新增 handler event 增量转换为 `bridge.event` server-push 事件，并能报告 recent-event ring 溢出导致的 lost sequence；Web SDK 事件类型已同步。
 - `wvst-host-worker` 已为每个实例缓存并暴露带 `schemaVersion` 的 `runtimeCapabilities`，Bridge `InstanceRecord` / Web SDK `InstanceDescriptor` / worker runtime metrics 均可读取当前实例对 binary audio、component/controller state、parameters、parameter automation、unit/program data、MIDI mapping、output events、component handler events、connection points 和 process context 的支持情况；passthrough runtime diagnostics 已能区分 missing class id、non-bundle path 和 invalid class id fallback 原因；worker JSON-RPC error 已支持结构化 `data`，Bridge 会把 worker rejection data 保留到 `error.data.workerData`，VST3 runtime init 失败可暴露 component create/initialize、controller initialize、setup、activate 阶段和 host error kind；audio IPC process error 已支持结构化 JSON body，VST3 `process()` 失败可透传 `vst3-runtime-process`、`component.process` 和 host error kind。worker control/audio IPC 构造端已校验 request/response status 必须为 0、error status 必须非 0，并在读入 body 前应用协议级最大 body 长度，避免损坏 header 触发大内存分配。
 - `wvst-vst3-host` 已提供可选 `IUnitInfo` facade，能读取 units、program lists、program names 和 selected unit；`wvst-host-worker` / Bridge / Web SDK 已提供 `instance.units` / `client.instances.units()` 查询 API。
 - Web/Bridge/worker/VST3 facade 已提供 UI 发起的参数 edit gesture API：`instance.parameter.beginEdit`、`instance.parameter.performEdit`、`instance.parameter.endEdit`；`performEdit` 会调用 controller `setParamNormalized`，三类 gesture 会写入 component-handler event snapshot，便于 Web UI 通过既有事件链路观察参数编辑过程。
+- Web/Bridge/worker/VST3 facade 已提供 component/controller connection-point notify API：`instance.connection.notifyComponent`、`instance.connection.notifyController` / `client.instances.notifyComponent()`、`client.instances.notifyController()`，Web 可传入 `messageId` 和 int/float/string/binary typed attributes，由 worker 构造 host-owned `IMessage` 后调用对应 VST3 connection point。
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
 - VST3 runtime process path 已将插件写回的 output note on/off、poly pressure 和 output parameter changes 规范化为 WVST 协议事件，并由 worker audio IPC 在响应 frame 中编码为 audio + MIDI event section + parameter automation section；未知或越界 VST3 output event 会被过滤，避免污染 Web 数据面。
 - Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址、主动 shutdown、runtime event subscription、最近事件快照、外部 worker executable 注入和 worker timeout 配置。
@@ -101,7 +102,7 @@
 仍缺少：
 
 - 更完整的多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、host-created `IMessage` / `IAttributeList`、audio bus 查询、selected-bus activation，并支持单个主 bus 的 mono/stereo/常见 3.0 到 7.1 speaker arrangement。
-- `IEditController`、`IComponentHandler`/`IComponentHandler2` callback 事件记录与 Bridge server-push、`IConnectionPoint`、参数列表、unit/program metadata、normalized 参数读写、UI 参数 edit gesture、normalized/plain/display string 转换、component/controller state get/set 聚合、unit selection、unit-by-bus、program/unit data 读写以及 parameter-change queue/sample-accurate automation 已有首版；仍缺少真实第三方 controller/automation/unit-info/program-data/message/connection-point 兼容验证，以及基于 handler event 的 Web UI 参数同步策略。
+- `IEditController`、`IComponentHandler`/`IComponentHandler2` callback 事件记录与 Bridge server-push、`IConnectionPoint` connect/disconnect/notify、参数列表、unit/program metadata、normalized 参数读写、UI 参数 edit gesture、normalized/plain/display string 转换、component/controller state get/set 聚合、unit selection、unit-by-bus、program/unit data 读写以及 parameter-change queue/sample-accurate automation 已有首版；仍缺少真实第三方 controller/automation/unit-info/program-data/message notify/connection-point 兼容验证，以及基于 handler event 的 Web UI 参数同步策略。
 - 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、process context、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
 
 ### 4. 低延迟音频数据面
@@ -137,7 +138,7 @@
 ## 建议下一阶段
 
 1. 用真实 macOS VST3 effect/instrument fixture 验证 2-in/2-out process、parameter automation、MIDI mapping 和 zero-input instrument timing。
-2. 用真实第三方插件验证 controller/automation/unit-info/program-data/message/attribute 兼容性。
+2. 用真实第三方插件验证 controller/automation/unit-info/program-data/message notify/typed attribute 兼容性。
 3. 给 worker runtime backend 增加兼容失败诊断，并继续细化 `runtimeCapabilities` 的失败原因和 schema versioning。
 4. 扩展 framed control IPC 的 capability negotiation、批处理/多路复用和错误分类。
 5. 增加 Windows/Linux worker supervision backend、CPU/内存资源上限策略和更细粒度 server-push 事件类型。

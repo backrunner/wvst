@@ -340,6 +340,24 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             control_instances::handle_instance_set_state(request.id, request.params, context).await,
             session_authorized,
         ),
+        "instance.connection.notifyComponent" => ControlResponse::new(
+            control_instances::handle_instance_notify_component(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.connection.notifyController" => ControlResponse::new(
+            control_instances::handle_instance_notify_controller(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.destroy" => ControlResponse::new(
             control_instances::handle_instance_destroy(request.id, request.params, context).await,
             session_authorized,

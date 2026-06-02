@@ -253,6 +253,57 @@ async fn creates_lists_and_destroys_instance() {
     let parameter_end_edit_value = request_json(&parameter_end_edit_request, context).await;
     assert_eq!(parameter_end_edit_value["result"]["editKind"], "end-edit");
 
+    let notify_component_request = serde_json::json!({
+        "id": 38,
+        "method": "instance.connection.notifyComponent",
+        "params": {
+            "instanceId": instance_id,
+            "messageId": "TextMessage",
+            "attributes": {
+                "answer": { "type": "int", "value": 42 },
+                "label": { "type": "string", "value": "ok" }
+            }
+        }
+    })
+    .to_string();
+    let notify_component_value = request_json(&notify_component_request, context).await;
+    assert_eq!(notify_component_value["result"]["target"], "component");
+    assert_eq!(notify_component_value["result"]["messageId"], "TextMessage");
+    assert_eq!(notify_component_value["result"]["attributeCount"], 2);
+    assert_eq!(notify_component_value["result"]["notified"], true);
+
+    let notify_controller_request = serde_json::json!({
+        "id": 39,
+        "method": "instance.connection.notifyController",
+        "params": { "instanceId": instance_id, "messageId": "TextMessage" }
+    })
+    .to_string();
+    let notify_controller_value = request_json(&notify_controller_request, context).await;
+    assert_eq!(notify_controller_value["result"]["target"], "controller");
+    assert_eq!(
+        notify_controller_value["result"]["messageId"],
+        "TextMessage"
+    );
+    assert_eq!(notify_controller_value["result"]["attributeCount"], 0);
+    assert_eq!(notify_controller_value["result"]["notified"], true);
+
+    let invalid_notify_request = serde_json::json!({
+        "id": 40,
+        "method": "instance.connection.notifyComponent",
+        "params": {
+            "instanceId": instance_id,
+            "messageId": "TextMessage",
+            "attributes": []
+        }
+    })
+    .to_string();
+    let invalid_notify_value = request_json(&invalid_notify_request, context).await;
+    assert_eq!(invalid_notify_value["error"]["code"], -32602);
+    assert_eq!(
+        invalid_notify_value["error"]["message"],
+        "attributes must be an object"
+    );
+
     let close_stream_request = serde_json::json!({
         "id": 4,
         "method": "stream.close",
@@ -654,7 +705,7 @@ fn serve_worker_script() -> PathBuf {
     std::fs::write(
         &worker,
 r#"#!/bin/sh
-runtime_capabilities='"runtimeCapabilities":{"schemaVersion":1,"binaryAudioProcess":true,"componentState":false,"controller":true,"controllerState":true,"parameters":true,"parameterAutomation":true,"units":false,"unitProgramData":false,"programListData":false,"unitData":false,"midiMapping":false,"outputEvents":true,"outputParameterChanges":true,"componentHandlerEvents":true,"connectionPoints":false,"processContext":false}'
+runtime_capabilities='"runtimeCapabilities":{"schemaVersion":1,"binaryAudioProcess":true,"componentState":false,"controller":true,"controllerState":true,"parameters":true,"parameterAutomation":true,"units":false,"unitProgramData":false,"programListData":false,"unitData":false,"midiMapping":false,"outputEvents":true,"outputParameterChanges":true,"componentHandlerEvents":true,"connectionPoints":true,"processContext":false}'
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
@@ -667,6 +718,8 @@ while IFS= read -r line; do
     *instance.parameter.beginEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"begin-edit","valueNormalized":null}}\n' "$id" ;;
     *instance.parameter.performEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"perform-edit","valueNormalized":0.66}}\n' "$id" ;;
     *instance.parameter.endEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"end-edit","valueNormalized":null}}\n' "$id" ;;
+    *instance.connection.notifyComponent*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"component","messageId":"TextMessage","attributeCount":2,"notified":true}}\n' "$id" ;;
+    *instance.connection.notifyController*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"controller","messageId":"TextMessage","attributeCount":0,"notified":true}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
     *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0,"diagnostics":{"passthroughReason":{"kind":"non-bundle-path","message":"test fallback"},"componentHandler":{"totalEvents":2,"recentEvents":[{"sequence":1,"kind":"begin-edit","parameterId":42},{"sequence":2,"kind":"perform-edit","parameterId":42,"valueNormalized":0.75}]}}}]}}\n' "$id" "$runtime_capabilities" ;;

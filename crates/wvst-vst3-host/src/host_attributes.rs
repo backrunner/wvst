@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::ffi::{CStr, c_void};
+use std::ffi::{CStr, CString, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -48,6 +48,39 @@ impl Vst3HostAttributeList {
 
     pub fn into_raw(self) -> *mut IAttributeList {
         Box::into_raw(self.object).cast::<IAttributeList>()
+    }
+
+    pub fn set_int(&mut self, id: &str, value: i64) -> Result<(), std::ffi::NulError> {
+        validate_attribute_id(id)?;
+        self.object
+            .values
+            .insert(id.to_string(), AttributeValue::Int(value));
+        Ok(())
+    }
+
+    pub fn set_float(&mut self, id: &str, value: f64) -> Result<(), std::ffi::NulError> {
+        validate_attribute_id(id)?;
+        self.object
+            .values
+            .insert(id.to_string(), AttributeValue::Float(value));
+        Ok(())
+    }
+
+    pub fn set_string(&mut self, id: &str, value: &str) -> Result<(), std::ffi::NulError> {
+        validate_attribute_id(id)?;
+        self.object.values.insert(
+            id.to_string(),
+            AttributeValue::String(value.encode_utf16().collect()),
+        );
+        Ok(())
+    }
+
+    pub fn set_binary(&mut self, id: &str, value: &[u8]) -> Result<(), std::ffi::NulError> {
+        validate_attribute_id(id)?;
+        self.object
+            .values
+            .insert(id.to_string(), AttributeValue::Binary(value.to_vec()));
+        Ok(())
     }
 }
 
@@ -273,6 +306,10 @@ fn fid_string(value: FidString) -> Option<String> {
         .to_str()
         .ok()
         .map(str::to_string)
+}
+
+fn validate_attribute_id(id: &str) -> Result<(), std::ffi::NulError> {
+    CString::new(id).map(|_| ())
 }
 
 fn utf16_string(value: *const u16) -> Option<Vec<u16>> {

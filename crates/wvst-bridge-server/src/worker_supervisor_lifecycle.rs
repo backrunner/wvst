@@ -195,6 +195,34 @@ impl WorkerSupervisor {
         .await
     }
 
+    pub async fn notify_component(
+        &self,
+        instance_id: u64,
+        message_id: String,
+        attributes: Value,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.instance_request(
+            instance_id,
+            "instance.connection.notifyComponent",
+            json!({ "instanceId": instance_id, "messageId": message_id, "attributes": attributes }),
+        )
+        .await
+    }
+
+    pub async fn notify_controller(
+        &self,
+        instance_id: u64,
+        message_id: String,
+        attributes: Value,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.instance_request(
+            instance_id,
+            "instance.connection.notifyController",
+            json!({ "instanceId": instance_id, "messageId": message_id, "attributes": attributes }),
+        )
+        .await
+    }
+
     pub async fn select_unit(
         &self,
         instance_id: u64,

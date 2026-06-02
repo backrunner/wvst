@@ -1,6 +1,8 @@
 import { AUDIO_FRAME_VERSION } from "./protocol.js";
 import type {
   InstanceApi,
+  InstanceConnectionNotifyOptions,
+  InstanceConnectionNotifyResult,
   InstanceCreateOptions,
   InstanceDescriptor,
   InstanceDestroyOptions,
@@ -196,6 +198,16 @@ export class WVSTClient {
         this.request<InstanceGetStateResult>("instance.getState", options),
       setState: (options: InstanceSetStateOptions) =>
         this.request<InstanceSetStateResult>("instance.setState", options),
+      notifyComponent: (options: InstanceConnectionNotifyOptions) =>
+        this.request<InstanceConnectionNotifyResult>(
+          "instance.connection.notifyComponent",
+          options,
+        ),
+      notifyController: (options: InstanceConnectionNotifyOptions) =>
+        this.request<InstanceConnectionNotifyResult>(
+          "instance.connection.notifyController",
+          options,
+        ),
       destroy: (options: InstanceDestroyOptions) =>
         this.request<InstanceDestroyResult>("instance.destroy", options),
       openStream: (options: StreamLifecycleOptions) =>

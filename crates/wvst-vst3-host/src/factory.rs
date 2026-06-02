@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     HostResult, Vst3BusDirection, Vst3ComponentHandlerSnapshot, Vst3ComponentInstance,
-    Vst3ConnectionPoint, Vst3EditController, Vst3ParameterInfo, Vst3ProcessingConfig,
+    Vst3ConnectionPoint, Vst3EditController, Vst3HostMessage, Vst3ParameterInfo,
+    Vst3ProcessingConfig,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -121,6 +122,22 @@ impl Vst3LoadedComponent {
         self.controller
             .as_ref()
             .map(Vst3EditController::component_handler_snapshot)
+    }
+
+    pub fn notify_component(&self, message: &mut Vst3HostMessage) -> HostResult<Option<()>> {
+        let Some(connection_points) = self.connection_points.as_ref() else {
+            return Ok(None);
+        };
+        connection_points.component.notify(message)?;
+        Ok(Some(()))
+    }
+
+    pub fn notify_controller(&self, message: &mut Vst3HostMessage) -> HostResult<Option<()>> {
+        let Some(connection_points) = self.connection_points.as_ref() else {
+            return Ok(None);
+        };
+        connection_points.controller.notify(message)?;
+        Ok(Some(()))
     }
 
     pub fn set_component_state(&mut self, state: &[u8]) -> HostResult<()> {

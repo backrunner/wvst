@@ -86,6 +86,80 @@ fn loaded_component_connects_and_disconnects_controller_connection_points() {
     assert_eq!(controller_point.release_calls, 1);
 }
 
+#[test]
+fn loaded_component_notifies_component_and_controller_connection_points() {
+    let mut component_point = FakeConnectionPoint::new();
+    let mut controller_point = FakeConnectionPoint::new();
+    let mut component = FakeComponent::new(component_point.raw_connection_point());
+    let mut processor = FakeProcessor::new();
+    let mut controller = FakeEditController::new(controller_point.raw_connection_point());
+    let config = crate::Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
+    let instance = unsafe {
+        Vst3ComponentInstance::from_raw_parts(
+            component.raw_component(),
+            processor.raw_processor(),
+            config,
+        )
+    }
+    .expect("component instance");
+    let controller =
+        unsafe { Vst3EditController::from_raw(controller.raw_controller()) }.expect("controller");
+    let mut loaded = Vst3LoadedComponent::new_for_test(instance, Some(controller));
+    loaded
+        .instance_mut()
+        .initialize()
+        .expect("component initialize");
+    loaded
+        .initialize_controller()
+        .expect("controller initialize");
+
+    let mut component_message = Vst3HostMessage::new();
+    let component_message_ptr = component_message.as_mut_ptr();
+    let mut controller_message = Vst3HostMessage::new();
+    let controller_message_ptr = controller_message.as_mut_ptr();
+
+    assert_eq!(
+        loaded
+            .notify_component(&mut component_message)
+            .expect("component notify"),
+        Some(())
+    );
+    assert_eq!(
+        loaded
+            .notify_controller(&mut controller_message)
+            .expect("controller notify"),
+        Some(())
+    );
+
+    assert_eq!(component_point.notify_calls, 1);
+    assert_eq!(component_point.last_message, component_message_ptr);
+    assert_eq!(controller_point.notify_calls, 1);
+    assert_eq!(controller_point.last_message, controller_message_ptr);
+}
+
+#[test]
+fn loaded_component_skips_notify_without_connection_points() {
+    let mut component = FakeComponent::new(ptr::null_mut());
+    let mut processor = FakeProcessor::new();
+    let config = crate::Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
+    let instance = unsafe {
+        Vst3ComponentInstance::from_raw_parts(
+            component.raw_component(),
+            processor.raw_processor(),
+            config,
+        )
+    }
+    .expect("component instance");
+    let loaded = Vst3LoadedComponent::new_for_test(instance, None);
+    let mut message = Vst3HostMessage::new();
+
+    assert_eq!(loaded.notify_component(&mut message).expect("notify"), None);
+    assert_eq!(
+        loaded.notify_controller(&mut message).expect("notify"),
+        None
+    );
+}
+
 #[repr(C)]
 struct FakeComponent {
     component: IComponent,
@@ -166,7 +240,9 @@ struct FakeConnectionPoint {
     release_calls: u32,
     connect_calls: u32,
     disconnect_calls: u32,
+    notify_calls: u32,
     last_other: *mut IConnectionPoint,
+    last_message: *mut IMessage,
 }
 
 impl FakeConnectionPoint {
@@ -179,7 +255,9 @@ impl FakeConnectionPoint {
             release_calls: 0,
             connect_calls: 0,
             disconnect_calls: 0,
+            notify_calls: 0,
             last_other: ptr::null_mut(),
+            last_message: ptr::null_mut(),
         }
     }
 
@@ -260,6 +338,9 @@ unsafe extern "system" fn fake_component_query_interface(
     unsafe { *obj = ptr::null_mut() };
     let fake = unsafe { fake_component_mut(this) };
     if unsafe { tuid_from_raw(iid) } == tuid(VST3_I_CONNECTION_POINT_IID) {
+        if fake.connection_point.is_null() {
+            return K_RESULT_FALSE;
+        }
         unsafe { *obj = fake.connection_point.cast() };
         let _ = unsafe { fake_connection_add_ref(fake.connection_point) };
         K_RESULT_OK
@@ -622,9 +703,12 @@ unsafe extern "system" fn fake_connection_disconnect(
 }
 
 unsafe extern "system" fn fake_connection_notify(
-    _this: *mut IConnectionPoint,
-    _message: *mut IMessage,
+    this: *mut IConnectionPoint,
+    message: *mut IMessage,
 ) -> i32 {
+    let fake = unsafe { fake_connection_mut(this) };
+    fake.notify_calls += 1;
+    fake.last_message = message;
     K_RESULT_OK
 }
 

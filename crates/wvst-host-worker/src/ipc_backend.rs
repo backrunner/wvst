@@ -3,12 +3,16 @@ use serde_json::{Value, json};
 use wvst_scanner::PluginDescriptor;
 use wvst_vst3_host::{
     HeadlessPluginInstance, HostError, VST3_MIDI_CONTROLLER_AFTERTOUCH,
-    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3BusDirection, Vst3InputEvent, Vst3LifecycleState,
-    Vst3LoadedComponent, Vst3ParameterChange, Vst3ParameterInfo, Vst3ProcessOutput,
-    Vst3ProcessingConfig, Vst3UnitMetadata, create_vst3_component_instance,
+    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3BusDirection, Vst3HostMessage, Vst3InputEvent,
+    Vst3LifecycleState, Vst3LoadedComponent, Vst3ParameterChange, Vst3ParameterInfo,
+    Vst3ProcessOutput, Vst3ProcessingConfig, Vst3UnitMetadata, create_vst3_component_instance,
 };
 
-use super::{InstanceCreateParams, ipc_capabilities::WorkerRuntimeCapabilities};
+use super::{
+    InstanceCreateParams,
+    ipc_capabilities::WorkerRuntimeCapabilities,
+    ipc_parameters::{DecodedMessageAttribute, DecodedMessageAttributeValue},
+};
 
 pub(super) enum WorkerBackend {
     Passthrough(PassthroughBackend),
@@ -368,6 +372,38 @@ impl WorkerBackend {
         }
     }
 
+    pub(super) fn notify_component(
+        &mut self,
+        message_id: &str,
+        attributes: &[DecodedMessageAttribute],
+    ) -> Result<Option<()>, String> {
+        match self {
+            Self::Passthrough(_) => Ok(None),
+            Self::Vst3Runtime(runtime) => notify_connection_point(
+                &mut runtime.component,
+                ConnectionNotifyTarget::Component,
+                message_id,
+                attributes,
+            ),
+        }
+    }
+
+    pub(super) fn notify_controller(
+        &mut self,
+        message_id: &str,
+        attributes: &[DecodedMessageAttribute],
+    ) -> Result<Option<()>, String> {
+        match self {
+            Self::Passthrough(_) => Ok(None),
+            Self::Vst3Runtime(runtime) => notify_connection_point(
+                &mut runtime.component,
+                ConnectionNotifyTarget::Controller,
+                message_id,
+                attributes,
+            ),
+        }
+    }
+
     pub(super) fn select_unit(&self, unit_id: i32) -> Result<i32, String> {
         match self {
             Self::Passthrough(_) => Err("unit info not available".to_string()),
@@ -590,6 +626,49 @@ impl WorkerBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ConnectionNotifyTarget {
+    Component,
+    Controller,
+}
+
+fn notify_connection_point(
+    component: &mut Vst3LoadedComponent,
+    target: ConnectionNotifyTarget,
+    message_id: &str,
+    attributes: &[DecodedMessageAttribute],
+) -> Result<Option<()>, String> {
+    let mut message = Vst3HostMessage::new();
+    message
+        .set_id(message_id)
+        .map_err(|error| error.to_string())?;
+    for attribute in attributes {
+        match &attribute.value {
+            DecodedMessageAttributeValue::Int(value) => {
+                message.attributes_mut().set_int(&attribute.key, *value)
+            }
+            DecodedMessageAttributeValue::Float(value) => {
+                message.attributes_mut().set_float(&attribute.key, *value)
+            }
+            DecodedMessageAttributeValue::String(value) => {
+                message.attributes_mut().set_string(&attribute.key, value)
+            }
+            DecodedMessageAttributeValue::Binary(value) => {
+                message.attributes_mut().set_binary(&attribute.key, value)
+            }
+        }
+        .map_err(|error| error.to_string())?;
+    }
+    match target {
+        ConnectionNotifyTarget::Component => component
+            .notify_component(&mut message)
+            .map_err(error_message),
+        ConnectionNotifyTarget::Controller => component
+            .notify_controller(&mut message)
+            .map_err(error_message),
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct WorkerBackendError {
     message: String,
@@ -751,6 +830,7 @@ fn host_error_kind(error: &HostError) -> &'static str {
         HostError::ComponentReturnedNull => "component-returned-null",
         HostError::ComponentVTableMissing => "component-vtable-missing",
         HostError::ConnectionPointCallFailed { .. } => "connection-point-call-failed",
+        HostError::ConnectionPointMessageNull => "connection-point-message-null",
         HostError::ConnectionPointReturnedNull => "connection-point-returned-null",
         HostError::ConnectionPointVTableMissing => "connection-point-vtable-missing",
         HostError::EditControllerCallFailed { .. } => "edit-controller-call-failed",

@@ -42,6 +42,8 @@ export {
 } from "./loopback.js";
 export {
   type InstanceApi,
+  type InstanceConnectionNotifyOptions,
+  type InstanceConnectionNotifyResult,
   type InstanceCreateOptions,
   type InstanceDescriptor,
   type InstanceDestroyOptions,
@@ -97,6 +99,7 @@ export {
   type InstanceWorkerMetrics,
   type StreamLifecycleOptions,
   type Vst3AudioBusDirection,
+  type Vst3MessageAttribute,
   type Vst3ParameterFlags,
   type Vst3ParameterInfo,
   type Vst3ProgramInfo,

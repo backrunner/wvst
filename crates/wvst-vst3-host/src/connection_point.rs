@@ -2,9 +2,9 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
-    IConnectionPoint, IConnectionPointVTable, K_RESULT_OK, VST3_I_CONNECTION_POINT_IID,
+    IConnectionPoint, IConnectionPointVTable, IMessage, K_RESULT_OK, VST3_I_CONNECTION_POINT_IID,
 };
-use crate::{HostError, HostResult};
+use crate::{HostError, HostResult, Vst3HostMessage};
 
 #[derive(Debug)]
 pub struct Vst3ConnectionPoint {
@@ -47,6 +47,22 @@ impl Vst3ConnectionPoint {
             // SAFETY: both connection point holders validated their pointers
             // and own live references for the duration of this call.
             (vtable.disconnect)(point, other.as_mut_ptr())
+        })
+    }
+
+    pub fn notify(&self, message: &mut Vst3HostMessage) -> HostResult<()> {
+        self.notify_raw(message.as_mut_ptr())
+    }
+
+    pub(crate) fn notify_raw(&self, message: *mut IMessage) -> HostResult<()> {
+        if message.is_null() {
+            return Err(HostError::ConnectionPointMessageNull);
+        }
+        self.call_result("notify", |point, vtable| unsafe {
+            // SAFETY: this connection point holder validated its pointer.
+            // `message` is a live IMessage pointer owned by the caller for
+            // the duration of the notify call.
+            (vtable.notify)(point, message)
         })
     }
 

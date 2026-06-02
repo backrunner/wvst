@@ -6,11 +6,11 @@ use super::{
 };
 use crate::events::BridgeEventKind;
 use crate::instance_registry::{
-    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceParameterInfoParams,
-    InstanceParameterNormalizedByPlainParams, InstanceParameterParams, InstanceParameterSetParams,
-    InstanceParameterValueByStringParams, InstanceProcessingParams, InstanceRestartParams,
-    InstanceSetStateParams, InstanceState, InstanceStatusParams, StreamLifecycleParams,
-    WorkerRuntimeInfo,
+    InstanceConnectionNotifyParams, InstanceCreateParams, InstanceDestroyParams, InstanceError,
+    InstanceParameterInfoParams, InstanceParameterNormalizedByPlainParams, InstanceParameterParams,
+    InstanceParameterSetParams, InstanceParameterValueByStringParams, InstanceProcessingParams,
+    InstanceRestartParams, InstanceSetStateParams, InstanceState, InstanceStatusParams,
+    StreamLifecycleParams, WorkerRuntimeInfo,
 };
 use crate::worker_supervisor::WorkerSupervisorError;
 
@@ -809,6 +809,87 @@ pub async fn handle_instance_set_state(
     {
         Ok(result) => response_result(id, result),
         Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_notify_component(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    handle_instance_connection_notify(id, params, context, ConnectionNotifyTarget::Component).await
+}
+
+pub async fn handle_instance_notify_controller(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    handle_instance_connection_notify(id, params, context, ConnectionNotifyTarget::Controller).await
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ConnectionNotifyTarget {
+    Component,
+    Controller,
+}
+
+async fn handle_instance_connection_notify(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+    target: ConnectionNotifyTarget,
+) -> String {
+    let params = match serde_json::from_value::<InstanceConnectionNotifyParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid connection notify params: {error}"),
+            );
+        }
+    };
+    if params.message_id.is_empty() {
+        return response_error(id, -32602, "messageId is required");
+    }
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    let attributes = match normalize_connection_notify_attributes(params.attributes) {
+        Ok(attributes) => attributes,
+        Err(message) => return response_error(id, -32602, message),
+    };
+
+    let result = match target {
+        ConnectionNotifyTarget::Component => {
+            context
+                .workers
+                .notify_component(params.instance_id, params.message_id, attributes)
+                .await
+        }
+        ConnectionNotifyTarget::Controller => {
+            context
+                .workers
+                .notify_controller(params.instance_id, params.message_id, attributes)
+                .await
+        }
+    };
+
+    match result {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+fn normalize_connection_notify_attributes(attributes: Value) -> Result<Value, &'static str> {
+    if attributes.is_object() {
+        Ok(attributes)
+    } else if attributes.is_null() {
+        Ok(serde_json::json!({}))
+    } else {
+        Err("attributes must be an object")
     }
 }
 

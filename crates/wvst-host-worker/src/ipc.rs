@@ -358,6 +358,12 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
         "instance.setState" => {
             ipc_parameters::handle_instance_set_state(request.id, request.params, state)
         }
+        "instance.connection.notifyComponent" => {
+            ipc_parameters::handle_instance_notify_component(request.id, request.params, state)
+        }
+        "instance.connection.notifyController" => {
+            ipc_parameters::handle_instance_notify_controller(request.id, request.params, state)
+        }
         "instance.destroy" => handle_instance_destroy(request.id, request.params, state),
         _ => response_error(
             request.id,
@@ -831,6 +837,43 @@ mod tests {
         let parameter_end_edit_value: Value =
             serde_json::from_str(&parameter_end_edit).expect("end-edit json");
         assert_eq!(parameter_end_edit_value["error"]["code"], 4220);
+
+        let notify_component = handle_ipc_line(
+            r#"{"id":22,"method":"instance.connection.notifyComponent","params":{"instanceId":7,"messageId":"TextMessage","attributes":{"answer":{"type":"int","value":42},"gain":{"type":"float","value":0.5},"label":{"type":"string","value":"ok"},"blob":{"type":"binary","valueBase64":"AQID"}}}}"#,
+            &mut state,
+        );
+        let notify_component_value: Value =
+            serde_json::from_str(&notify_component).expect("notify component json");
+        assert_eq!(notify_component_value["result"]["target"], "component");
+        assert_eq!(notify_component_value["result"]["messageId"], "TextMessage");
+        assert_eq!(notify_component_value["result"]["attributeCount"], 4);
+        assert_eq!(notify_component_value["result"]["notified"], false);
+
+        let notify_controller = handle_ipc_line(
+            r#"{"id":23,"method":"instance.connection.notifyController","params":{"instanceId":7,"messageId":"TextMessage"}}"#,
+            &mut state,
+        );
+        let notify_controller_value: Value =
+            serde_json::from_str(&notify_controller).expect("notify controller json");
+        assert_eq!(notify_controller_value["result"]["target"], "controller");
+        assert_eq!(
+            notify_controller_value["result"]["messageId"],
+            "TextMessage"
+        );
+        assert_eq!(notify_controller_value["result"]["attributeCount"], 0);
+        assert_eq!(notify_controller_value["result"]["notified"], false);
+
+        let notify_controller_null_attributes = handle_ipc_line(
+            r#"{"id":24,"method":"instance.connection.notifyController","params":{"instanceId":7,"messageId":"TextMessage","attributes":null}}"#,
+            &mut state,
+        );
+        let notify_controller_null_attributes_value: Value =
+            serde_json::from_str(&notify_controller_null_attributes)
+                .expect("notify controller null attributes json");
+        assert_eq!(
+            notify_controller_null_attributes_value["result"]["attributeCount"],
+            0
+        );
 
         let start = handle_ipc_line(
             r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,

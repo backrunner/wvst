@@ -22,6 +22,7 @@ pub enum HostError {
         method: &'static str,
         result: i32,
     },
+    ConnectionPointMessageNull,
     ConnectionPointReturnedNull,
     ConnectionPointVTableMissing,
     EditControllerCallFailed {
@@ -123,6 +124,9 @@ impl Display for HostError {
                     formatter,
                     "VST3 connection point call failed: {method} returned {result}"
                 )
+            }
+            Self::ConnectionPointMessageNull => {
+                formatter.write_str("VST3 connection point message pointer is null")
             }
             Self::ConnectionPointReturnedNull => {
                 formatter.write_str("VST3 connection point pointer is null")

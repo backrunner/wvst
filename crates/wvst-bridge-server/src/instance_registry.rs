@@ -105,6 +105,19 @@ pub struct InstanceSetStateParams {
     pub controller_state_base64: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceConnectionNotifyParams {
+    pub instance_id: u64,
+    pub message_id: String,
+    #[serde(default = "empty_json_object")]
+    pub attributes: Value,
+}
+
+fn empty_json_object() -> Value {
+    json!({})
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceSelectUnitParams {

@@ -39,6 +39,19 @@ impl Vst3HostMessage {
     pub fn into_raw(self) -> *mut IMessage {
         Box::into_raw(self.object).cast::<IMessage>()
     }
+
+    pub fn as_mut_ptr(&mut self) -> *mut IMessage {
+        &mut self.object.iface
+    }
+
+    pub fn set_id(&mut self, id: &str) -> Result<(), std::ffi::NulError> {
+        self.object.message_id = Some(CString::new(id)?);
+        Ok(())
+    }
+
+    pub fn attributes_mut(&mut self) -> &mut Vst3HostAttributeList {
+        &mut self.object.attributes
+    }
 }
 
 impl Default for Vst3HostMessage {
