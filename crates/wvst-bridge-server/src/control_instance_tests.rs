@@ -76,6 +76,10 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(create_value["result"]["streamState"], "open");
     assert_eq!(create_value["result"]["backend"], "passthrough");
     assert_eq!(
+        create_value["result"]["runtimeCapabilities"]["schemaVersion"],
+        1
+    );
+    assert_eq!(
         create_value["result"]["runtimeCapabilities"]["binaryAudioProcess"],
         true
     );
@@ -113,12 +117,20 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(status_value["result"]["worker"]["ipcVersion"], 1);
     assert_eq!(status_value["result"]["worker"]["instances"], 1);
     assert_eq!(
+        status_value["result"]["worker"]["runtime"][0]["runtimeCapabilities"]["schemaVersion"],
+        1
+    );
+    assert_eq!(
         status_value["result"]["worker"]["runtime"][0]["runtimeCapabilities"]["parameters"],
         true
     );
     assert_eq!(
         status_value["result"]["worker"]["runtime"][0]["diagnostics"]["componentHandler"]["totalEvents"],
         2
+    );
+    assert_eq!(
+        status_value["result"]["worker"]["runtime"][0]["diagnostics"]["passthroughReason"]["kind"],
+        "non-bundle-path"
     );
 
     let handler_events_value =
@@ -604,7 +616,7 @@ fn serve_worker_script() -> PathBuf {
     std::fs::write(
         &worker,
 r#"#!/bin/sh
-runtime_capabilities='"runtimeCapabilities":{"binaryAudioProcess":true,"componentState":false,"controller":true,"controllerState":true,"parameters":true,"parameterAutomation":true,"units":false,"unitProgramData":false,"programListData":false,"unitData":false,"midiMapping":false,"outputEvents":true,"outputParameterChanges":true,"componentHandlerEvents":true,"connectionPoints":false,"processContext":false}'
+runtime_capabilities='"runtimeCapabilities":{"schemaVersion":1,"binaryAudioProcess":true,"componentState":false,"controller":true,"controllerState":true,"parameters":true,"parameterAutomation":true,"units":false,"unitProgramData":false,"programListData":false,"unitData":false,"midiMapping":false,"outputEvents":true,"outputParameterChanges":true,"componentHandlerEvents":true,"connectionPoints":false,"processContext":false}'
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
@@ -616,7 +628,7 @@ while IFS= read -r line; do
     *instance.parameter.normalizedByPlain*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.75,"valuePlain":75.0,"valueString":"75 dB"}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
-    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0,"diagnostics":{"componentHandler":{"totalEvents":2,"recentEvents":[{"sequence":1,"kind":"begin-edit","parameterId":42},{"sequence":2,"kind":"perform-edit","parameterId":42,"valueNormalized":0.75}]}}}]}}\n' "$id" "$runtime_capabilities" ;;
+    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0,"diagnostics":{"passthroughReason":{"kind":"non-bundle-path","message":"test fallback"},"componentHandler":{"totalEvents":2,"recentEvents":[{"sequence":1,"kind":"begin-edit","parameterId":42},{"sequence":2,"kind":"perform-edit","parameterId":42,"valueNormalized":0.75}]}}}]}}\n' "$id" "$runtime_capabilities" ;;
     *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
   esac

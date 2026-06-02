@@ -4,6 +4,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeCapabilities {
+    pub schema_version: u16,
     pub binary_audio_process: bool,
     pub component_state: bool,
     pub controller: bool,
@@ -29,6 +30,7 @@ impl RuntimeCapabilities {
         };
 
         Self {
+            schema_version: json_u16(value, "schemaVersion"),
             binary_audio_process: json_bool(value, "binaryAudioProcess"),
             component_state: json_bool(value, "componentState"),
             controller: json_bool(value, "controller"),
@@ -51,4 +53,12 @@ impl RuntimeCapabilities {
 
 fn json_bool(value: &Value, key: &'static str) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn json_u16(value: &Value, key: &'static str) -> u16 {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(0)
 }

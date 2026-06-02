@@ -10,8 +10,13 @@ use wvst_vst3_host::{
 use super::{InstanceCreateParams, ipc_capabilities::WorkerRuntimeCapabilities};
 
 pub(super) enum WorkerBackend {
-    Passthrough(HeadlessPluginInstance),
+    Passthrough(PassthroughBackend),
     Vst3Runtime(Box<Vst3RuntimeBackend>),
+}
+
+pub(super) struct PassthroughBackend {
+    plugin: HeadlessPluginInstance,
+    reason: PassthroughFallbackReason,
 }
 
 pub(super) struct Vst3RuntimeBackend {
@@ -40,9 +45,27 @@ pub(super) enum WorkerBackendKind {
 #[serde(rename_all = "camelCase")]
 pub(super) struct WorkerBackendDiagnostics {
     #[serde(skip_serializing_if = "Option::is_none")]
+    passthrough_reason: Option<PassthroughFallbackReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     component_handler: Option<wvst_vst3_host::Vst3ComponentHandlerSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     process_context_requirements: Option<u32>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PassthroughFallbackReason {
+    kind: PassthroughFallbackKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum PassthroughFallbackKind {
+    MissingClassId,
+    NonBundlePath,
+    InvalidClassId,
 }
 
 impl WorkerBackend {
@@ -51,11 +74,19 @@ impl WorkerBackend {
         descriptor: &PluginDescriptor,
     ) -> Result<Self, String> {
         let Some(class_id) = params.class_id.as_deref() else {
-            return Self::passthrough(descriptor, params);
+            return Self::passthrough(
+                descriptor,
+                params,
+                PassthroughFallbackReason::missing_class_id(),
+            );
         };
 
         if !std::path::Path::new(&params.plugin_path).is_dir() {
-            return Self::passthrough(descriptor, params);
+            return Self::passthrough(
+                descriptor,
+                params,
+                PassthroughFallbackReason::non_bundle_path(&params.plugin_path),
+            );
         }
 
         let config = processing_config(params)?;
@@ -82,7 +113,11 @@ impl WorkerBackend {
                     capabilities,
                 })))
             }
-            Err(HostError::InvalidClassId(_)) => Self::passthrough(descriptor, params),
+            Err(HostError::InvalidClassId(class_id)) => Self::passthrough(
+                descriptor,
+                params,
+                PassthroughFallbackReason::invalid_class_id(class_id),
+            ),
             Err(error) => Err(error.to_string()),
         }
     }
@@ -122,10 +157,12 @@ impl WorkerBackend {
     pub(super) fn diagnostics(&self) -> WorkerBackendDiagnostics {
         match self {
             Self::Passthrough(_) => WorkerBackendDiagnostics {
+                passthrough_reason: self.passthrough_reason(),
                 component_handler: None,
                 process_context_requirements: None,
             },
             Self::Vst3Runtime(runtime) => WorkerBackendDiagnostics {
+                passthrough_reason: None,
                 component_handler: runtime.component.component_handler_snapshot(),
                 process_context_requirements: runtime
                     .component
@@ -441,7 +478,8 @@ impl WorkerBackend {
     ) -> Result<(), String> {
         process_output.clear();
         match self {
-            Self::Passthrough(plugin) => plugin
+            Self::Passthrough(passthrough) => passthrough
+                .plugin
                 .process_interleaved_f32(frames, input, output)
                 .map(|_| ())
                 .map_err(error_message),
@@ -497,10 +535,41 @@ impl WorkerBackend {
     fn passthrough(
         descriptor: &PluginDescriptor,
         params: &InstanceCreateParams,
+        reason: PassthroughFallbackReason,
     ) -> Result<Self, String> {
         HeadlessPluginInstance::new(descriptor, params.input_channels, params.output_channels)
-            .map(Self::Passthrough)
+            .map(|plugin| Self::Passthrough(PassthroughBackend { plugin, reason }))
             .map_err(error_message)
+    }
+
+    fn passthrough_reason(&self) -> Option<PassthroughFallbackReason> {
+        match self {
+            Self::Passthrough(passthrough) => Some(passthrough.reason.clone()),
+            Self::Vst3Runtime(_) => None,
+        }
+    }
+}
+
+impl PassthroughFallbackReason {
+    fn missing_class_id() -> Self {
+        Self {
+            kind: PassthroughFallbackKind::MissingClassId,
+            message: Some("classId was not provided".to_string()),
+        }
+    }
+
+    fn non_bundle_path(path: &str) -> Self {
+        Self {
+            kind: PassthroughFallbackKind::NonBundlePath,
+            message: Some(format!("pluginPath is not a directory bundle: {path}")),
+        }
+    }
+
+    fn invalid_class_id(class_id: String) -> Self {
+        Self {
+            kind: PassthroughFallbackKind::InvalidClassId,
+            message: Some(format!("classId is not a valid VST3 FUID: {class_id}")),
+        }
     }
 }
 

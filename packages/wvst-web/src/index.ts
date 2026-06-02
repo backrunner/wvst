@@ -60,6 +60,7 @@ export {
   type InstanceParameterValueByStringResult,
   type InstanceParametersOptions,
   type InstanceParametersResult,
+  type PassthroughFallbackReason,
   type InstanceProgramDataOptions,
   type InstanceProgramDataResult,
   type InstanceProgramDataSupportedResult,

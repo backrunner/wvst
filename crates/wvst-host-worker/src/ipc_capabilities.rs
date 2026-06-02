@@ -4,6 +4,7 @@ use wvst_vst3_host::Vst3LoadedComponent;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct WorkerRuntimeCapabilities {
+    pub(super) schema_version: u16,
     pub(super) binary_audio_process: bool,
     pub(super) component_state: bool,
     pub(super) controller: bool,
@@ -25,6 +26,7 @@ pub(super) struct WorkerRuntimeCapabilities {
 impl WorkerRuntimeCapabilities {
     pub(super) fn passthrough() -> Self {
         Self {
+            schema_version: 1,
             binary_audio_process: true,
             component_state: false,
             controller: false,
@@ -58,6 +60,7 @@ impl WorkerRuntimeCapabilities {
             .and_then(|controller| controller.connection_point().ok().flatten());
 
         Self {
+            schema_version: 1,
             binary_audio_process: true,
             component_state: true,
             controller,

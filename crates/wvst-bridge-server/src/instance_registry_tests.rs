@@ -74,6 +74,7 @@ fn records_worker_runtime_info() {
                 backend: Some("vst3-runtime".to_string()),
                 controller_class_id: Some("2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a".to_string()),
                 runtime_capabilities: RuntimeCapabilities {
+                    schema_version: 1,
                     binary_audio_process: true,
                     component_state: true,
                     controller: true,

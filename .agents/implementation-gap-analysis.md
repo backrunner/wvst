@@ -64,7 +64,7 @@
 - VST3 controller 基础链路已接入：component 可查询 controller class id，macOS factory runtime 会创建可选 `IEditController`，worker 初始化 controller、注册可记录 begin/perform/end edit、restartComponent、dirty/editor/group-edit 的 `IComponentHandler`/`IComponentHandler2`，并在 component/controller 都支持 `IConnectionPoint` 时建立/释放双向连接；Bridge/worker/Web 控制面已暴露参数列表、unit/program metadata、normalized 参数读写、normalized/plain/display string 转换、component/controller state base64 get/set 聚合、unit selection、unit-by-bus 查询、`setUnitProgramData`、`IProgramListData` 和 `IUnitData` 数据读写。
 - `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler`/`IComponentHandler2` host callback 事件快照、`IConnectionPoint` component/controller 通信 facade 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入、handler edit/restart/dirty/editor/group-edit callbacks、连接点 connect/disconnect 和生命周期释放。
 - `wvst-host-worker` metrics 已暴露 VST3 runtime diagnostics，其中包含 controller `IComponentHandler` 最近事件和累计事件数；Bridge 已在 `instance.status` heartbeat 路径上把新增 handler event 增量转换为 `bridge.event` server-push 事件，并能报告 recent-event ring 溢出导致的 lost sequence；Web SDK 事件类型已同步。
-- `wvst-host-worker` 已为每个实例缓存并暴露 `runtimeCapabilities`，Bridge `InstanceRecord` / Web SDK `InstanceDescriptor` / worker runtime metrics 均可读取当前实例对 binary audio、component/controller state、parameters、parameter automation、unit/program data、MIDI mapping、output events、component handler events、connection points 和 process context 的支持情况。
+- `wvst-host-worker` 已为每个实例缓存并暴露带 `schemaVersion` 的 `runtimeCapabilities`，Bridge `InstanceRecord` / Web SDK `InstanceDescriptor` / worker runtime metrics 均可读取当前实例对 binary audio、component/controller state、parameters、parameter automation、unit/program data、MIDI mapping、output events、component handler events、connection points 和 process context 的支持情况；passthrough runtime diagnostics 已能区分 missing class id、non-bundle path 和 invalid class id fallback 原因。
 - `wvst-vst3-host` 已提供可选 `IUnitInfo` facade，能读取 units、program lists、program names 和 selected unit；`wvst-host-worker` / Bridge / Web SDK 已提供 `instance.units` / `client.instances.units()` 查询 API。
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
 - VST3 runtime process path 已将插件写回的 output note on/off、poly pressure 和 output parameter changes 规范化为 WVST 协议事件，并由 worker audio IPC 在响应 frame 中编码为 audio + MIDI event section + parameter automation section；未知或越界 VST3 output event 会被过滤，避免污染 Web 数据面。
@@ -89,7 +89,7 @@
 - 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略和 worker kill/wait 审计指标首版；仍缺少进程树级 kill/wait、平台化 supervisor backend 和更多失败分类。
 - 正式 framed control IPC，替换当前 JSON-line 控制面原型。
 - 超时后的全链路 kill/wait 审计已有首版 counters，仍缺少进程树维度、细粒度 restart 诊断和 crash quarantine 策略调优。
-- worker hello 已有基础 capability negotiation，实例级 `runtimeCapabilities` 已能按数据面、MIDI、参数自动化和诊断能力暴露首版；仍缺少正式 framed IPC 下的 capability schema versioning 和失败原因分类。
+- worker hello 已有基础 capability negotiation，实例级 `runtimeCapabilities` 已能按数据面、MIDI、参数自动化和诊断能力暴露首版，且包含 schema version 与 passthrough fallback 原因；仍缺少正式 framed IPC 下的 capability schema version negotiation 和更完整的 VST3 lifecycle 失败原因分类。
 
 ### 3. 真实 VST3 component/controller lifecycle
 

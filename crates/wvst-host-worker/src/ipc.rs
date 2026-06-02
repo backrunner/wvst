@@ -543,6 +543,10 @@ mod tests {
         assert_eq!(create_value["result"]["workerState"], "ready");
         assert_eq!(create_value["result"]["backend"], "passthrough");
         assert_eq!(
+            create_value["result"]["runtimeCapabilities"]["schemaVersion"],
+            1
+        );
+        assert_eq!(
             create_value["result"]["runtimeCapabilities"]["binaryAudioProcess"],
             true
         );
@@ -564,8 +568,16 @@ mod tests {
             "passthrough"
         );
         assert_eq!(
+            metrics_value["result"]["runtime"][0]["runtimeCapabilities"]["schemaVersion"],
+            1
+        );
+        assert_eq!(
             metrics_value["result"]["runtime"][0]["runtimeCapabilities"]["binaryAudioProcess"],
             true
+        );
+        assert_eq!(
+            metrics_value["result"]["runtime"][0]["diagnostics"]["passthroughReason"]["kind"],
+            "non-bundle-path"
         );
         assert_eq!(
             metrics_value["result"]["runtime"][0]["runtimeCapabilities"]["componentState"],
@@ -677,6 +689,24 @@ mod tests {
         let destroy_value: Value = serde_json::from_str(&destroy).expect("destroy json");
         assert_eq!(destroy_value["result"]["workerState"], "destroyed");
         assert_eq!(state.instances.len(), 0);
+    }
+
+    #[test]
+    fn records_passthrough_reason_when_class_id_is_missing() {
+        let mut state = WorkerIpcState::default();
+        let create = handle_ipc_line(
+            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":2,"outputChannels":2}}"#,
+            &mut state,
+        );
+        let create_value: Value = serde_json::from_str(&create).expect("create json");
+        assert_eq!(create_value["result"]["backend"], "passthrough");
+
+        let metrics = handle_ipc_line(r#"{"id":8,"method":"worker.metrics"}"#, &mut state);
+        let metrics_value: Value = serde_json::from_str(&metrics).expect("metrics json");
+        assert_eq!(
+            metrics_value["result"]["runtime"][0]["diagnostics"]["passthroughReason"]["kind"],
+            "missing-class-id"
+        );
     }
 
     #[test]

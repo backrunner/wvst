@@ -47,6 +47,7 @@ export interface InstanceDescriptor {
 }
 
 export interface RuntimeCapabilities {
+  schemaVersion: number;
   binaryAudioProcess: boolean;
   componentState: boolean;
   controller: boolean;
@@ -296,8 +297,14 @@ export interface InstanceWorkerRuntimeMetrics {
 }
 
 export interface InstanceWorkerRuntimeDiagnostics {
+  passthroughReason?: PassthroughFallbackReason | null;
   componentHandler?: Vst3ComponentHandlerSnapshot | null;
   processContextRequirements?: number;
+}
+
+export interface PassthroughFallbackReason {
+  kind: "missing-class-id" | "non-bundle-path" | "invalid-class-id";
+  message?: string;
 }
 
 export interface Vst3ComponentHandlerSnapshot {
