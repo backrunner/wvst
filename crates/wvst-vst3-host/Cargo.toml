@@ -11,6 +11,7 @@ version.workspace = true
 core-foundation-sys = "0.8"
 libloading = "0.8"
 serde = { version = "1", features = ["derive"] }
+wvst-core = { path = "../wvst-core" }
 wvst-scanner = { path = "../wvst-scanner" }
 
 [lib]

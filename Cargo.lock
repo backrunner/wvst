@@ -760,6 +760,7 @@ dependencies = [
  "core-foundation-sys",
  "libloading",
  "serde",
+ "wvst-core",
  "wvst-scanner",
 ]
 

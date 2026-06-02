@@ -1,0 +1,144 @@
+use super::*;
+
+#[test]
+fn deinterleaves_stereo_input_to_planar_channels() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    let input = [1.0, 10.0, 2.0, 20.0, 3.0, 30.0];
+
+    buffers.prepare_interleaved_f32(3, &input).expect("prepare");
+
+    assert_eq!(
+        buffers.input_channel(0, 3),
+        Some([1.0, 2.0, 3.0].as_slice())
+    );
+    assert_eq!(
+        buffers.input_channel(1, 3),
+        Some([10.0, 20.0, 30.0].as_slice())
+    );
+    assert_eq!(buffers.process_data.num_samples, 3);
+    assert_eq!(buffers.process_data.num_inputs, 1);
+    assert_eq!(buffers.process_data.num_outputs, 1);
+    assert!(!buffers.process_data.inputs.is_null());
+    assert!(!buffers.process_data.outputs.is_null());
+}
+
+#[test]
+fn copies_planar_output_to_interleaved_buffer() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    buffers
+        .prepare_interleaved_f32(3, &[0.0; 6])
+        .expect("prepare");
+    buffers
+        .output_channel_mut(0, 3)
+        .expect("left")
+        .copy_from_slice(&[1.0, 2.0, 3.0]);
+    buffers
+        .output_channel_mut(1, 3)
+        .expect("right")
+        .copy_from_slice(&[10.0, 20.0, 30.0]);
+
+    let mut output = [0.0; 6];
+    buffers
+        .copy_output_to_interleaved(3, &mut output)
+        .expect("copy");
+
+    assert_eq!(output, [1.0, 10.0, 2.0, 20.0, 3.0, 30.0]);
+}
+
+#[test]
+fn clears_each_planar_output_channel_between_blocks() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    buffers
+        .prepare_interleaved_f32(3, &[0.0; 6])
+        .expect("prepare");
+    buffers
+        .output_channel_mut(0, 3)
+        .expect("left")
+        .copy_from_slice(&[1.0, 2.0, 3.0]);
+    buffers
+        .output_channel_mut(1, 3)
+        .expect("right")
+        .copy_from_slice(&[10.0, 20.0, 30.0]);
+
+    buffers
+        .prepare_interleaved_f32(2, &[0.0; 4])
+        .expect("prepare smaller block");
+    let mut output = [1.0; 4];
+    buffers
+        .copy_output_to_interleaved(2, &mut output)
+        .expect("copy");
+
+    assert_eq!(output, [0.0; 4]);
+}
+
+#[test]
+fn rejects_frame_count_above_max() {
+    let mut buffers = Vst3ProcessBuffers::new(2, 2, 2).expect("buffers");
+    let error = buffers
+        .prepare_interleaved_f32(3, &[0.0; 6])
+        .expect_err("frame count above max");
+
+    assert_eq!(
+        error,
+        HostError::InvalidBufferLength {
+            expected: 2,
+            actual: 3
+        }
+    );
+}
+
+#[test]
+fn rejects_invalid_input_and_output_lengths() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    let input_error = buffers
+        .prepare_interleaved_f32(2, &[0.0; 3])
+        .expect_err("input mismatch");
+    assert_eq!(
+        input_error,
+        HostError::InvalidBufferLength {
+            expected: 4,
+            actual: 3
+        }
+    );
+
+    buffers
+        .prepare_interleaved_f32(2, &[0.0; 4])
+        .expect("prepare");
+    let mut output = [0.0; 3];
+    let output_error = buffers
+        .copy_output_to_interleaved(2, &mut output)
+        .expect_err("output mismatch");
+    assert_eq!(
+        output_error,
+        HostError::InvalidBufferLength {
+            expected: 4,
+            actual: 3
+        }
+    );
+}
+
+#[test]
+fn supports_instrument_buffers_without_input_bus() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+
+    buffers.prepare_interleaved_f32(2, &[]).expect("prepare");
+    buffers
+        .output_channel_mut(0, 2)
+        .expect("left")
+        .copy_from_slice(&[0.25, 0.5]);
+    buffers
+        .output_channel_mut(1, 2)
+        .expect("right")
+        .copy_from_slice(&[0.75, 1.0]);
+
+    let mut output = [0.0; 4];
+    buffers
+        .copy_output_to_interleaved(2, &mut output)
+        .expect("copy");
+
+    assert_eq!(output, [0.25, 0.75, 0.5, 1.0]);
+    assert!(buffers.input_channel(0, 2).is_none());
+    assert_eq!(buffers.process_data.num_inputs, 0);
+    assert!(buffers.process_data.inputs.is_null());
+    assert!(!buffers.process_data.outputs.is_null());
+}
