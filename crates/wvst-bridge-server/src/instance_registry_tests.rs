@@ -14,6 +14,9 @@ fn creates_multiple_records_for_same_plugin() {
 
     assert_eq!(first.instance_id, 1);
     assert_eq!(first.stream_id, 1);
+    assert_eq!(first.backend, None);
+    assert_eq!(first.latency_samples, 0);
+    assert_eq!(first.tail_samples, 0);
     assert_eq!(second.instance_id, 2);
     assert_eq!(second.stream_id, 2);
     assert_eq!(registry.list().len(), 2);
@@ -47,6 +50,29 @@ fn marks_worker_ready() {
 
     assert_eq!(ready.state, InstanceState::Ready);
     assert_eq!(ready.worker_state, WorkerState::Ready);
+}
+
+#[test]
+fn records_worker_runtime_info() {
+    let registry = InstanceRegistry::new();
+    let plugin = plugin();
+    let record = registry.create(create_params(), &plugin).expect("instance");
+
+    let ready = registry
+        .mark_worker_ready_with_runtime(
+            record.instance_id,
+            WorkerRuntimeInfo {
+                backend: Some("vst3-runtime".to_string()),
+                latency_samples: 64,
+                tail_samples: 128,
+            },
+        )
+        .expect("ready");
+
+    assert_eq!(ready.backend.as_deref(), Some("vst3-runtime"));
+    assert_eq!(ready.latency_samples, 64);
+    assert_eq!(ready.tail_samples, 128);
+    assert_eq!(registry.list()[0].latency_samples, 64);
 }
 
 #[test]

@@ -73,6 +73,10 @@ pub struct InstanceRecord {
     pub state: InstanceState,
     pub worker_state: WorkerState,
     pub stream_state: StreamState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    pub latency_samples: u32,
+    pub tail_samples: u32,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -109,6 +113,26 @@ pub struct InstanceDestroyResult {
     pub instance_id: u64,
     pub stream_id: u64,
     pub state: InstanceState,
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct WorkerRuntimeInfo {
+    pub backend: Option<String>,
+    pub latency_samples: u32,
+    pub tail_samples: u32,
+}
+
+impl WorkerRuntimeInfo {
+    pub fn from_worker_result(value: &Value) -> Self {
+        Self {
+            backend: value
+                .get("backend")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            latency_samples: json_u32(value, "latencySamples"),
+            tail_samples: json_u32(value, "tailSamples"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -163,6 +187,9 @@ impl InstanceRegistry {
             state: InstanceState::Allocated,
             worker_state: WorkerState::NotStarted,
             stream_state: StreamState::Open,
+            backend: None,
+            latency_samples: 0,
+            tail_samples: 0,
         };
 
         let mut records = self
@@ -225,6 +252,22 @@ impl InstanceRegistry {
     }
 
     pub fn mark_worker_ready(&self, instance_id: u64) -> Result<InstanceRecord, InstanceError> {
+        self.mark_worker_ready_inner(instance_id, None)
+    }
+
+    pub fn mark_worker_ready_with_runtime(
+        &self,
+        instance_id: u64,
+        runtime: WorkerRuntimeInfo,
+    ) -> Result<InstanceRecord, InstanceError> {
+        self.mark_worker_ready_inner(instance_id, Some(runtime))
+    }
+
+    fn mark_worker_ready_inner(
+        &self,
+        instance_id: u64,
+        runtime: Option<WorkerRuntimeInfo>,
+    ) -> Result<InstanceRecord, InstanceError> {
         let mut records = self
             .records
             .lock()
@@ -240,6 +283,11 @@ impl InstanceRegistry {
                 record.state = InstanceState::Ready;
                 record.worker_state = WorkerState::Ready;
             }
+        }
+        if let Some(runtime) = runtime {
+            record.backend = runtime.backend;
+            record.latency_samples = runtime.latency_samples;
+            record.tail_samples = runtime.tail_samples;
         }
 
         Ok(record.clone())
@@ -410,6 +458,14 @@ fn validate_create_params(params: &InstanceCreateParams) -> Result<(), InstanceE
         .map_err(|_| InstanceError::InvalidOutputChannels(params.output_channels))?;
 
     Ok(())
+}
+
+fn json_u32(value: &Value, key: &'static str) -> u32 {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0)
 }
 
 fn select_class<'a>(

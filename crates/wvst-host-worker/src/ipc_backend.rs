@@ -62,6 +62,20 @@ impl WorkerBackend {
         true
     }
 
+    pub(super) fn latency_samples(&self) -> u32 {
+        match self {
+            Self::Passthrough(_) => 0,
+            Self::Vst3Runtime(component) => component.instance().latency_samples(),
+        }
+    }
+
+    pub(super) fn tail_samples(&self) -> u32 {
+        match self {
+            Self::Passthrough(_) => 0,
+            Self::Vst3Runtime(component) => component.instance().tail_samples(),
+        }
+    }
+
     pub(super) fn start_processing(&mut self) -> Result<(), String> {
         match self {
             Self::Passthrough(_) => Ok(()),

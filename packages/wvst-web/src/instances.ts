@@ -23,6 +23,9 @@ export interface InstanceDescriptor {
   state: "allocated" | "ready" | "processing" | "stopped" | "failed";
   workerState: "not-started" | "ready" | "processing" | "stopped" | "failed";
   streamState: "open" | "closed";
+  backend?: string;
+  latencySamples: number;
+  tailSamples: number;
 }
 
 export interface InstanceStatusOptions {

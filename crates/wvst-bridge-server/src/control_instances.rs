@@ -6,7 +6,7 @@ use super::{
 };
 use crate::instance_registry::{
     InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceProcessingParams,
-    InstanceRestartParams, InstanceStatusParams, StreamLifecycleParams,
+    InstanceRestartParams, InstanceStatusParams, StreamLifecycleParams, WorkerRuntimeInfo,
 };
 
 pub async fn handle_instance_create(
@@ -35,7 +35,10 @@ pub async fn handle_instance_create(
     };
 
     match context.workers.start_instance(&record).await {
-        Ok(_) => match context.instances.mark_worker_ready(record.instance_id) {
+        Ok(worker) => match context.instances.mark_worker_ready_with_runtime(
+            record.instance_id,
+            WorkerRuntimeInfo::from_worker_result(&worker),
+        ) {
             Ok(record) => response_result(id, json!(record)),
             Err(error) => response_instance_error(id, error),
         },
@@ -98,7 +101,10 @@ pub async fn handle_instance_restart(
     match context.workers.restart_instance(&record).await {
         Ok(worker) => {
             context.metrics.increment_worker_restarts();
-            match context.instances.mark_worker_ready(record.instance_id) {
+            match context.instances.mark_worker_ready_with_runtime(
+                record.instance_id,
+                WorkerRuntimeInfo::from_worker_result(&worker),
+            ) {
                 Ok(instance) => {
                     response_result(id, json!({ "instance": instance, "worker": worker }))
                 }

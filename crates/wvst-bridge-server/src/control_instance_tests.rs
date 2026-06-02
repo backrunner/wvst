@@ -53,6 +53,9 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(create_value["result"]["state"], "ready");
     assert_eq!(create_value["result"]["workerState"], "ready");
     assert_eq!(create_value["result"]["streamState"], "open");
+    assert_eq!(create_value["result"]["backend"], "passthrough");
+    assert_eq!(create_value["result"]["latencySamples"], 0);
+    assert_eq!(create_value["result"]["tailSamples"], 0);
 
     let list_value = request_json(
         r#"{"id":2,"method":"instance.list","params":{}}"#,
@@ -306,6 +309,12 @@ async fn restarts_failed_instance_with_same_stream() {
     );
     assert_eq!(restart_value["result"]["instance"]["streamId"], stream_id);
     assert_eq!(restart_value["result"]["instance"]["state"], "ready");
+    assert_eq!(
+        restart_value["result"]["instance"]["backend"],
+        "passthrough"
+    );
+    assert_eq!(restart_value["result"]["instance"]["latencySamples"], 0);
+    assert_eq!(restart_value["result"]["instance"]["tailSamples"], 0);
     assert_eq!(restart_value["result"]["worker"]["workerState"], "ready");
 
     let metrics_value = request_json(
@@ -423,7 +432,7 @@ while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready"}}\n' "$id" ;;
+    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
     *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1}}\n' "$id" ;;
@@ -454,7 +463,7 @@ while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready"}}\n' "$id" ;;
+    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
     *worker.metrics*) exit 0 ;;

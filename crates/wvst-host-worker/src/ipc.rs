@@ -79,6 +79,8 @@ struct InstanceReady {
     stream_id: u64,
     worker_state: WorkerState,
     backend: WorkerBackendKind,
+    latency_samples: u32,
+    tail_samples: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -199,6 +201,8 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
         stream_id: params.stream_id,
         worker_state: WorkerState::Ready,
         backend: backend.kind(),
+        latency_samples: backend.latency_samples(),
+        tail_samples: backend.tail_samples(),
     };
     state.instances.insert(
         params.instance_id,
@@ -339,6 +343,18 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
             .values()
             .filter(|instance| instance.backend.kind() == WorkerBackendKind::Vst3Runtime)
             .count(),
+        "runtime": state
+            .instances
+            .values()
+            .map(|instance| {
+                json!({
+                    "streamId": instance.stream_id,
+                    "backend": instance.backend.kind(),
+                    "latencySamples": instance.backend.latency_samples(),
+                    "tailSamples": instance.backend.tail_samples(),
+                })
+            })
+            .collect::<Vec<_>>(),
     })
 }
 
@@ -416,6 +432,17 @@ mod tests {
         let create_value: Value = serde_json::from_str(&create).expect("create json");
         assert_eq!(create_value["result"]["workerState"], "ready");
         assert_eq!(create_value["result"]["backend"], "passthrough");
+        assert_eq!(create_value["result"]["latencySamples"], 0);
+        assert_eq!(create_value["result"]["tailSamples"], 0);
+
+        let metrics = handle_ipc_line(r#"{"id":8,"method":"worker.metrics"}"#, &mut state);
+        let metrics_value: Value = serde_json::from_str(&metrics).expect("metrics json");
+        assert_eq!(
+            metrics_value["result"]["runtime"][0]["backend"],
+            "passthrough"
+        );
+        assert_eq!(metrics_value["result"]["runtime"][0]["latencySamples"], 0);
+        assert_eq!(metrics_value["result"]["runtime"][0]["tailSamples"], 0);
 
         let start = handle_ipc_line(
             r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,
