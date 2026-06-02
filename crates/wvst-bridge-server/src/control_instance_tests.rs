@@ -158,6 +158,18 @@ async fn creates_lists_and_destroys_instance() {
         handler_events[2]["kind"]["restartFlags"]["paramTitlesChanged"],
         true
     );
+    let metadata_events = handler_events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["kind"]["type"] == "vst3-metadata-invalidated")
+        .collect::<Vec<_>>();
+    assert_eq!(metadata_events.len(), 1);
+    assert_eq!(metadata_events[0]["kind"]["handlerSequence"], 3);
+    assert_eq!(
+        metadata_events[0]["kind"]["reasons"],
+        serde_json::json!(["parameter-info", "latency"])
+    );
 
     let second_status_value = request_json(&status_request, context).await;
     assert_eq!(
@@ -173,6 +185,13 @@ async fn creates_lists_and_destroys_instance() {
         .filter(|event| event["kind"]["type"] == "vst3-component-handler-event")
         .count();
     assert_eq!(deduped_handler_events, 3);
+    let deduped_metadata_events = deduped_events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["kind"]["type"] == "vst3-metadata-invalidated")
+        .count();
+    assert_eq!(deduped_metadata_events, 1);
 
     let parameters_request = serde_json::json!({
         "id": 31,

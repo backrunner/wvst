@@ -4,7 +4,8 @@ use std::sync::Mutex;
 use serde_json::Value;
 
 use crate::events::{
-    BridgeEventBus, BridgeEventKind, Vst3ComponentHandlerEventKind, Vst3RestartFlags,
+    BridgeEventBus, BridgeEventKind, Vst3ComponentHandlerEventKind, Vst3MetadataInvalidationReason,
+    Vst3RestartFlags,
 };
 use crate::instance_registry::InstanceRecord;
 
@@ -93,6 +94,19 @@ impl ComponentHandlerEventPublisher {
                 dirty: event.dirty,
                 editor_name: event.editor_name.clone(),
             });
+            if let Some(restart_flags) = event.restart_flags {
+                let reasons = metadata_invalidation_reasons(restart_flags);
+                if !reasons.is_empty() {
+                    events.emit(BridgeEventKind::Vst3MetadataInvalidated {
+                        instance_id: instance.instance_id,
+                        plugin_id: instance.plugin_id.clone(),
+                        stream_id: instance.stream_id,
+                        handler_sequence: event.sequence,
+                        reasons,
+                        restart_flags,
+                    });
+                }
+            }
         }
     }
 
@@ -220,6 +234,43 @@ fn json_finite_f64(value: &Value, key: &str) -> Option<f64> {
     value.get(key)?.as_f64().filter(|value| value.is_finite())
 }
 
+fn metadata_invalidation_reasons(
+    restart_flags: Vst3RestartFlags,
+) -> Vec<Vst3MetadataInvalidationReason> {
+    let mut reasons = Vec::new();
+    if restart_flags.reload_component {
+        reasons.push(Vst3MetadataInvalidationReason::ReloadComponent);
+    }
+    if restart_flags.io_changed || restart_flags.io_titles_changed {
+        reasons.push(Vst3MetadataInvalidationReason::AudioIo);
+    }
+    if restart_flags.param_values_changed {
+        reasons.push(Vst3MetadataInvalidationReason::ParameterValues);
+    }
+    if restart_flags.param_titles_changed || restart_flags.param_id_mapping_changed {
+        reasons.push(Vst3MetadataInvalidationReason::ParameterInfo);
+    }
+    if restart_flags.latency_changed {
+        reasons.push(Vst3MetadataInvalidationReason::Latency);
+    }
+    if restart_flags.midi_cc_assignment_changed {
+        reasons.push(Vst3MetadataInvalidationReason::MidiMapping);
+    }
+    if restart_flags.note_expression_changed {
+        reasons.push(Vst3MetadataInvalidationReason::NoteExpression);
+    }
+    if restart_flags.routing_info_changed {
+        reasons.push(Vst3MetadataInvalidationReason::RoutingInfo);
+    }
+    if restart_flags.prefetchable_support_changed {
+        reasons.push(Vst3MetadataInvalidationReason::PrefetchableSupport);
+    }
+    if restart_flags.keyswitch_changed {
+        reasons.push(Vst3MetadataInvalidationReason::Keyswitches);
+    }
+    reasons
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -335,6 +386,24 @@ mod tests {
         assert!(restart_flags.latency_changed);
         assert!(restart_flags.param_titles_changed);
         assert_eq!(restart_flags.raw, 24);
+        let BridgeEventKind::Vst3MetadataInvalidated {
+            reasons,
+            restart_flags,
+            handler_sequence,
+            ..
+        } = &recent[1].kind
+        else {
+            panic!("expected metadata invalidation event");
+        };
+        assert_eq!(*handler_sequence, 1);
+        assert_eq!(
+            reasons,
+            &vec![
+                Vst3MetadataInvalidationReason::ParameterInfo,
+                Vst3MetadataInvalidationReason::Latency,
+            ]
+        );
+        assert_eq!(restart_flags.raw, 24);
     }
 
     fn instance_record() -> InstanceRecord {
@@ -368,6 +437,7 @@ mod tests {
         fn kind_type(&self) -> &'static str {
             match self {
                 BridgeEventKind::Vst3ComponentHandlerEvent { .. } => "vst3-component-handler-event",
+                BridgeEventKind::Vst3MetadataInvalidated { .. } => "vst3-metadata-invalidated",
                 BridgeEventKind::Vst3ComponentHandlerEventsLost { .. } => {
                     "vst3-component-handler-events-lost"
                 }

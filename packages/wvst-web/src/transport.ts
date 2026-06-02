@@ -99,7 +99,28 @@ export type BridgeEventKind =
       fromSequence: number;
       toSequence: number;
       lostCount: number;
+    }
+  | {
+      type: "vst3-metadata-invalidated";
+      instanceId: number;
+      pluginId: string;
+      streamId: number;
+      handlerSequence: number;
+      reasons: Vst3MetadataInvalidationReason[];
+      restartFlags: Vst3RestartFlags;
     };
+
+export type Vst3MetadataInvalidationReason =
+  | "reload-component"
+  | "audio-io"
+  | "parameter-values"
+  | "parameter-info"
+  | "latency"
+  | "midi-mapping"
+  | "note-expression"
+  | "routing-info"
+  | "prefetchable-support"
+  | "keyswitches";
 
 export type Vst3ComponentHandlerEventKind =
   | "begin-edit"

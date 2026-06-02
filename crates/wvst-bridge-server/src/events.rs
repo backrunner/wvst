@@ -99,6 +99,14 @@ pub enum BridgeEventKind {
         #[serde(skip_serializing_if = "Option::is_none")]
         editor_name: Option<String>,
     },
+    Vst3MetadataInvalidated {
+        instance_id: u64,
+        plugin_id: String,
+        stream_id: u64,
+        handler_sequence: u64,
+        reasons: Vec<Vst3MetadataInvalidationReason>,
+        restart_flags: Vst3RestartFlags,
+    },
     Vst3ComponentHandlerEventsLost {
         instance_id: u64,
         plugin_id: String,
@@ -112,6 +120,21 @@ pub enum BridgeEventKind {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Vst3ComponentHandlerEventKind(pub String);
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Vst3MetadataInvalidationReason {
+    ReloadComponent,
+    AudioIo,
+    ParameterValues,
+    ParameterInfo,
+    Latency,
+    MidiMapping,
+    NoteExpression,
+    RoutingInfo,
+    PrefetchableSupport,
+    Keyswitches,
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
