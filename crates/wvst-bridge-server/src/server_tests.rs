@@ -54,6 +54,111 @@ async fn responds_to_hello_and_echoes_binary_frames() {
     let _ = shutdown_sender.send(());
 }
 
+#[tokio::test]
+async fn pushes_bridge_events_after_hello() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let events = BridgeEventBus::new();
+    let server = BridgeServer::bind_with_host_worker_and_events(
+        config,
+        HostWorkerClient::from_env(),
+        events.clone(),
+    )
+    .await
+    .expect("server binds");
+    let addr = server.local_addr().expect("local addr");
+    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+
+    tokio::spawn(async move {
+        let _ = server
+            .serve_until(async {
+                let _ = shutdown_receiver.await;
+            })
+            .await;
+    });
+
+    let (mut websocket, _) = connect_async(format!("ws://{addr}"))
+        .await
+        .expect("client connects");
+
+    websocket
+        .send(Message::Text(hello_request(1).into()))
+        .await
+        .expect("hello sends");
+    let hello = websocket
+        .next()
+        .await
+        .expect("hello response")
+        .expect("valid websocket message");
+    let hello_value: serde_json::Value =
+        serde_json::from_str(hello.to_text().expect("hello text")).expect("hello json");
+    assert_eq!(hello_value["id"], 1);
+
+    events.emit(BridgeEventKind::WorkerProcessing { instance_id: 7 });
+
+    let pushed = websocket
+        .next()
+        .await
+        .expect("event notification")
+        .expect("valid websocket message");
+    let pushed_value: serde_json::Value =
+        serde_json::from_str(pushed.to_text().expect("event text")).expect("event json");
+    assert_eq!(pushed_value["jsonrpc"], "2.0");
+    assert_eq!(pushed_value["method"], "bridge.event");
+    assert_eq!(
+        pushed_value["params"]["event"]["kind"]["type"],
+        "worker-processing"
+    );
+    assert_eq!(pushed_value["params"]["event"]["kind"]["instanceId"], 7);
+
+    let _ = shutdown_sender.send(());
+}
+
+#[tokio::test]
+async fn does_not_push_events_emitted_before_hello() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let events = BridgeEventBus::new();
+    let server = BridgeServer::bind_with_host_worker_and_events(
+        config,
+        HostWorkerClient::from_env(),
+        events.clone(),
+    )
+    .await
+    .expect("server binds");
+    let addr = server.local_addr().expect("local addr");
+    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+
+    tokio::spawn(async move {
+        let _ = server
+            .serve_until(async {
+                let _ = shutdown_receiver.await;
+            })
+            .await;
+    });
+
+    let (mut websocket, _) = connect_async(format!("ws://{addr}"))
+        .await
+        .expect("client connects");
+    events.emit(BridgeEventKind::WorkerProcessing { instance_id: 7 });
+
+    websocket
+        .send(Message::Text(hello_request(1).into()))
+        .await
+        .expect("hello sends");
+    let hello = websocket
+        .next()
+        .await
+        .expect("hello response")
+        .expect("valid websocket message");
+    let hello_value: serde_json::Value =
+        serde_json::from_str(hello.to_text().expect("hello text")).expect("hello json");
+    assert_eq!(hello_value["id"], 1);
+
+    let maybe_event = tokio::time::timeout(Duration::from_millis(50), websocket.next()).await;
+    assert!(maybe_event.is_err());
+
+    let _ = shutdown_sender.send(());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn routes_binary_audio_frame_to_worker_passthrough() {
@@ -222,6 +327,12 @@ fn read_f32_payload(payload: &[u8]) -> Option<Vec<f32>> {
 
 fn audio_frame(stream_id: u64) -> Vec<u8> {
     audio_frame_with_sequence(stream_id, 10)
+}
+
+fn hello_request(id: u64) -> String {
+    format!(
+        r#"{{"id":{id},"method":"bridge.hello","params":{{"clientName":"test","clientVersion":"0.1.0","protocolMin":{{"major":1,"minor":0}},"protocolMax":{{"major":1,"minor":0}},"audioFrameVersion":1}}}}"#
+    )
 }
 
 fn audio_frame_with_sequence(stream_id: u64, sequence: u64) -> Vec<u8> {

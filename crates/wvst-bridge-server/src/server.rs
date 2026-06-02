@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures_util::{SinkExt, StreamExt};
+use serde_json::Value;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::broadcast;
 use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::Message;
@@ -15,7 +17,7 @@ use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
 use crate::error::BridgeResult;
-use crate::events::{BridgeEvent, BridgeEventBus, BridgeEventKind};
+use crate::events::{BridgeEvent, BridgeEventBus, BridgeEventKind, bridge_event_notification};
 use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::{InstanceRecord, InstanceRegistry, InstanceState, StreamState};
 use crate::metrics::BridgeMetrics;
@@ -150,44 +152,109 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
     let origin = origin.lock().ok().and_then(|value| value.clone());
     let (mut sender, mut receiver) = websocket.split();
     let mut session_authorized = false;
+    let mut event_receiver = state.events.subscribe();
 
-    while let Some(message) = receiver.next().await {
-        match message? {
-            Message::Text(text) => {
-                let response = handle_control_text(
-                    text.as_ref(),
-                    ControlContext {
-                        config: &state.config,
-                        host_worker: &state.host_worker,
-                        instances: &state.instances,
-                        events: &state.events,
-                        metrics: &state.metrics,
-                        plugins: &state.plugins,
-                        stream_tracker: &state.stream_tracker,
-                        origin: origin.as_deref(),
-                        session_authorized,
-                        workers: &state.workers,
-                    },
-                )
-                .await;
-                session_authorized = response.session_authorized;
-                sender.send(Message::Text(response.text.into())).await?;
+    loop {
+        tokio::select! {
+            message = receiver.next() => {
+                let Some(message) = message else {
+                    return Ok(());
+                };
+                let Some(authorized) =
+                    handle_client_message(message?, &mut sender, &state, origin.as_deref(), session_authorized).await?
+                else {
+                    return Ok(());
+                };
+                if !session_authorized && authorized {
+                    event_receiver = state.events.subscribe();
+                }
+                session_authorized = authorized;
             }
-            Message::Binary(payload) => {
-                let response = process_binary_payload(payload.to_vec(), &state).await;
-                sender.send(Message::Binary(response.into())).await?;
+            event = event_receiver.recv(), if session_authorized => {
+                match event {
+                    Ok(event) => send_event_notification(&mut sender, event).await?,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return Ok(()),
+                }
             }
-            Message::Ping(payload) => sender.send(Message::Pong(payload)).await?,
-            Message::Pong(_) => {}
-            Message::Close(frame) => {
-                let _ = sender.send(Message::Close(frame)).await;
-                return Ok(());
-            }
-            Message::Frame(_) => {}
         }
     }
+}
 
+async fn handle_client_message<S>(
+    message: Message,
+    sender: &mut S,
+    state: &BridgeState,
+    origin: Option<&str>,
+    session_authorized: bool,
+) -> BridgeResult<Option<bool>>
+where
+    S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    match message {
+        Message::Text(text) => {
+            let response = handle_control_text(
+                text.as_ref(),
+                ControlContext {
+                    config: &state.config,
+                    host_worker: &state.host_worker,
+                    instances: &state.instances,
+                    events: &state.events,
+                    metrics: &state.metrics,
+                    plugins: &state.plugins,
+                    stream_tracker: &state.stream_tracker,
+                    origin,
+                    session_authorized,
+                    workers: &state.workers,
+                },
+            )
+            .await;
+            sender
+                .send(Message::Text(response.text.into()))
+                .await
+                .map_err(crate::error::BridgeError::from)?;
+            Ok(Some(response.session_authorized))
+        }
+        Message::Binary(payload) => {
+            let response = process_binary_payload(payload.to_vec(), state).await;
+            sender
+                .send(Message::Binary(response.into()))
+                .await
+                .map_err(crate::error::BridgeError::from)?;
+            Ok(Some(session_authorized))
+        }
+        Message::Ping(payload) => {
+            sender
+                .send(Message::Pong(payload))
+                .await
+                .map_err(crate::error::BridgeError::from)?;
+            Ok(Some(session_authorized))
+        }
+        Message::Pong(_) | Message::Frame(_) => Ok(Some(session_authorized)),
+        Message::Close(frame) => {
+            let _ = sender.send(Message::Close(frame)).await;
+            Ok(None)
+        }
+    }
+}
+
+async fn send_event_notification<S>(sender: &mut S, event: BridgeEvent) -> BridgeResult<()>
+where
+    S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    sender
+        .send(Message::Text(
+            serialize_json(bridge_event_notification(event)).into(),
+        ))
+        .await
+        .map_err(crate::error::BridgeError::from)?;
     Ok(())
+}
+
+fn serialize_json(value: Value) -> String {
+    serde_json::to_string(&value).unwrap_or_else(|_| {
+        "{\"jsonrpc\":\"2.0\",\"method\":\"bridge.event\",\"params\":{\"event\":null}}".to_string()
+    })
 }
 
 async fn process_binary_payload(payload: Vec<u8>, state: &BridgeState) -> Vec<u8> {

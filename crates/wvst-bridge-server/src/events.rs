@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
+use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -14,6 +15,18 @@ const RECENT_EVENT_LIMIT: usize = 512;
 pub struct BridgeEvent {
     pub sequence: u64,
     pub kind: BridgeEventKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeEventNotification {
+    pub jsonrpc: &'static str,
+    pub method: &'static str,
+    pub params: BridgeEventNotificationParams,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeEventNotificationParams {
+    pub event: BridgeEvent,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,4 +134,12 @@ impl Default for BridgeEventBus {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub fn bridge_event_notification(event: BridgeEvent) -> Value {
+    json!(BridgeEventNotification {
+        jsonrpc: "2.0",
+        method: "bridge.event",
+        params: BridgeEventNotificationParams { event },
+    })
 }

@@ -12,6 +12,7 @@ export {
   WVSTBridgeError,
   type BridgeEvent,
   type BridgeEventKind,
+  type BridgeEventListener,
   type BridgeEventsOptions,
   type BridgeEventsResult,
   type BridgeMetrics,

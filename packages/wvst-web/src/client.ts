@@ -51,6 +51,7 @@ import type {
 } from "./plugins.js";
 import {
   WebSocketRpcTransport,
+  type BridgeEventListener,
   type BridgeEventsOptions,
   type BridgeEventsResult,
   type BridgeMetrics,
@@ -231,6 +232,10 @@ export class WVSTClient {
 
   events(options: BridgeEventsOptions = {}): Promise<BridgeEventsResult> {
     return this.transport.request<BridgeEventsResult>("bridge.events", options);
+  }
+
+  onEvent(listener: BridgeEventListener): () => void {
+    return this.transport.onBridgeEvent(listener);
   }
 
   echoAudioFrame(frame: ArrayBuffer): Promise<ArrayBuffer> {

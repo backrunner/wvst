@@ -4,6 +4,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 export interface RpcTransport {
   request<T = JsonValue>(method: string, params: unknown): Promise<T>;
   sendBinary(frame: ArrayBuffer): Promise<ArrayBuffer>;
+  onBridgeEvent(listener: BridgeEventListener): () => void;
   close(): void;
 }
 
@@ -41,6 +42,8 @@ export interface BridgeEvent {
   sequence: number;
   kind: BridgeEventKind;
 }
+
+export type BridgeEventListener = (event: BridgeEvent) => void;
 
 export type BridgeEventKind =
   | { type: "server-starting" }
@@ -91,6 +94,14 @@ interface RpcResponse {
   };
 }
 
+interface BridgeEventNotification {
+  jsonrpc: "2.0";
+  method: "bridge.event";
+  params?: {
+    event?: BridgeEvent;
+  };
+}
+
 type PendingRpc = {
   resolve: (value: JsonValue) => void;
   reject: (error: Error) => void;
@@ -116,6 +127,7 @@ export class WebSocketRpcTransport implements RpcTransport {
   private nextId = 1;
   private readonly pendingRpc = new Map<string, PendingRpc>();
   private readonly pendingBinary: PendingBinary[] = [];
+  private readonly eventListeners = new Set<BridgeEventListener>();
 
   private constructor(private readonly socket: WebSocket) {
     this.socket.binaryType = "arraybuffer";
@@ -174,6 +186,13 @@ export class WebSocketRpcTransport implements RpcTransport {
     });
   }
 
+  onBridgeEvent(listener: BridgeEventListener): () => void {
+    this.eventListeners.add(listener);
+    return () => {
+      this.eventListeners.delete(listener);
+    };
+  }
+
   close(): void {
     this.socket.close();
     this.rejectPending(new Error("WVST bridge connection closed"));
@@ -194,11 +213,16 @@ export class WebSocketRpcTransport implements RpcTransport {
   }
 
   private handleText(text: string): void {
-    let response: RpcResponse;
+    let response: RpcResponse | BridgeEventNotification;
 
     try {
-      response = JSON.parse(text) as RpcResponse;
+      response = JSON.parse(text) as RpcResponse | BridgeEventNotification;
     } catch {
+      return;
+    }
+
+    if (isBridgeEventNotification(response)) {
+      this.emitBridgeEvent(response.params?.event);
       return;
     }
 
@@ -219,6 +243,16 @@ export class WebSocketRpcTransport implements RpcTransport {
     pending.resolve(response.result ?? null);
   }
 
+  private emitBridgeEvent(event: BridgeEvent | undefined): void {
+    if (!event) {
+      return;
+    }
+
+    for (const listener of this.eventListeners) {
+      listener(event);
+    }
+  }
+
   private rejectPending(error: Error): void {
     for (const pending of this.pendingRpc.values()) {
       pending.reject(error);
@@ -229,6 +263,12 @@ export class WebSocketRpcTransport implements RpcTransport {
       pending.reject(error);
     }
   }
+}
+
+function isBridgeEventNotification(
+  value: RpcResponse | BridgeEventNotification,
+): value is BridgeEventNotification {
+  return "method" in value && value.method === "bridge.event";
 }
 
 async function messageDataToArrayBuffer(data: unknown): Promise<ArrayBuffer> {
