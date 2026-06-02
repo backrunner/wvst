@@ -64,6 +64,7 @@ export type BridgeEventKind =
       pluginId: string;
       code: number;
       message: string;
+      errorData?: JsonValue;
     }
   | { type: "worker-recovering"; instanceId: number; pluginId: string }
   | {

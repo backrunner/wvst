@@ -327,9 +327,16 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteRes
         .await
     {
         Ok(processed) => processed,
-        Err(_) => {
+        Err(error) => {
             state.metrics.increment_worker_failures();
             let _ = state.instances.mark_worker_failed(instance.instance_id);
+            state.events.emit(BridgeEventKind::WorkerFailed {
+                instance_id: instance.instance_id,
+                plugin_id: instance.plugin_id.clone(),
+                code: error.rpc_code(),
+                message: error.rpc_message(),
+                error_data: Some(error.rpc_data()),
+            });
             return diagnostic_silence_frame(
                 header,
                 &instance,
@@ -409,3 +416,7 @@ enum AudioRouteResult {
 #[cfg(test)]
 #[path = "server_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "server_audio_failure_tests.rs"]
+mod audio_failure_tests;

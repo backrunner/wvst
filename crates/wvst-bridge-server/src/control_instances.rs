@@ -454,6 +454,7 @@ fn emit_worker_error(
         plugin_id: plugin_id.to_string(),
         code: error.rpc_code(),
         message: error.rpc_message(),
+        error_data: Some(error.rpc_data()),
     });
 }
 

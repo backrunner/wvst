@@ -21,7 +21,7 @@
 - Bridge `instance.status` 已加入可配置的 worker 自动恢复策略：heartbeat 失败后默认尝试重启同一实例并保留 `instanceId` / `streamId`，如果实例原先处于 `processing` 会重新进入 processing；Bridge metrics 已暴露 `workerAutoRestarts`。
 - Bridge worker supervisor 已接入 kill/wait shutdown audit metrics，`bridge.metrics` / Web SDK 可观测 `workerShutdowns`、`workerKillRequests`、`workerWaitSuccesses` 和 `workerWaitTimeouts`。
 - Bridge/Web SDK 已提供 `instance.start` / `instance.stop` 处理生命周期控制，实例状态可从 `ready` 切到 `processing` / `stopped`，并已补入 `starting` / `stopping` / `recovering` 瞬态状态。
-- Bridge 已提供运行时事件总线、`bridge.events` 控制面查询和授权后 WebSocket `bridge.event` server-push notification；Web SDK 已暴露 `client.events()` 轮询和 `client.onEvent()` 主动订阅，可观察 server lifecycle、worker start/ready/processing/stopped/failed/recovering/recovered/quarantine 事件。
+- Bridge 已提供运行时事件总线、`bridge.events` 控制面查询和授权后 WebSocket `bridge.event` server-push notification；Web SDK 已暴露 `client.events()` 轮询和 `client.onEvent()` 主动订阅，可观察 server lifecycle、worker start/ready/processing/stopped/failed/recovering/recovered/quarantine 事件；`worker-failed` 事件会携带可选 `errorData`，数据面 audio process 失败也会发布包含 worker/runtime 结构化原因的失败事件。
 - Bridge worker supervisor 已提供 quarantine TTL 释放策略，过期释放会清空累计失败计数并可通过事件观测。
 - Bridge 音频路由现在要求实例处于 `processing` 状态；未 start、已 stop 或处理失败都会返回带 `silence` / `process-error` 的诊断静音帧，而不是继续把音频送进 worker。
 - Instance heartbeat 已避免把正在 `processing` 的实例误降回 `ready`，降低控制面状态刷新对数据面的干扰。

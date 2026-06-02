@@ -61,6 +61,8 @@ pub enum BridgeEventKind {
         plugin_id: String,
         code: i64,
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_data: Option<Value>,
     },
     WorkerRecovering {
         instance_id: u64,
