@@ -14,7 +14,7 @@ use crate::vst3_abi::{
     VST3_PARAMETER_IS_LIST, VST3_PARAMETER_IS_PROGRAM_CHANGE, VST3_PARAMETER_IS_READ_ONLY,
     VST3_PARAMETER_IS_WRAP_AROUND, parse_tuid_hex,
 };
-use crate::{HostError, HostResult, Vst3HostContext};
+use crate::{HostError, HostResult, Vst3ConnectionPoint, Vst3HostContext};
 
 #[derive(Debug)]
 pub struct Vst3EditController {
@@ -235,6 +235,15 @@ impl Vst3EditController {
         };
         // SAFETY: queryInterface returned a referenced IUnitInfo pointer.
         unsafe { Vst3UnitInfo::from_raw(object.cast()) }.map(Some)
+    }
+
+    pub fn connection_point(&self) -> HostResult<Option<Vst3ConnectionPoint>> {
+        let Some(object) = self.query_optional_interface(Vst3ConnectionPoint::interface_id())?
+        else {
+            return Ok(None);
+        };
+        // SAFETY: queryInterface returned a referenced IConnectionPoint pointer.
+        unsafe { Vst3ConnectionPoint::from_raw(object.cast()) }.map(Some)
     }
 
     fn set_component_handler(&mut self) -> HostResult<()> {

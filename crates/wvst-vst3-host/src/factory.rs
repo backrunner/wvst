@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    HostResult, Vst3BusDirection, Vst3ComponentInstance, Vst3EditController, Vst3ParameterInfo,
-    Vst3ProcessingConfig,
+    HostResult, Vst3BusDirection, Vst3ComponentInstance, Vst3ConnectionPoint, Vst3EditController,
+    Vst3ParameterInfo, Vst3ProcessingConfig,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -37,7 +37,8 @@ pub struct Vst3ComponentProbe {
 pub struct Vst3LoadedComponent {
     instance: Vst3ComponentInstance,
     controller: Option<Vst3EditController>,
-    _module: platform::LoadedPluginModule,
+    connection_points: Option<Vst3ConnectedPair>,
+    _module: Option<platform::LoadedPluginModule>,
 }
 
 impl Vst3LoadedComponent {
@@ -49,7 +50,21 @@ impl Vst3LoadedComponent {
         Self {
             instance,
             controller,
-            _module: module,
+            connection_points: None,
+            _module: Some(module),
+        }
+    }
+
+    #[cfg(test)]
+    fn new_for_test(
+        instance: Vst3ComponentInstance,
+        controller: Option<Vst3EditController>,
+    ) -> Self {
+        Self {
+            instance,
+            controller,
+            connection_points: None,
+            _module: None,
         }
     }
 
@@ -72,11 +87,13 @@ impl Vst3LoadedComponent {
     pub fn initialize_controller(&mut self) -> HostResult<()> {
         if let Some(controller) = self.controller.as_mut() {
             controller.initialize()?;
+            self.connect_component_controller()?;
         }
         Ok(())
     }
 
     pub fn terminate_controller(&mut self) -> HostResult<()> {
+        self.disconnect_component_controller()?;
         if let Some(controller) = self.controller.as_mut() {
             controller.terminate()?;
         }
@@ -207,6 +224,53 @@ impl Vst3LoadedComponent {
             .map(|unit_data| unit_data.set_unit_data(unit_id, data))
             .transpose()
     }
+
+    fn connect_component_controller(&mut self) -> HostResult<()> {
+        if self.connection_points.is_some() {
+            return Ok(());
+        }
+        let Some(controller) = self.controller.as_ref() else {
+            return Ok(());
+        };
+        let Some(component_point) = self.instance.connection_point()? else {
+            return Ok(());
+        };
+        let Some(controller_point) = controller.connection_point()? else {
+            return Ok(());
+        };
+
+        component_point.connect(&controller_point)?;
+        if let Err(error) = controller_point.connect(&component_point) {
+            let _ = component_point.disconnect(&controller_point);
+            return Err(error);
+        }
+        self.connection_points = Some(Vst3ConnectedPair {
+            component: component_point,
+            controller: controller_point,
+        });
+        Ok(())
+    }
+
+    fn disconnect_component_controller(&mut self) -> HostResult<()> {
+        let Some(connection_points) = self.connection_points.take() else {
+            return Ok(());
+        };
+
+        let first = connection_points
+            .component
+            .disconnect(&connection_points.controller);
+        let second = connection_points
+            .controller
+            .disconnect(&connection_points.component);
+        first?;
+        second
+    }
+}
+
+#[derive(Debug)]
+struct Vst3ConnectedPair {
+    component: Vst3ConnectionPoint,
+    controller: Vst3ConnectionPoint,
 }
 
 // SAFETY: `Vst3LoadedComponent` is an owning runtime holder. Its raw plugin

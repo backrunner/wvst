@@ -8,9 +8,9 @@ use crate::vst3_abi::{
 };
 use crate::{
     HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3BusType,
-    Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState, Vst3ParameterChange,
-    Vst3ProcessBuffers, Vst3ProcessingConfig, Vst3ProgramListData, Vst3UnitData,
-    state_stream::Vst3StateStream,
+    Vst3ConnectionPoint, Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState,
+    Vst3ParameterChange, Vst3ProcessBuffers, Vst3ProcessingConfig, Vst3ProgramListData,
+    Vst3UnitData, state_stream::Vst3StateStream,
 };
 
 #[derive(Debug)]
@@ -80,6 +80,10 @@ impl Vst3ComponentInstance {
 
     pub fn controller_class_id(&self) -> HostResult<Option<String>> {
         self.component.controller_class_id()
+    }
+
+    pub fn connection_point(&self) -> HostResult<Option<Vst3ConnectionPoint>> {
+        self.component.connection_point()
     }
 
     pub fn get_state(&self) -> HostResult<Vec<u8>> {
@@ -388,6 +392,15 @@ impl Vst3ComponentHandle {
         };
         // SAFETY: queryInterface returned a referenced IUnitData pointer.
         unsafe { Vst3UnitData::from_raw(object.cast()) }.map(Some)
+    }
+
+    fn connection_point(&self) -> HostResult<Option<Vst3ConnectionPoint>> {
+        let Some(object) = self.query_optional_interface(Vst3ConnectionPoint::interface_id())?
+        else {
+            return Ok(None);
+        };
+        // SAFETY: queryInterface returned a referenced IConnectionPoint pointer.
+        unsafe { Vst3ConnectionPoint::from_raw(object.cast()) }.map(Some)
     }
 
     fn audio_buses(&mut self, direction: Vst3BusDirection) -> HostResult<Vec<Vst3AudioBusInfo>> {

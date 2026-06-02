@@ -27,6 +27,7 @@ pub const VST3_I_PARAMETER_CHANGES_IID: &str = "A47796630BB64A56B44384A8466FEB9D
 pub const VST3_I_UNIT_INFO_IID: &str = "3D4BD6B5913A4FD2A886E768A5EB92C1";
 pub const VST3_I_PROGRAM_LIST_DATA_IID: &str = "8683B01F7B354F70A2651DEC353AF4FF";
 pub const VST3_I_UNIT_DATA_IID: &str = "6C389611D391455DB870B83394A0EFDD";
+pub const VST3_I_CONNECTION_POINT_IID: &str = "70A4156F6E6E4026989148BFAA60D8D1";
 pub const VST3_I_COMPONENT_HANDLER_IID: &str = "93A0BEA30BD045DB8E890B0CC1E46AC6";
 pub const VST3_I_HOST_APPLICATION_IID: &str = "58E595CCDB2D49698B6AAF8C36A664E5";
 pub const VST3_I_ATTRIBUTE_LIST_IID: &str = "1E5F0AEBCC7F4533A254401138AD5EE4";
@@ -392,6 +393,29 @@ pub struct IMessageVTable {
     pub get_message_id: unsafe extern "system" fn(this: *mut IMessage) -> FidString,
     pub set_message_id: unsafe extern "system" fn(this: *mut IMessage, id: FidString),
     pub get_attributes: unsafe extern "system" fn(this: *mut IMessage) -> *mut IAttributeList,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IConnectionPoint {
+    pub vtable: *const IConnectionPointVTable,
+}
+
+#[repr(C)]
+pub struct IConnectionPointVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IConnectionPoint,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IConnectionPoint) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IConnectionPoint) -> u32,
+    pub connect:
+        unsafe extern "system" fn(this: *mut IConnectionPoint, other: *mut IConnectionPoint) -> i32,
+    pub disconnect:
+        unsafe extern "system" fn(this: *mut IConnectionPoint, other: *mut IConnectionPoint) -> i32,
+    pub notify:
+        unsafe extern "system" fn(this: *mut IConnectionPoint, message: *mut IMessage) -> i32,
 }
 
 #[repr(C)]

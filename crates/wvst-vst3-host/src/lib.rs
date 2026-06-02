@@ -2,6 +2,7 @@ pub mod audio_processor;
 pub mod bus_info;
 pub mod component;
 pub mod component_handler;
+pub mod connection_point;
 pub mod edit_controller;
 pub mod error;
 pub mod event_list;
@@ -26,6 +27,7 @@ mod vst3_event_abi;
 pub use audio_processor::Vst3AudioProcessor;
 pub use bus_info::{Vst3AudioBusInfo, Vst3BusDirection, Vst3BusType};
 pub use component::Vst3ComponentInstance;
+pub use connection_point::Vst3ConnectionPoint;
 pub use edit_controller::{Vst3EditController, Vst3ParameterFlags, Vst3ParameterInfo};
 pub use error::{HostError, HostResult};
 pub use event_list::{

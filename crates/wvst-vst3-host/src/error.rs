@@ -18,6 +18,12 @@ pub enum HostError {
     },
     ComponentReturnedNull,
     ComponentVTableMissing,
+    ConnectionPointCallFailed {
+        method: &'static str,
+        result: i32,
+    },
+    ConnectionPointReturnedNull,
+    ConnectionPointVTableMissing,
     EditControllerCallFailed {
         method: &'static str,
         result: i32,
@@ -112,6 +118,18 @@ impl Display for HostError {
             }
             Self::ComponentReturnedNull => formatter.write_str("VST3 component pointer is null"),
             Self::ComponentVTableMissing => formatter.write_str("VST3 component vtable is null"),
+            Self::ConnectionPointCallFailed { method, result } => {
+                write!(
+                    formatter,
+                    "VST3 connection point call failed: {method} returned {result}"
+                )
+            }
+            Self::ConnectionPointReturnedNull => {
+                formatter.write_str("VST3 connection point pointer is null")
+            }
+            Self::ConnectionPointVTableMissing => {
+                formatter.write_str("VST3 connection point vtable is null")
+            }
             Self::EditControllerCallFailed { method, result } => {
                 write!(
                     formatter,
