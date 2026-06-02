@@ -13,11 +13,15 @@ use super::{WorkerSupervisor, WorkerSupervisorError};
 #[derive(Debug)]
 pub(super) struct WorkerAudioConnection {
     stream: TcpStream,
+    request_buffer: Vec<u8>,
 }
 
 impl WorkerAudioConnection {
     pub(super) fn new(stream: TcpStream) -> Self {
-        Self { stream }
+        Self {
+            stream,
+            request_buffer: Vec::with_capacity(WORKER_AUDIO_IPC_HEADER_LEN),
+        }
     }
 }
 
@@ -66,27 +70,19 @@ impl WorkerAudioConnection {
         frame: Vec<u8>,
         timeout_duration: std::time::Duration,
     ) -> Result<Vec<u8>, WorkerSupervisorError> {
-        let request = WorkerAudioIpcMessage::process_request(sequence, frame).map_err(|error| {
-            WorkerSupervisorError::Protocol {
-                message: error.to_string(),
-                stderr: String::new(),
-            }
-        })?;
-        let bytes = request
-            .encode()
-            .map_err(|error| WorkerSupervisorError::Protocol {
-                message: error.to_string(),
-                stderr: String::new(),
-            })?;
+        encode_audio_process_request(&mut self.request_buffer, sequence, &frame)?;
 
-        timeout(timeout_duration, self.stream.write_all(&bytes))
-            .await
-            .map_err(|_| WorkerSupervisorError::Timeout {
-                method: "audio.processFrame",
-                timeout_ms: timeout_duration.as_millis(),
-                stderr: String::new(),
-            })?
-            .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?;
+        timeout(
+            timeout_duration,
+            self.stream.write_all(&self.request_buffer),
+        )
+        .await
+        .map_err(|_| WorkerSupervisorError::Timeout {
+            method: "audio.processFrame",
+            timeout_ms: timeout_duration.as_millis(),
+            stderr: String::new(),
+        })?
+        .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?;
         timeout(timeout_duration, self.stream.flush())
             .await
             .map_err(|_| WorkerSupervisorError::Timeout {
@@ -174,6 +170,39 @@ fn validate_audio_response_body_len(body_len: u32) -> Result<(), WorkerSuperviso
     Ok(())
 }
 
+fn encode_audio_process_request(
+    buffer: &mut Vec<u8>,
+    sequence: u64,
+    frame: &[u8],
+) -> Result<(), WorkerSupervisorError> {
+    let body_len = u32::try_from(frame.len()).map_err(|_| WorkerSupervisorError::Protocol {
+        message: "audio request body too large".to_string(),
+        stderr: String::new(),
+    })?;
+    let header = WorkerAudioIpcMessage::header(
+        WorkerAudioMessageKind::ProcessRequest,
+        0,
+        sequence,
+        body_len,
+    )
+    .map_err(|error| WorkerSupervisorError::Protocol {
+        message: error.to_string(),
+        stderr: String::new(),
+    })?;
+
+    buffer.clear();
+    buffer.resize(WORKER_AUDIO_IPC_HEADER_LEN, 0);
+    header
+        .encode(&mut buffer[..WORKER_AUDIO_IPC_HEADER_LEN])
+        .map_err(|error| WorkerSupervisorError::Protocol {
+            message: error.to_string(),
+            stderr: String::new(),
+        })?;
+    buffer.extend_from_slice(frame);
+
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 struct WorkerAudioErrorBody {
     message: String,
@@ -241,5 +270,27 @@ mod tests {
 
         assert!(matches!(error, WorkerSupervisorError::Protocol { .. }));
         assert!(error.rpc_message().contains("body too large"));
+    }
+
+    #[test]
+    fn encodes_audio_process_requests_into_reused_buffer() {
+        let frame = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let mut buffer = Vec::with_capacity(128);
+
+        encode_audio_process_request(&mut buffer, 42, &frame).expect("encode");
+        let capacity = buffer.capacity();
+        let header =
+            WorkerAudioIpcHeader::decode(&buffer[..WORKER_AUDIO_IPC_HEADER_LEN]).expect("header");
+        assert_eq!(header.kind, WorkerAudioMessageKind::ProcessRequest);
+        assert_eq!(header.sequence, 42);
+        assert_eq!(header.body_len, frame.len() as u32);
+        assert_eq!(&buffer[WORKER_AUDIO_IPC_HEADER_LEN..], frame.as_slice());
+
+        encode_audio_process_request(&mut buffer, 43, &frame).expect("encode again");
+
+        assert_eq!(buffer.capacity(), capacity);
+        let header =
+            WorkerAudioIpcHeader::decode(&buffer[..WORKER_AUDIO_IPC_HEADER_LEN]).expect("header");
+        assert_eq!(header.sequence, 43);
     }
 }
