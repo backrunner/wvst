@@ -3,10 +3,10 @@ use std::ptr;
 use std::slice;
 
 use crate::vst3_abi::{
-    AudioBusBuffers, FUnknown, IAudioProcessor, IAudioProcessorVTable, IComponent,
+    AudioBusBuffers, BusInfo, FUnknown, IAudioProcessor, IAudioProcessorVTable, IComponent,
     IComponentVTable, K_RESULT_OK, ProcessData, ProcessSetup, SpeakerArrangement, TUid,
-    VST3_BUS_DIRECTION_INPUT, VST3_BUS_DIRECTION_OUTPUT, VST3_MEDIA_TYPE_AUDIO, VST3_SAMPLE_32,
-    VST3_SPEAKER_STEREO,
+    VST3_BUS_DIRECTION_INPUT, VST3_BUS_DIRECTION_OUTPUT, VST3_BUS_FLAG_DEFAULT_ACTIVE,
+    VST3_BUS_TYPE_MAIN, VST3_MEDIA_TYPE_AUDIO, VST3_SAMPLE_32, VST3_SPEAKER_STEREO,
 };
 
 use super::*;
@@ -38,6 +38,12 @@ fn drives_component_lifecycle_and_audio_process_path() {
     assert_eq!(processor.last_input_arrangement, Some(VST3_SPEAKER_STEREO));
     assert_eq!(processor.last_output_arrangement, Some(VST3_SPEAKER_STEREO));
     assert_eq!(processor.setup.expect("setup").max_samples_per_block, 128);
+    assert!(
+        !instance
+            .audio_buses(Vst3BusDirection::Output)
+            .expect("output buses")
+            .is_empty()
+    );
 
     instance.activate().expect("activate");
     assert_eq!(instance.state(), Vst3LifecycleState::Activated);
@@ -339,19 +345,46 @@ unsafe extern "system" fn fake_set_io_mode(_this: *mut IComponent, _mode: i32) -
 
 unsafe extern "system" fn fake_get_bus_count(
     _this: *mut IComponent,
-    _media_type: i32,
-    _direction: i32,
+    media_type: i32,
+    direction: i32,
 ) -> i32 {
-    0
+    let valid_direction =
+        direction == VST3_BUS_DIRECTION_INPUT || direction == VST3_BUS_DIRECTION_OUTPUT;
+    if media_type == VST3_MEDIA_TYPE_AUDIO && valid_direction {
+        1
+    } else {
+        0
+    }
 }
 
 unsafe extern "system" fn fake_get_bus_info(
     _this: *mut IComponent,
-    _media_type: i32,
-    _direction: i32,
-    _index: i32,
-    _bus: *mut c_void,
+    media_type: i32,
+    direction: i32,
+    index: i32,
+    bus: *mut c_void,
 ) -> i32 {
+    if media_type != VST3_MEDIA_TYPE_AUDIO || index != 0 || bus.is_null() {
+        return -1;
+    }
+
+    let mut info = BusInfo {
+        media_type,
+        direction,
+        channel_count: 2,
+        name: [0; 128],
+        bus_type: VST3_BUS_TYPE_MAIN,
+        flags: VST3_BUS_FLAG_DEFAULT_ACTIVE,
+    };
+    let name = match direction {
+        VST3_BUS_DIRECTION_INPUT => "Main In",
+        _ => "Main Out",
+    };
+    for (index, unit) in name.encode_utf16().enumerate() {
+        info.name[index] = unit;
+    }
+
+    unsafe { *bus.cast::<BusInfo>() = info };
     K_RESULT_OK
 }
 

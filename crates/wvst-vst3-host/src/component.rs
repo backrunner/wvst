@@ -2,12 +2,12 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
-    FUnknown, IComponent, IComponentVTable, K_RESULT_OK, VST3_BUS_DIRECTION_INPUT,
+    BusInfo, FUnknown, IComponent, IComponentVTable, K_RESULT_OK, VST3_BUS_DIRECTION_INPUT,
     VST3_BUS_DIRECTION_OUTPUT, VST3_MEDIA_TYPE_AUDIO,
 };
 use crate::{
-    HostError, HostResult, Vst3AudioProcessor, Vst3HostContext, Vst3InputEvent, Vst3Lifecycle,
-    Vst3LifecycleState, Vst3ProcessBuffers, Vst3ProcessingConfig,
+    HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3HostContext,
+    Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState, Vst3ProcessBuffers, Vst3ProcessingConfig,
 };
 
 #[derive(Debug)]
@@ -55,6 +55,24 @@ impl Vst3ComponentInstance {
 
     pub const fn processing_config(&self) -> Vst3ProcessingConfig {
         self.processing_config
+    }
+
+    pub fn audio_buses(
+        &mut self,
+        direction: Vst3BusDirection,
+    ) -> HostResult<Vec<Vst3AudioBusInfo>> {
+        self.require_state(
+            "query-audio-buses",
+            &[
+                Vst3LifecycleState::Created,
+                Vst3LifecycleState::Initialized,
+                Vst3LifecycleState::SetupDone,
+                Vst3LifecycleState::Activated,
+                Vst3LifecycleState::Processing,
+                Vst3LifecycleState::Stopped,
+            ],
+        )?;
+        self.component.audio_buses(direction)
     }
 
     pub fn initialize(&mut self) -> HostResult<()> {
@@ -226,6 +244,32 @@ impl Vst3ComponentHandle {
         })
     }
 
+    fn audio_buses(&mut self, direction: Vst3BusDirection) -> HostResult<Vec<Vst3AudioBusInfo>> {
+        let direction_abi = direction.as_abi();
+        let count = self.call_count("getBusCount", |component, vtable| unsafe {
+            // SAFETY: component and vtable were validated by from_raw.
+            (vtable.get_bus_count)(component, VST3_MEDIA_TYPE_AUDIO, direction_abi)
+        })?;
+        let mut buses = Vec::with_capacity(count as usize);
+
+        for index in 0..count {
+            let mut info = BusInfo::default();
+            self.call_result("getBusInfo", |component, vtable| unsafe {
+                // SAFETY: `info` is stack storage matching the VST3 BusInfo ABI.
+                (vtable.get_bus_info)(
+                    component,
+                    VST3_MEDIA_TYPE_AUDIO,
+                    direction_abi,
+                    index,
+                    (&mut info as *mut BusInfo).cast(),
+                )
+            })?;
+            buses.push(Vst3AudioBusInfo::from_abi(index, direction, info));
+        }
+
+        Ok(buses)
+    }
+
     fn terminate(&mut self) -> HostResult<()> {
         self.call_result("terminate", |component, vtable| unsafe {
             // SAFETY: component and vtable were validated by from_raw.
@@ -241,6 +285,19 @@ impl Vst3ComponentHandle {
         let result = call(self.component.as_ptr(), self.vtable());
         if result == K_RESULT_OK {
             Ok(())
+        } else {
+            Err(HostError::ComponentCallFailed { method, result })
+        }
+    }
+
+    fn call_count(
+        &mut self,
+        method: &'static str,
+        call: impl FnOnce(*mut IComponent, &IComponentVTable) -> i32,
+    ) -> HostResult<i32> {
+        let result = call(self.component.as_ptr(), self.vtable());
+        if result >= 0 {
+            Ok(result)
         } else {
             Err(HostError::ComponentCallFailed { method, result })
         }

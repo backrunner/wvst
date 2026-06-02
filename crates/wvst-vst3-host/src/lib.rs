@@ -1,4 +1,5 @@
 pub mod audio_processor;
+pub mod bus_info;
 pub mod component;
 pub mod error;
 pub mod event_list;
@@ -10,9 +11,11 @@ pub mod module;
 pub mod process_buffers;
 pub mod processor;
 mod vst3_abi;
+mod vst3_bus_abi;
 mod vst3_event_abi;
 
 pub use audio_processor::Vst3AudioProcessor;
+pub use bus_info::{Vst3AudioBusInfo, Vst3BusDirection, Vst3BusType};
 pub use component::Vst3ComponentInstance;
 pub use error::{HostError, HostResult};
 pub use event_list::{

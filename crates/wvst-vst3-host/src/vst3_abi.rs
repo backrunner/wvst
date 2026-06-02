@@ -4,6 +4,10 @@
 
 use std::ffi::{c_char, c_void};
 
+pub use crate::vst3_bus_abi::{
+    BusInfo, VST3_BUS_FLAG_CONTROL_VOLTAGE, VST3_BUS_FLAG_DEFAULT_ACTIVE, VST3_BUS_TYPE_AUX,
+    VST3_BUS_TYPE_MAIN,
+};
 pub use crate::vst3_event_abi::{
     Event, EventPayload, IEventList, IEventListVTable, NoteOffEvent, NoteOnEvent,
     PolyPressureEvent, VST3_EVENT_TYPE_NOTE_OFF, VST3_EVENT_TYPE_NOTE_ON,
