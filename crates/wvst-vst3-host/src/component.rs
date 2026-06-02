@@ -1,5 +1,4 @@
 use std::ffi::c_void;
-use std::ptr;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
@@ -7,14 +6,15 @@ use crate::vst3_abi::{
     VST3_BUS_DIRECTION_OUTPUT, VST3_MEDIA_TYPE_AUDIO,
 };
 use crate::{
-    HostError, HostResult, Vst3AudioProcessor, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState,
-    Vst3ProcessBuffers, Vst3ProcessingConfig,
+    HostError, HostResult, Vst3AudioProcessor, Vst3HostContext, Vst3InputEvent, Vst3Lifecycle,
+    Vst3LifecycleState, Vst3ProcessBuffers, Vst3ProcessingConfig,
 };
 
 #[derive(Debug)]
 pub struct Vst3ComponentInstance {
     component: Vst3ComponentHandle,
     processor: Vst3AudioProcessor,
+    host_context: Vst3HostContext,
     lifecycle: Vst3Lifecycle,
     buffers: Vst3ProcessBuffers,
     processing_config: Vst3ProcessingConfig,
@@ -42,6 +42,7 @@ impl Vst3ComponentInstance {
         Ok(Self {
             component,
             processor,
+            host_context: Vst3HostContext::new("WVST"),
             lifecycle: Vst3Lifecycle::created(),
             buffers,
             processing_config,
@@ -58,7 +59,8 @@ impl Vst3ComponentInstance {
 
     pub fn initialize(&mut self) -> HostResult<()> {
         self.require_state("initialize", &[Vst3LifecycleState::Created])?;
-        self.component.initialize()?;
+        self.component
+            .initialize(self.host_context.as_funknown_ptr())?;
         self.lifecycle.initialize()
     }
 
@@ -185,11 +187,12 @@ impl Vst3ComponentHandle {
         Ok(Self { component })
     }
 
-    fn initialize(&mut self) -> HostResult<()> {
+    fn initialize(&mut self, context: *mut FUnknown) -> HostResult<()> {
         self.call_result("initialize", |component, vtable| unsafe {
-            // SAFETY: Null host context is a temporary MVP host-context stub.
-            // The component pointer and vtable were validated by from_raw.
-            (vtable.initialize)(component, ptr::null_mut::<FUnknown>())
+            // SAFETY: The component pointer and vtable were validated by
+            // from_raw. `context` is owned by the component holder and remains
+            // live until after component termination/drop.
+            (vtable.initialize)(component, context)
         })
     }
 

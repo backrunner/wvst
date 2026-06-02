@@ -111,7 +111,7 @@ mod platform {
     use super::{Vst3FactoryClass, Vst3FactoryInfo};
     use crate::vst3_abi::{
         FUnknown, IPluginFactory, K_RESULT_OK, PClassInfo, PFactoryInfo,
-        VST3_I_AUDIO_PROCESSOR_IID, fixed_string, tuid_hex,
+        VST3_I_AUDIO_PROCESSOR_IID, fixed_string, parse_tuid_hex, tuid_hex,
     };
     use crate::{HostError, HostResult, Vst3ComponentInstance, Vst3ProcessingConfig};
 
@@ -474,8 +474,8 @@ mod platform {
         }
 
         fn query_interface_owned(&self, interface_id: &str) -> HostResult<*mut c_void> {
-            let interface_id_string = CString::new(interface_id)
-                .map_err(|error| HostError::ModuleLoadFailed(error.to_string()))?;
+            let interface_tuid = parse_tuid_hex(interface_id)
+                .ok_or_else(|| HostError::InvalidInterfaceId(interface_id.to_string()))?;
             let mut object: *mut c_void = std::ptr::null_mut();
 
             // SAFETY: `self.object` is a live FUnknown-derived interface pointer.
@@ -487,10 +487,14 @@ mod platform {
                     interface_id: interface_id.to_string(),
                 });
             }
-            // SAFETY: The vtable belongs to the live FUnknown object above. The
-            // interface id is a NUL-terminated FUID string.
+            // SAFETY: queryInterface expects a 16-byte TUID pointer that
+            // remains alive for the duration of this call.
             let result = unsafe {
-                ((*vtable).query_interface)(self.object, interface_id_string.as_ptr(), &mut object)
+                ((*vtable).query_interface)(
+                    self.object,
+                    interface_tuid.as_ptr().cast(),
+                    &mut object,
+                )
             };
 
             if result != K_RESULT_OK {

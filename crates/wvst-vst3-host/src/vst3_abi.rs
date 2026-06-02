@@ -11,9 +11,12 @@ pub use crate::vst3_event_abi::{
 };
 
 pub const K_RESULT_OK: i32 = 0;
+pub const K_RESULT_FALSE: i32 = 1;
+pub const VST3_FUNKNOWN_IID: &str = "0000000000000000C000000000000046";
 pub const VST3_I_PLUGIN_BASE_IID: &str = "22888DDB156E45AE8358B34808190625";
 pub const VST3_I_COMPONENT_IID: &str = "E831FF31F2D54301928EBBEE25697802";
 pub const VST3_I_AUDIO_PROCESSOR_IID: &str = "42043F99B7DA453CA569E79D9AAEC33D";
+pub const VST3_I_HOST_APPLICATION_IID: &str = "58E595CCDB2D49698B6AAF8C36A664E5";
 pub const VST3_PROCESS_MODE_REALTIME: i32 = 0;
 pub const VST3_SAMPLE_32: i32 = 0;
 pub const VST3_MEDIA_TYPE_AUDIO: i32 = 0;
@@ -26,6 +29,7 @@ pub type TBool = u8;
 pub type TUid = [u8; 16];
 pub type SampleRate = f64;
 pub type SpeakerArrangement = u64;
+pub type String128 = [u16; 128];
 
 #[repr(C)]
 pub struct FUnknown {
@@ -143,6 +147,31 @@ pub struct IAudioProcessorVTable {
     pub process:
         unsafe extern "system" fn(this: *mut IAudioProcessor, data: *mut ProcessData) -> i32,
     pub get_tail_samples: unsafe extern "system" fn(this: *mut IAudioProcessor) -> u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IHostApplication {
+    pub vtable: *const IHostApplicationVTable,
+}
+
+#[repr(C)]
+pub struct IHostApplicationVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IHostApplication,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IHostApplication) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IHostApplication) -> u32,
+    pub get_name:
+        unsafe extern "system" fn(this: *mut IHostApplication, name: *mut String128) -> i32,
+    pub create_instance: unsafe extern "system" fn(
+        this: *mut IHostApplication,
+        cid: *mut TUid,
+        iid: *mut TUid,
+        obj: *mut *mut c_void,
+    ) -> i32,
 }
 
 #[repr(C)]
@@ -293,6 +322,18 @@ pub fn normalize_fuid_string(value: &str) -> Option<String> {
     }
 }
 
+pub fn parse_tuid_hex(value: &str) -> Option<TUid> {
+    let normalized = normalize_fuid_string(value)?;
+    let mut tuid = [0; 16];
+
+    for (index, byte) in tuid.iter_mut().enumerate() {
+        let offset = index * 2;
+        *byte = u8::from_str_radix(&normalized[offset..offset + 2], 16).ok()?;
+    }
+
+    Some(tuid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,6 +359,29 @@ mod tests {
             Some(VST3_I_COMPONENT_IID)
         );
         assert!(normalize_fuid_string("class-a").is_none());
+    }
+
+    #[test]
+    fn parses_fuid_strings_to_tuid_bytes() {
+        assert_eq!(
+            parse_tuid_hex(VST3_I_AUDIO_PROCESSOR_IID),
+            Some([
+                0x42, 0x04, 0x3f, 0x99, 0xb7, 0xda, 0x45, 0x3c, 0xa5, 0x69, 0xe7, 0x9d, 0x9a, 0xae,
+                0xc3, 0x3d,
+            ])
+        );
+        assert!(parse_tuid_hex("invalid").is_none());
+    }
+
+    #[test]
+    fn parses_host_application_iid() {
+        assert_eq!(
+            parse_tuid_hex(VST3_I_HOST_APPLICATION_IID),
+            Some([
+                0x58, 0xe5, 0x95, 0xcc, 0xdb, 0x2d, 0x49, 0x69, 0x8b, 0x6a, 0xaf, 0x8c, 0x36, 0xa6,
+                0x64, 0xe5,
+            ])
+        );
     }
 
     #[test]

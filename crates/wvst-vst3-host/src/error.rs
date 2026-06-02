@@ -44,6 +44,7 @@ pub enum HostError {
     InterfaceReturnedNull {
         interface_id: String,
     },
+    InvalidInterfaceId(String),
     InvalidMaxBlockFrames(u16),
     InvalidSampleRate(u32),
     UnsupportedSpeakerArrangement(u16),
@@ -143,6 +144,9 @@ impl Display for HostError {
                     formatter,
                     "VST3 queryInterface returned null for interface {interface_id}"
                 )
+            }
+            Self::InvalidInterfaceId(interface_id) => {
+                write!(formatter, "invalid VST3 interface id: {interface_id}")
             }
             Self::InvalidMaxBlockFrames(value) => {
                 write!(formatter, "invalid VST3 max block frame count: {value}")
