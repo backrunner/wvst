@@ -12,6 +12,12 @@ pub enum HostError {
     AudioProcessorReturnedNull,
     AudioProcessorVTableMissing,
     BundleExecutableNotFound(String),
+    ComponentCallFailed {
+        method: &'static str,
+        result: i32,
+    },
+    ComponentReturnedNull,
+    ComponentVTableMissing,
     FactoryCallFailed {
         method: &'static str,
         result: i32,
@@ -64,6 +70,14 @@ impl Display for HostError {
             Self::BundleExecutableNotFound(path) => {
                 write!(formatter, "VST3 executable not found in bundle: {path}")
             }
+            Self::ComponentCallFailed { method, result } => {
+                write!(
+                    formatter,
+                    "VST3 component call failed: {method} returned {result}"
+                )
+            }
+            Self::ComponentReturnedNull => formatter.write_str("VST3 component pointer is null"),
+            Self::ComponentVTableMissing => formatter.write_str("VST3 component vtable is null"),
             Self::FactoryCallFailed { method, result } => {
                 write!(
                     formatter,

@@ -1,5 +1,6 @@
 use super::*;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::host_worker::HostWorkerClient;
@@ -7,6 +8,8 @@ use crate::instance_registry::{InstanceRegistry, InstanceState, WorkerState};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::worker_supervisor::WorkerSupervisor;
+
+static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(unix)]
 #[tokio::test]
@@ -298,8 +301,8 @@ async fn restarts_failed_instance_with_same_stream() {
     )
     .await;
     assert_eq!(
-        restart_value["result"]["instance"]["instanceId"],
-        instance_id
+        restart_value["result"]["instance"]["instanceId"], instance_id,
+        "restart response: {restart_value}"
     );
     assert_eq!(restart_value["result"]["instance"]["streamId"], stream_id);
     assert_eq!(restart_value["result"]["instance"]["state"], "ready");
@@ -473,5 +476,9 @@ fn unique_temp_dir() -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    std::env::temp_dir().join(format!("wvst-control-instance-test-{suffix}"))
+    let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "wvst-control-instance-test-{}-{counter}-{suffix}",
+        std::process::id()
+    ))
 }
