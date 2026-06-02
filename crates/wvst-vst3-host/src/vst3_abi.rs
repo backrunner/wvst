@@ -4,6 +4,12 @@
 
 use std::ffi::{c_char, c_void};
 
+pub use crate::vst3_event_abi::{
+    Event, EventPayload, IEventList, IEventListVTable, NoteOffEvent, NoteOnEvent,
+    PolyPressureEvent, VST3_EVENT_TYPE_NOTE_OFF, VST3_EVENT_TYPE_NOTE_ON,
+    VST3_EVENT_TYPE_POLY_PRESSURE,
+};
+
 pub const K_RESULT_OK: i32 = 0;
 pub const VST3_I_PLUGIN_BASE_IID: &str = "22888DDB156E45AE8358B34808190625";
 pub const VST3_I_COMPONENT_IID: &str = "E831FF31F2D54301928EBBEE25697802";

@@ -1,6 +1,7 @@
 pub mod audio_processor;
 pub mod component;
 pub mod error;
+pub mod event_list;
 pub mod factory;
 pub mod lifecycle;
 pub mod metadata;
@@ -8,10 +9,14 @@ pub mod module;
 pub mod process_buffers;
 pub mod processor;
 mod vst3_abi;
+mod vst3_event_abi;
 
 pub use audio_processor::Vst3AudioProcessor;
 pub use component::Vst3ComponentInstance;
 pub use error::{HostError, HostResult};
+pub use event_list::{
+    DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3InputEvent, Vst3NoteEvent, Vst3PolyPressureEvent,
+};
 pub use factory::{
     Vst3ComponentProbe, Vst3FactoryClass, Vst3FactoryInfo, Vst3LoadedComponent,
     create_vst3_component_instance, create_vst3_component_probe, load_vst3_factory_info,

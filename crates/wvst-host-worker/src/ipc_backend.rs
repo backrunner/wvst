@@ -1,7 +1,7 @@
 use serde::Serialize;
 use wvst_scanner::PluginDescriptor;
 use wvst_vst3_host::{
-    HeadlessPluginInstance, HostError, Vst3LifecycleState, Vst3LoadedComponent,
+    HeadlessPluginInstance, HostError, Vst3InputEvent, Vst3LifecycleState, Vst3LoadedComponent,
     Vst3ProcessingConfig, create_vst3_component_instance,
 };
 
@@ -100,6 +100,7 @@ impl WorkerBackend {
         &mut self,
         frames: usize,
         input: &[f32],
+        events: &[Vst3InputEvent],
         output: &mut [f32],
     ) -> Result<(), String> {
         match self {
@@ -109,7 +110,7 @@ impl WorkerBackend {
                 .map_err(error_message),
             Self::Vst3Runtime(component) => component
                 .instance_mut()
-                .process_interleaved_f32(frames, input, output)
+                .process_interleaved_f32_with_events(frames, input, events, output)
                 .map_err(error_message),
         }
     }

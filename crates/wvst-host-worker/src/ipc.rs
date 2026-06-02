@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
+use wvst_vst3_host::{DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3InputEvent};
 
 #[path = "ipc_audio.rs"]
 mod ipc_audio;
@@ -12,6 +13,8 @@ mod ipc_audio;
 mod ipc_backend;
 #[path = "ipc_buffers.rs"]
 mod ipc_buffers;
+#[path = "ipc_midi.rs"]
+mod ipc_midi;
 
 use ipc_backend::{WorkerBackend, WorkerBackendKind};
 use ipc_buffers::AudioScratchBuffers;
@@ -32,6 +35,7 @@ struct WorkerInstance {
     processing: bool,
     backend: WorkerBackend,
     buffers: AudioScratchBuffers,
+    events: Vec<Vst3InputEvent>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,6 +219,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
             processing: false,
             backend,
             buffers,
+            events: Vec::with_capacity(DEFAULT_MAX_VST3_EVENTS_PER_BLOCK),
         },
     );
 

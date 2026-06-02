@@ -5,11 +5,12 @@ use std::thread;
 
 use wvst_core::ChannelCount;
 use wvst_protocol::{
-    AUDIO_FRAME_HEADER_LEN, AudioFrameHeader, MIDI_EVENT_LEN, MidiEvent,
-    WORKER_AUDIO_IPC_HEADER_LEN, WorkerAudioIpcHeader, WorkerAudioMessageKind,
+    AUDIO_FRAME_HEADER_LEN, AudioFrameHeader, WORKER_AUDIO_IPC_HEADER_LEN, WorkerAudioIpcHeader,
+    WorkerAudioMessageKind,
 };
 
 use super::WorkerIpcState;
+use super::ipc_midi::decode_midi_events_into;
 
 #[cfg(test)]
 use wvst_protocol::WorkerAudioIpcMessage;
@@ -103,7 +104,7 @@ fn process_message_into(
     let audio_payload_end = AUDIO_FRAME_HEADER_LEN
         .checked_add(audio_payload_len)
         .ok_or_else(|| AudioProcessError::invalid("audio payload length overflow"))?;
-    validate_midi_events(input_header, &message_body[audio_payload_end..])?;
+    let event_payload = &message_body[audio_payload_end..];
 
     let mut state = state
         .lock()
@@ -159,6 +160,8 @@ fn process_message_into(
 
     let frames = usize::from(input_header.frames.get());
     let output_channels = instance.output_channels;
+    decode_midi_events_into(input_header, event_payload, frames, &mut instance.events)
+        .map_err(AudioProcessError::invalid)?;
     let (input, output) = instance
         .buffers
         .prepare_process(
@@ -168,31 +171,10 @@ fn process_message_into(
         .map_err(AudioProcessError::invalid)?;
     instance
         .backend
-        .process_interleaved_f32(frames, input, output)
+        .process_interleaved_f32(frames, input, &instance.events, output)
         .map_err(AudioProcessError::invalid)?;
 
     encode_output_frame_into(input_header, output_channels, output, output_body)
-}
-
-fn validate_midi_events(
-    input_header: AudioFrameHeader,
-    event_payload: &[u8],
-) -> Result<(), AudioProcessError> {
-    let expected_event_bytes = usize::from(input_header.event_count)
-        .checked_mul(MIDI_EVENT_LEN)
-        .ok_or_else(|| AudioProcessError::invalid("MIDI event payload length overflow"))?;
-    if event_payload.len() != expected_event_bytes {
-        return Err(AudioProcessError::invalid(format!(
-            "MIDI event payload length mismatch: expected {expected_event_bytes}, got {}",
-            event_payload.len()
-        )));
-    }
-
-    for chunk in event_payload.chunks_exact(MIDI_EVENT_LEN) {
-        MidiEvent::decode(chunk).map_err(|error| AudioProcessError::invalid(error.to_string()))?;
-    }
-
-    Ok(())
 }
 
 fn encode_output_frame_into(

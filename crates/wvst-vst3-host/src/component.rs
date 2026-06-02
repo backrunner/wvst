@@ -7,7 +7,7 @@ use crate::vst3_abi::{
     VST3_BUS_DIRECTION_OUTPUT, VST3_MEDIA_TYPE_AUDIO,
 };
 use crate::{
-    HostError, HostResult, Vst3AudioProcessor, Vst3Lifecycle, Vst3LifecycleState,
+    HostError, HostResult, Vst3AudioProcessor, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState,
     Vst3ProcessBuffers, Vst3ProcessingConfig,
 };
 
@@ -96,8 +96,19 @@ impl Vst3ComponentInstance {
         input: &[f32],
         output: &mut [f32],
     ) -> HostResult<()> {
+        self.process_interleaved_f32_with_events(frames, input, &[], output)
+    }
+
+    pub fn process_interleaved_f32_with_events(
+        &mut self,
+        frames: usize,
+        input: &[f32],
+        events: &[Vst3InputEvent],
+        output: &mut [f32],
+    ) -> HostResult<()> {
         self.require_state("process", &[Vst3LifecycleState::Processing])?;
         self.buffers.prepare_interleaved_f32(frames, input)?;
+        self.buffers.prepare_input_events(frames, events)?;
         self.processor.process(&mut self.buffers)?;
         self.buffers.copy_output_to_interleaved(frames, output)
     }

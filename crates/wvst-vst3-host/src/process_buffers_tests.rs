@@ -1,4 +1,6 @@
 use super::*;
+use crate::event_list::{Vst3InputEvent, Vst3NoteEvent};
+use crate::vst3_abi::{Event, IEventList, VST3_EVENT_TYPE_NOTE_ON};
 
 #[test]
 fn deinterleaves_stereo_input_to_planar_channels() {
@@ -141,4 +143,62 @@ fn supports_instrument_buffers_without_input_bus() {
     assert_eq!(buffers.process_data.num_inputs, 0);
     assert!(buffers.process_data.inputs.is_null());
     assert!(!buffers.process_data.outputs.is_null());
+}
+
+#[test]
+fn exposes_prepared_input_events_to_process_data() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
+    buffers
+        .prepare_input_events(
+            64,
+            &[Vst3InputEvent::NoteOn(Vst3NoteEvent {
+                sample_offset: 12,
+                channel: 1,
+                pitch: 60,
+                velocity: 0.75,
+                note_id: -1,
+            })],
+        )
+        .expect("events");
+
+    let event_list = buffers.process_data.input_events.cast::<IEventList>();
+    let mut event = Event::default();
+    let count = unsafe { ((*(*event_list).vtable).get_event_count)(event_list) };
+    let result = unsafe { ((*(*event_list).vtable).get_event)(event_list, 0, &mut event) };
+
+    assert!(!event_list.is_null());
+    assert_eq!(count, 1);
+    assert_eq!(result, 0);
+    assert_eq!(event.sample_offset, 12);
+    assert_eq!(event.event_type, VST3_EVENT_TYPE_NOTE_ON);
+    assert_eq!(unsafe { event.payload.note_on.channel }, 1);
+    assert_eq!(unsafe { event.payload.note_on.pitch }, 60);
+}
+
+#[test]
+fn clears_prepared_input_events_between_blocks() {
+    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
+    buffers
+        .prepare_input_events(
+            64,
+            &[Vst3InputEvent::NoteOn(Vst3NoteEvent {
+                sample_offset: 0,
+                channel: 0,
+                pitch: 60,
+                velocity: 1.0,
+                note_id: -1,
+            })],
+        )
+        .expect("events");
+
+    buffers
+        .prepare_interleaved_f32(64, &[])
+        .expect("next block");
+
+    let event_list = buffers.process_data.input_events.cast::<IEventList>();
+    let count = unsafe { ((*(*event_list).vtable).get_event_count)(event_list) };
+
+    assert_eq!(count, 0);
 }

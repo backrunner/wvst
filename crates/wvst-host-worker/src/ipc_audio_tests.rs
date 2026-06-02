@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId};
 use wvst_protocol::{
-    AUDIO_FRAME_HEADER_LEN, AudioFrameChannelCount, AudioFrameFlags, AudioFrameHeader, MidiEvent,
-    MidiEventKind, WorkerAudioIpcMessage,
+    AUDIO_FRAME_HEADER_LEN, AudioFrameChannelCount, AudioFrameFlags, AudioFrameHeader,
+    MIDI_EVENT_LEN, MidiEvent, MidiEventKind, WorkerAudioIpcMessage,
 };
+use wvst_vst3_host::Vst3InputEvent;
 
 use super::*;
 
@@ -60,6 +61,47 @@ fn rejects_audio_frame_before_processing_starts() {
     assert!(error.message.contains("not processing"));
 }
 
+#[test]
+fn maps_midi_note_events_to_vst3_input_events() {
+    let header = test_header_with_events(2, 2);
+    let events = [
+        MidiEvent::new(0, MidiEventKind::NoteOn, 1, 60, 100).expect("note on"),
+        MidiEvent::raw_midi(1, 0x80, 60, 64, 3).expect("raw note off"),
+    ];
+    let payload = midi_event_payload(&events);
+    let mut destination = Vec::new();
+
+    decode_midi_events_into(header, &payload, 2, &mut destination).expect("events");
+
+    assert_eq!(destination.len(), 2);
+    assert!(matches!(
+        destination[0],
+        Vst3InputEvent::NoteOn(event)
+            if event.sample_offset == 0
+                && event.channel == 1
+                && event.pitch == 60
+                && event.note_id == -1
+    ));
+    assert!(matches!(
+        destination[1],
+        Vst3InputEvent::NoteOff(event)
+            if event.sample_offset == 1 && event.channel == 0 && event.pitch == 60
+    ));
+}
+
+#[test]
+fn rejects_midi_event_sample_offsets_outside_block() {
+    let header = test_header_with_events(2, 1);
+    let event = MidiEvent::new(2, MidiEventKind::NoteOn, 0, 60, 100).expect("note on");
+    let payload = midi_event_payload(&[event]);
+    let mut destination = Vec::new();
+
+    let error =
+        decode_midi_events_into(header, &payload, 2, &mut destination).expect_err("bad offset");
+
+    assert!(error.contains("outside block"));
+}
+
 fn create_instance(state: &mut WorkerIpcState, input_channels: usize, output_channels: usize) {
     let request = format!(
         r#"{{"id":1,"method":"instance.create","params":{{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":{input_channels},"outputChannels":{output_channels}}}}}"#,
@@ -76,6 +118,31 @@ fn start_processing(state: &mut WorkerIpcState) {
     );
 
     assert!(response.contains(r#""result""#), "{response}");
+}
+
+fn test_header_with_events(frames: u16, event_count: u16) -> AudioFrameHeader {
+    AudioFrameHeader::new_f32(
+        StreamId::new(9),
+        11,
+        512,
+        SampleRate::new(48_000).expect("sample rate"),
+        FrameCount::new(frames).expect("frames"),
+        ChannelCount::new(2).expect("channels"),
+        AudioFrameFlags::empty(),
+    )
+    .expect("header")
+    .with_event_count(event_count)
+    .expect("event header")
+}
+
+fn midi_event_payload(events: &[MidiEvent]) -> Vec<u8> {
+    let mut payload = vec![0; events.len() * MIDI_EVENT_LEN];
+    for (index, event) in events.iter().enumerate() {
+        event
+            .encode(&mut payload[index * MIDI_EVENT_LEN..])
+            .expect("encode event");
+    }
+    payload
 }
 
 fn audio_frame(stream_id: u64) -> Vec<u8> {

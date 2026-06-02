@@ -58,6 +58,14 @@ pub enum HostError {
         expected: usize,
         actual: usize,
     },
+    InvalidEventCount {
+        max: usize,
+        actual: usize,
+    },
+    InvalidEventSampleOffset {
+        frames: usize,
+        actual: usize,
+    },
 }
 
 impl Display for HostError {
@@ -161,6 +169,18 @@ impl Display for HostError {
                 write!(
                     formatter,
                     "invalid buffer length: expected {expected}, got {actual}"
+                )
+            }
+            Self::InvalidEventCount { max, actual } => {
+                write!(
+                    formatter,
+                    "invalid VST3 event count: max {max}, got {actual}"
+                )
+            }
+            Self::InvalidEventSampleOffset { frames, actual } => {
+                write!(
+                    formatter,
+                    "invalid VST3 event sample offset: frames={frames}, offset={actual}"
                 )
             }
         }

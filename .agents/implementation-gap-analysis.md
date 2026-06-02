@@ -34,13 +34,14 @@
 - Web SDK 已提供音频设备 capability API、`devicechange` watcher，以及 session 运行期 `setInputDevice()` / `setOutputDevice()` 切换方法。
 - Web session 已校验 `AudioContext.sampleRate` 与 instance `sampleRate` 一致，提供 `restartAudioStream()` 重启 Bridge worker audio pump，并通过 `getMetrics()` 暴露 loopback underflow/overflow 和 pending quantum 指标。
 - `wvst-protocol` 和 Web SDK 已定义固定 16 字节 MIDI/note event schema，事件包含 sample offset、kind、channel、data bytes 和 note id；audio frame payload 已能表达 audio samples 后追加 event section。
-- Web SDK 已提供 `sendMidiEvents()` 路径，DedicatedWorker 会缓存 MIDI events、按 sample offset 排序，并随下一块 audio frame 发送到 Bridge；Bridge/worker 音频 IPC 已能接受并验证 event section。
+- Web SDK 已提供 `sendMidiEvents()` 路径，DedicatedWorker 会缓存 MIDI events、按 sample offset 排序，并随下一块 audio frame 发送到 Bridge；Bridge/worker 音频 IPC 已能接受 event section，worker 会将 note on/off、poly pressure 和对应 raw MIDI note 事件转换为 VST3 `IEventList` 输入。
 - Rust audio frame 协议已允许 `channels = 0`，passthrough worker 路径已支持 zero-input instrument frame 并覆盖测试。
 - `wvst-vst3-host` 已增加 VST3 FUID 规范化、`IPluginFactory::createInstance` ABI skeleton 和 macOS `create_vst3_component_probe()` safe facade；`wvst-host-worker component-probe <plugin.vst3> <class-id>` 可在隔离 worker 内验证 component 创建并释放。
 - VST3 ABI 边界已补入 `IPluginBase`、`IComponent`、`IAudioProcessor`、`ProcessSetup`、`AudioBusBuffers` 和 `ProcessData` 的 Rust repr(C) skeleton，后续真实 process path 可以继续在 `wvst-vst3-host` 内收敛 unsafe。
 - `create_vst3_component_probe()` 现在会通过 `queryInterface` 验证 component 是否暴露 `IAudioProcessor`；`wvst-host-worker component-probe` 可继续作为隔离探测命令使用。
 - `wvst-vst3-host` 已加入纯 Rust `Vst3Lifecycle` 状态机和 `Vst3ProcessingConfig`，覆盖 `created -> initialized -> setup-done -> activated -> processing -> stopped -> terminated` 的合法顺序和非法转移测试。
 - `wvst-vst3-host` 已加入 `Vst3ProcessBuffers`，能预分配 planar input/output buffer，将 interleaved f32 输入转换为 VST3 channel buffers，并把 planar 输出复制回 interleaved f32；同时覆盖无输入音源 VST 的 buffer 路径。
+- `wvst-vst3-host` 已加入 VST3 `IEventList` / `Event` ABI skeleton 和 `Vst3EventList` safe wrapper，`ProcessData.input_events` 现在指向稳定的预分配事件列表，每个 block 会清空旧事件并填充新的 note/poly pressure 事件。
 - `wvst-vst3-host` 已加入 `Vst3AudioProcessor` facade，能封装 owned `IAudioProcessor` 指针并调用 `canProcessSampleSize`、`setupProcessing`、`setProcessing`、`process`、latency/tail 查询；fake ABI fixture 已覆盖真实 `ProcessData` 指针链路。
 - `wvst-vst3-host` 已加入 `Vst3ComponentInstance` holder，能持有 owned `IComponent` + `Vst3AudioProcessor`，并将 initialize、setupProcessing、setActive、setProcessing、process、terminate 串入 `Vst3Lifecycle`；fake component/processor fixture 已覆盖完整生命周期和错误传播。
 - `wvst-vst3-host` 已接入基础 audio bus 配置：`setupProcessing` 前调用 `setBusArrangements` 设置 mono/stereo 或 zero-input instrument arrangement，`activate/terminate` 会开关主 audio input/output bus，并覆盖 `setActive` 失败后的 bus rollback。
@@ -96,9 +97,9 @@
 
 仍缺少：
 
-- MIDI/note event schema 和 Web/Bridge/worker 数据面传输已有首版；仍缺少 VST3 `IEventList` 转换。
+- MIDI/note event schema、Web/Bridge/worker 数据面传输和 VST3 `IEventList` note/poly pressure 转换已有首版；仍缺少 CC、pitch bend、channel aftertouch 到 VST3 parameter/controller path 的正式映射。
 - 更完整的按 block sequence + sample offset 事件排序、背压和 late-event 策略。
-- 音源 VST 的 zero-input audio buffer/session/passthrough worker plumbing 已有首版；仍缺少 MIDI event transport timing，无法完整驱动第三方音源插件发声。
+- 音源 VST 的 zero-input audio buffer/session/passthrough worker plumbing 已有首版；note on/off 已能随 block 进入真实 VST3 `process()`，仍缺少真实第三方 instrument 兼容测试和 timing 诊断。
 - Web MIDI adapter 和虚拟键盘示例。
 
 ### 6. 嵌入式 runtime 与打包

@@ -304,7 +304,7 @@ MidiEvent
   note_id: u32
 ```
 
-Bridge Server 将事件按 `stream_id + sequence + sample_offset` 排序后送入 worker。当前 worker 数据面先验证 event section 并保留传输边界；后续 Host worker 转换为 VST3 `IEventList` 和参数变化。音源插件允许 `inputChannels = 0`，但仍按稳定 block clock 调用处理，以生成 tail 或持续音频。
+Bridge Server 将事件按 `stream_id + sequence + sample_offset` 排序后送入 worker。当前 worker 数据面会验证 event section，并将 note on/off、poly pressure 和对应 raw MIDI note 事件转换为 VST3 `IEventList` 传给真实 backend；CC、pitch bend、channel aftertouch 后续需要走 VST3 parameter/controller path。音源插件允许 `inputChannels = 0`，但仍按稳定 block clock 调用处理，以生成 tail 或持续音频。
 
 ## 错误模型
 
