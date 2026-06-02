@@ -4,7 +4,7 @@ use std::slice;
 
 use crate::vst3_abi::{
     AudioBusBuffers, IAudioProcessor, IAudioProcessorVTable, K_RESULT_OK, ProcessData,
-    ProcessSetup, SpeakerArrangement, VST3_SAMPLE_32, VST3_SPEAKER_STEREO,
+    ProcessSetup, SpeakerArrangement, VST3_SAMPLE_32, VST3_SPEAKER_51, VST3_SPEAKER_STEREO,
 };
 
 use super::*;
@@ -72,6 +72,20 @@ fn sets_zero_input_bus_arrangement_for_instruments() {
 }
 
 #[test]
+fn sets_surround_bus_arrangements() {
+    let mut fake = FakeProcessor::new();
+    let mut processor =
+        unsafe { Vst3AudioProcessor::from_raw(fake.raw_processor()) }.expect("processor");
+    let config = Vst3ProcessingConfig::new(48_000, 128, 6, 6).expect("config");
+
+    processor.setup_realtime_f32(config).expect("setup");
+
+    assert_eq!(fake.set_bus_arrangement_calls, 1);
+    assert_eq!(fake.last_input_arrangement, Some(VST3_SPEAKER_51));
+    assert_eq!(fake.last_output_arrangement, Some(VST3_SPEAKER_51));
+}
+
+#[test]
 fn rejects_unsupported_f32_sample_size() {
     let mut fake = FakeProcessor::new();
     fake.can_process_result = -10;
@@ -118,13 +132,13 @@ fn rejects_unsupported_speaker_arrangement() {
     let mut fake = FakeProcessor::new();
     let mut processor =
         unsafe { Vst3AudioProcessor::from_raw(fake.raw_processor()) }.expect("processor");
-    let config = Vst3ProcessingConfig::new(48_000, 128, 3, 2).expect("config");
+    let config = Vst3ProcessingConfig::new(48_000, 128, 9, 2).expect("config");
 
     let error = processor
         .setup_realtime_f32(config)
         .expect_err("unsupported arrangement");
 
-    assert_eq!(error, HostError::UnsupportedSpeakerArrangement(3));
+    assert_eq!(error, HostError::UnsupportedSpeakerArrangement(9));
     assert_eq!(fake.set_bus_arrangement_calls, 0);
 }
 

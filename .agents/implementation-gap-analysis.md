@@ -79,7 +79,7 @@
 
 仍缺少：
 
-- 更完整的 host context extension、多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、audio bus 查询和 selected-bus activation，但仍仅支持单个主 mono/stereo audio bus 与 zero-input instrument。
+- 更完整的 host context extension、多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、audio bus 查询、selected-bus activation，并支持单个主 bus 的 mono/stereo/常见 3.0 到 7.1 speaker arrangement。
 - controller 对象仍未接入，参数、state、program list、unit metadata 仍缺少。
 - 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
 

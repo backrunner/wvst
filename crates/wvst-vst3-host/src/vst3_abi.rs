@@ -28,6 +28,12 @@ pub const VST3_BUS_DIRECTION_INPUT: i32 = 0;
 pub const VST3_BUS_DIRECTION_OUTPUT: i32 = 1;
 pub const VST3_SPEAKER_MONO: SpeakerArrangement = 1 << 19;
 pub const VST3_SPEAKER_STEREO: SpeakerArrangement = 0x03;
+pub const VST3_SPEAKER_30_CINE: SpeakerArrangement = 0x07;
+pub const VST3_SPEAKER_40_MUSIC: SpeakerArrangement = 0x33;
+pub const VST3_SPEAKER_50: SpeakerArrangement = 0x37;
+pub const VST3_SPEAKER_51: SpeakerArrangement = 0x3f;
+pub const VST3_SPEAKER_61_CINE: SpeakerArrangement = 0x13f;
+pub const VST3_SPEAKER_71_CINE: SpeakerArrangement = 0xff;
 
 pub type TBool = u8;
 pub type TUid = [u8; 16];

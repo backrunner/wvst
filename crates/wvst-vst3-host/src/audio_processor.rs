@@ -4,7 +4,8 @@ use std::ptr::NonNull;
 
 use crate::vst3_abi::{
     IAudioProcessor, IAudioProcessorVTable, K_RESULT_OK, ProcessSetup, VST3_SAMPLE_32,
-    VST3_SPEAKER_MONO, VST3_SPEAKER_STEREO,
+    VST3_SPEAKER_30_CINE, VST3_SPEAKER_40_MUSIC, VST3_SPEAKER_50, VST3_SPEAKER_51,
+    VST3_SPEAKER_61_CINE, VST3_SPEAKER_71_CINE, VST3_SPEAKER_MONO, VST3_SPEAKER_STEREO,
 };
 use crate::{HostError, HostResult, Vst3ProcessBuffers, Vst3ProcessingConfig};
 
@@ -147,6 +148,12 @@ fn speaker_arrangement(channels: u16) -> HostResult<crate::vst3_abi::SpeakerArra
     match channels {
         1 => Ok(VST3_SPEAKER_MONO),
         2 => Ok(VST3_SPEAKER_STEREO),
+        3 => Ok(VST3_SPEAKER_30_CINE),
+        4 => Ok(VST3_SPEAKER_40_MUSIC),
+        5 => Ok(VST3_SPEAKER_50),
+        6 => Ok(VST3_SPEAKER_51),
+        7 => Ok(VST3_SPEAKER_61_CINE),
+        8 => Ok(VST3_SPEAKER_71_CINE),
         _ => Err(HostError::UnsupportedSpeakerArrangement(channels)),
     }
 }
