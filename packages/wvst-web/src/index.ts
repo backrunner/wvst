@@ -18,6 +18,7 @@ export {
   WVSTBridgeWorkerClient,
   type BridgeWorkerAudioStreamOptions,
   type BridgeWorkerClientOptions,
+  type BridgeWorkerMidiEventOptions,
 } from "./worker-client.js";
 export {
   LoopbackCounter,

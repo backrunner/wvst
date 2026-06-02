@@ -5,8 +5,8 @@ use std::thread;
 
 use wvst_core::ChannelCount;
 use wvst_protocol::{
-    AUDIO_FRAME_HEADER_LEN, AudioFrameHeader, WORKER_AUDIO_IPC_HEADER_LEN, WorkerAudioIpcHeader,
-    WorkerAudioMessageKind,
+    AUDIO_FRAME_HEADER_LEN, AudioFrameHeader, MIDI_EVENT_LEN, MidiEvent,
+    WORKER_AUDIO_IPC_HEADER_LEN, WorkerAudioIpcHeader, WorkerAudioMessageKind,
 };
 
 use super::WorkerIpcState;
@@ -96,11 +96,14 @@ fn process_message_into(
             message_body.len()
         )));
     }
-    if input_header.event_count != 0 {
-        return Err(AudioProcessError::invalid(
-            "worker audio IPC does not support event payloads yet",
-        ));
-    }
+    let audio_payload_len = input_header
+        .audio_payload_len()
+        .map_err(|error| AudioProcessError::invalid(error.to_string()))?
+        as usize;
+    let audio_payload_end = AUDIO_FRAME_HEADER_LEN
+        .checked_add(audio_payload_len)
+        .ok_or_else(|| AudioProcessError::invalid("audio payload length overflow"))?;
+    validate_midi_events(input_header, &message_body[audio_payload_end..])?;
 
     let mut state = state
         .lock()
@@ -158,7 +161,10 @@ fn process_message_into(
     let output_channels = instance.output_channels;
     let (input, output) = instance
         .buffers
-        .prepare_process(frames, &message_body[AUDIO_FRAME_HEADER_LEN..])
+        .prepare_process(
+            frames,
+            &message_body[AUDIO_FRAME_HEADER_LEN..audio_payload_end],
+        )
         .map_err(AudioProcessError::invalid)?;
     instance
         .backend
@@ -166,6 +172,27 @@ fn process_message_into(
         .map_err(AudioProcessError::invalid)?;
 
     encode_output_frame_into(input_header, output_channels, output, output_body)
+}
+
+fn validate_midi_events(
+    input_header: AudioFrameHeader,
+    event_payload: &[u8],
+) -> Result<(), AudioProcessError> {
+    let expected_event_bytes = usize::from(input_header.event_count)
+        .checked_mul(MIDI_EVENT_LEN)
+        .ok_or_else(|| AudioProcessError::invalid("MIDI event payload length overflow"))?;
+    if event_payload.len() != expected_event_bytes {
+        return Err(AudioProcessError::invalid(format!(
+            "MIDI event payload length mismatch: expected {expected_event_bytes}, got {}",
+            event_payload.len()
+        )));
+    }
+
+    for chunk in event_payload.chunks_exact(MIDI_EVENT_LEN) {
+        MidiEvent::decode(chunk).map_err(|error| AudioProcessError::invalid(error.to_string()))?;
+    }
+
+    Ok(())
 }
 
 fn encode_output_frame_into(
@@ -278,122 +305,5 @@ impl AudioProcessError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use wvst_core::{FrameCount, SampleRate, StreamId};
-    use wvst_protocol::AudioFrameFlags;
-
-    #[test]
-    fn processes_audio_frame_for_registered_stream() {
-        let mut state = WorkerIpcState::default();
-        let create = super::super::handle_ipc_line(
-            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":2,"outputChannels":2}}"#,
-            &mut state,
-        );
-        assert!(create.contains(r#""result""#));
-        let start = super::super::handle_ipc_line(
-            r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,
-            &mut state,
-        );
-        assert!(start.contains(r#""result""#));
-
-        let request =
-            WorkerAudioIpcMessage::process_request(11, audio_frame(9)).expect("request message");
-        let state = Arc::new(Mutex::new(state));
-        let response = process_message(request, &state).expect("processed");
-        let header = AudioFrameHeader::decode(&response).expect("response header");
-
-        assert_eq!(header.stream_id.get(), 9);
-        assert_eq!(
-            read_f32_payload(&response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
-            vec![0.1, 0.2, 0.3, 0.4]
-        );
-    }
-
-    #[test]
-    fn processes_zero_input_instrument_audio_frame() {
-        let mut state = WorkerIpcState::default();
-        let create = super::super::handle_ipc_line(
-            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":0,"outputChannels":2}}"#,
-            &mut state,
-        );
-        assert!(create.contains(r#""result""#));
-        let start = super::super::handle_ipc_line(
-            r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,
-            &mut state,
-        );
-        assert!(start.contains(r#""result""#));
-
-        let request = WorkerAudioIpcMessage::process_request(11, zero_input_audio_frame(9))
-            .expect("request message");
-        let state = Arc::new(Mutex::new(state));
-        let response = process_message(request, &state).expect("processed");
-        let header = AudioFrameHeader::decode(&response).expect("response header");
-
-        assert_eq!(header.channels.get(), 2);
-        assert_eq!(
-            read_f32_payload(&response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
-            vec![0.0, 0.0, 0.0, 0.0]
-        );
-    }
-
-    #[test]
-    fn rejects_audio_frame_before_processing_starts() {
-        let mut state = WorkerIpcState::default();
-        let create = super::super::handle_ipc_line(
-            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":2,"outputChannels":2}}"#,
-            &mut state,
-        );
-        assert!(create.contains(r#""result""#));
-
-        let request =
-            WorkerAudioIpcMessage::process_request(11, audio_frame(9)).expect("request message");
-        let state = Arc::new(Mutex::new(state));
-        let error = process_message(request, &state).expect_err("not processing");
-
-        assert_eq!(error.status_code, AUDIO_ERROR_INVALID_REQUEST);
-        assert!(error.message.contains("not processing"));
-    }
-
-    fn audio_frame(stream_id: u64) -> Vec<u8> {
-        let samples = [0.1_f32, 0.2, 0.3, 0.4];
-        let header = AudioFrameHeader::new_f32(
-            StreamId::new(stream_id),
-            11,
-            512,
-            SampleRate::new(48_000).expect("sample rate"),
-            FrameCount::new(2).expect("frames"),
-            ChannelCount::new(2).expect("channels"),
-            AudioFrameFlags::empty(),
-        )
-        .expect("header");
-        let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];
-        header
-            .encode(&mut frame[..AUDIO_FRAME_HEADER_LEN])
-            .expect("encode header");
-        let mut offset = AUDIO_FRAME_HEADER_LEN;
-        for sample in samples {
-            frame[offset..offset + 4].copy_from_slice(&sample.to_le_bytes());
-            offset += 4;
-        }
-        frame
-    }
-
-    fn zero_input_audio_frame(stream_id: u64) -> Vec<u8> {
-        let header = AudioFrameHeader::new_f32_with_audio_channels(
-            StreamId::new(stream_id),
-            11,
-            512,
-            SampleRate::new(48_000).expect("sample rate"),
-            FrameCount::new(2).expect("frames"),
-            wvst_protocol::AudioFrameChannelCount::new(0).expect("zero channels"),
-            AudioFrameFlags::empty(),
-        )
-        .expect("header");
-        let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];
-        header
-            .encode(&mut frame[..AUDIO_FRAME_HEADER_LEN])
-            .expect("encode header");
-        frame
-    }
-}
+#[path = "ipc_audio_tests.rs"]
+mod tests;

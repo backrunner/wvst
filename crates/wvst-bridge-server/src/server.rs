@@ -174,7 +174,7 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteRes
     let Some(expected_len) = AUDIO_FRAME_HEADER_LEN.checked_add(header.payload_len as usize) else {
         return AudioRouteResult::Fallback;
     };
-    if payload.len() != expected_len || header.event_count != 0 {
+    if payload.len() != expected_len {
         return AudioRouteResult::Fallback;
     }
 

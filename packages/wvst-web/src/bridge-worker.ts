@@ -4,7 +4,9 @@ import {
   AudioSampleFormat,
   decodeAudioFrame,
   encodeAudioFrame,
+  midiEventPayloadBytes,
   type AudioFrameHeader,
+  type MidiEvent,
 } from "./protocol.js";
 
 type BridgeWorkerCommand =
@@ -41,6 +43,12 @@ type BridgeWorkerCommand =
       id: number;
       type: "stopAudioStream";
       streamId: number;
+    }
+  | {
+      id: number;
+      type: "sendMidiEvents";
+      streamId: number;
+      events: MidiEvent[];
     }
   | {
       id: number;
@@ -98,6 +106,10 @@ async function handleCommand(command: BridgeWorkerCommand): Promise<void> {
         stopAudioStream(command.streamId);
         postResult(command.id, null);
         return;
+      case "sendMidiEvents":
+        enqueueMidiEvents(command.streamId, command.events);
+        postResult(command.id, null);
+        return;
       case "close":
         stopAllAudioStreams();
         requireTransport().close();
@@ -142,6 +154,15 @@ function stopAudioStream(streamId: number) {
   }
 }
 
+function enqueueMidiEvents(streamId: number, events: MidiEvent[]) {
+  const pump = audioPumps.get(streamId);
+  if (!pump) {
+    throw new Error(`WVST audio stream is not active: ${streamId}`);
+  }
+
+  pump.enqueueMidiEvents(events);
+}
+
 function stopAllAudioStreams() {
   for (const pump of audioPumps.values()) {
     pump.stop();
@@ -150,6 +171,7 @@ function stopAllAudioStreams() {
 }
 
 const AUDIO_POLL_INTERVAL_MS = 1;
+const MAX_PENDING_MIDI_EVENTS = 4_096;
 
 class AudioStreamPump {
   private readonly inputSamples: Float32Array;
@@ -161,6 +183,7 @@ class AudioStreamPump {
   private timer: number | undefined;
   private sequence = 0n;
   private sentFrameTime = 0n;
+  private pendingMidiEvents: MidiEvent[] = [];
 
   constructor(private readonly options: Extract<BridgeWorkerCommand, { type: "startAudioStream" }>) {
     this.inputSamples = new Float32Array(options.inputBuffer);
@@ -191,6 +214,26 @@ class AudioStreamPump {
     if (this.timer !== undefined) {
       globalThis.clearTimeout(this.timer);
       this.timer = undefined;
+    }
+  }
+
+  enqueueMidiEvents(events: MidiEvent[]): void {
+    if (this.pendingMidiEvents.length + events.length > MAX_PENDING_MIDI_EVENTS) {
+      Atomics.add(this.counters, LoopbackCounter.Overflows, 1);
+      throw new Error("WVST MIDI event queue is full");
+    }
+
+    for (const event of events) {
+      if (
+        !Number.isInteger(event.sampleOffset) ||
+        event.sampleOffset < 0 ||
+        event.sampleOffset >= this.options.frames
+      ) {
+        throw new Error(
+          `WVST MIDI sampleOffset must be an integer in [0, ${this.options.frames})`,
+        );
+      }
+      this.pendingMidiEvents.push(event);
     }
   }
 
@@ -244,7 +287,13 @@ class AudioStreamPump {
     );
     Atomics.store(this.counters, LoopbackCounter.InputConsumedSequence, readSequence);
 
-    const frame = encodeAudioFrame(this.header(inputCopy.byteLength), inputCopy.buffer);
+    const events = this.takeMidiEvents();
+    const payloadBytes = inputCopy.byteLength + midiEventPayloadBytes(events.length);
+    const frame = encodeAudioFrame(
+      this.header(payloadBytes, events.length),
+      inputCopy.buffer,
+      events,
+    );
     const response = await requireTransport().sendBinary(frame);
     const decoded = decodeAudioFrame(response);
     const output = new Float32Array(decoded.audioPayload);
@@ -263,6 +312,17 @@ class AudioStreamPump {
 
     this.sentFrameTime += BigInt(this.options.frames);
     this.sequence += 1n;
+  }
+
+  private takeMidiEvents(): MidiEvent[] {
+    if (this.pendingMidiEvents.length === 0) {
+      return [];
+    }
+
+    const events = this.pendingMidiEvents;
+    this.pendingMidiEvents = [];
+    events.sort((left, right) => left.sampleOffset - right.sampleOffset);
+    return events;
   }
 
   private writeOutput(output: Float32Array): void {
@@ -288,7 +348,7 @@ class AudioStreamPump {
     Atomics.store(this.counters, LoopbackCounter.OutputSequence, nextSequence);
   }
 
-  private header(payloadBytes: number): AudioFrameHeader {
+  private header(payloadBytes: number, eventCount: number): AudioFrameHeader {
     return {
       streamId: BigInt(this.options.streamId),
       sequence: this.sequence,
@@ -299,7 +359,7 @@ class AudioStreamPump {
       channels: this.options.inputChannels,
       format: AudioSampleFormat.F32Le,
       flags: 0,
-      eventCount: 0,
+      eventCount,
     };
   }
 }

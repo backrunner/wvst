@@ -1,4 +1,5 @@
 import type { LoopbackSharedBuffers } from "./loopback.js";
+import type { MidiEvent } from "./protocol.js";
 import type { JsonValue } from "./transport.js";
 
 export interface BridgeWorkerClientOptions {
@@ -12,6 +13,11 @@ export interface BridgeWorkerAudioStreamOptions {
   inputChannels: number;
   outputChannels: number;
   buffers: LoopbackSharedBuffers;
+}
+
+export interface BridgeWorkerMidiEventOptions {
+  streamId: number;
+  events: MidiEvent[];
 }
 
 type BridgeWorkerResult = JsonValue | ArrayBuffer | null;
@@ -75,6 +81,13 @@ export class WVSTBridgeWorkerClient {
 
   stopAudioStream(streamId: number): Promise<void> {
     return this.command("stopAudioStream", { streamId }).then(() => undefined);
+  }
+
+  sendMidiEvents(options: BridgeWorkerMidiEventOptions): Promise<void> {
+    return this.command("sendMidiEvents", {
+      streamId: options.streamId,
+      events: options.events,
+    }).then(() => undefined);
   }
 
   close(): Promise<void> {
