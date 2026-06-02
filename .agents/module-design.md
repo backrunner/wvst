@@ -85,7 +85,7 @@ AudioFrameHeader
   sent_frame_time: u64  # WebAudio sample clock
 ```
 
-MVP payload 使用 planar f32 little-endian；后续可协商 interleaved、f64、compression 或 datagram 分片。
+MVP payload 使用 interleaved f32 little-endian。若 `event_count > 0`，payload 前半部分为 `frames * channels * 4` 字节音频样本，后半部分为固定 16 字节 `MidiEvent` 数组。后续可协商 planar、f64、compression 或 datagram 分片。
 
 ### `wvst-bridge-server`
 
@@ -294,14 +294,17 @@ WVST 内部事件格式：
 
 ```text
 MidiEvent
-  kind: note_on | note_off | cc | pitch_bend | aftertouch | raw_midi | note_expression
+  sample_offset: u16
+  kind: note_on | note_off | cc | pitch_bend | channel_aftertouch | poly_aftertouch | raw_midi
   channel: u8
-  data: ...
-  offset_frames: u16
-  frame_time: u64
+  data1: u8
+  data2: u8
+  data3: u8
+  data_len: u8
+  note_id: u32
 ```
 
-Bridge Server 将事件按 `stream_id + sequence + offset_frames` 排序后送入 worker。Host worker 转换为 VST3 `IEventList` 和参数变化。音源插件允许 `inputChannels = 0`，但仍按稳定 block clock 调用处理，以生成 tail 或持续音频。
+Bridge Server 将事件按 `stream_id + sequence + sample_offset` 排序后送入 worker。Host worker 转换为 VST3 `IEventList` 和参数变化。音源插件允许 `inputChannels = 0`，但仍按稳定 block clock 调用处理，以生成 tail 或持续音频。
 
 ## 错误模型
 
@@ -351,4 +354,3 @@ Bridge Server 将事件按 `stream_id + sequence + offset_frames` 排序后送�
 - `cpuProcessPercent`
 
 指标应同时提供 Web SDK event 和本地 CLI/debug endpoint。
-

@@ -247,7 +247,7 @@ class AudioStreamPump {
     const frame = encodeAudioFrame(this.header(inputCopy.byteLength), inputCopy.buffer);
     const response = await requireTransport().sendBinary(frame);
     const decoded = decodeAudioFrame(response);
-    const output = new Float32Array(decoded.payload);
+    const output = new Float32Array(decoded.audioPayload);
 
     if (
       decoded.header.streamId !== BigInt(this.options.streamId) ||

@@ -16,7 +16,7 @@ impl HeadlessPluginInstance {
         input_channels: usize,
         output_channels: usize,
     ) -> HostResult<Self> {
-        if input_channels == 0 || output_channels == 0 {
+        if output_channels == 0 {
             return Err(HostError::InvalidChannelCount {
                 input: input_channels,
                 output: output_channels,
@@ -102,6 +102,21 @@ mod tests {
 
         assert_eq!(stats.frames, 2);
         assert_eq!(output, input);
+    }
+
+    #[test]
+    fn passthrough_supports_zero_input_instruments() {
+        let descriptor = descriptor();
+        let instance = HeadlessPluginInstance::new(&descriptor, 0, 2).expect("instance");
+        let mut output = [1.0; 4];
+
+        let stats = instance
+            .process_interleaved_f32(2, &[], &mut output)
+            .expect("process");
+
+        assert_eq!(stats.input_channels, 0);
+        assert_eq!(stats.output_channels, 2);
+        assert_eq!(output, [0.0; 4]);
     }
 
     fn descriptor() -> PluginDescriptor {

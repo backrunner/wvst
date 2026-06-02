@@ -311,6 +311,33 @@ mod tests {
     }
 
     #[test]
+    fn processes_zero_input_instrument_audio_frame() {
+        let mut state = WorkerIpcState::default();
+        let create = super::super::handle_ipc_line(
+            r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":0,"outputChannels":2}}"#,
+            &mut state,
+        );
+        assert!(create.contains(r#""result""#));
+        let start = super::super::handle_ipc_line(
+            r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,
+            &mut state,
+        );
+        assert!(start.contains(r#""result""#));
+
+        let request = WorkerAudioIpcMessage::process_request(11, zero_input_audio_frame(9))
+            .expect("request message");
+        let state = Arc::new(Mutex::new(state));
+        let response = process_message(request, &state).expect("processed");
+        let header = AudioFrameHeader::decode(&response).expect("response header");
+
+        assert_eq!(header.channels.get(), 2);
+        assert_eq!(
+            read_f32_payload(&response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
+            vec![0.0, 0.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
     fn rejects_audio_frame_before_processing_starts() {
         let mut state = WorkerIpcState::default();
         let create = super::super::handle_ipc_line(
@@ -349,6 +376,24 @@ mod tests {
             frame[offset..offset + 4].copy_from_slice(&sample.to_le_bytes());
             offset += 4;
         }
+        frame
+    }
+
+    fn zero_input_audio_frame(stream_id: u64) -> Vec<u8> {
+        let header = AudioFrameHeader::new_f32_with_audio_channels(
+            StreamId::new(stream_id),
+            11,
+            512,
+            SampleRate::new(48_000).expect("sample rate"),
+            FrameCount::new(2).expect("frames"),
+            wvst_protocol::AudioFrameChannelCount::new(0).expect("zero channels"),
+            AudioFrameFlags::empty(),
+        )
+        .expect("header");
+        let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];
+        header
+            .encode(&mut frame[..AUDIO_FRAME_HEADER_LEN])
+            .expect("encode header");
         frame
     }
 }

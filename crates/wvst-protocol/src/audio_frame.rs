@@ -1,8 +1,8 @@
 use std::ops::{BitOr, BitOrAssign};
 
-use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId, f32_payload_len};
+use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId, audio::MAX_CHANNEL_COUNT};
 
-use crate::ProtocolError;
+use crate::{MIDI_EVENT_LEN, ProtocolError};
 
 pub const AUDIO_FRAME_MAGIC: u32 = u32::from_le_bytes(*b"WVST");
 pub const AUDIO_FRAME_VERSION: u16 = 1;
@@ -72,6 +72,31 @@ impl BitOrAssign for AudioFrameFlags {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct AudioFrameChannelCount(u16);
+
+impl AudioFrameChannelCount {
+    pub fn new(value: u16) -> Result<Self, ProtocolError> {
+        if value > MAX_CHANNEL_COUNT {
+            return Err(ProtocolError::InvalidCoreValue(format!(
+                "invalid audio frame channel count: {value}"
+            )));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl From<ChannelCount> for AudioFrameChannelCount {
+    fn from(value: ChannelCount) -> Self {
+        Self(value.get())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AudioFrameHeader {
     pub stream_id: StreamId,
@@ -79,7 +104,7 @@ pub struct AudioFrameHeader {
     pub sent_frame_time: u64,
     pub sample_rate: SampleRate,
     pub frames: FrameCount,
-    pub channels: ChannelCount,
+    pub channels: AudioFrameChannelCount,
     pub format: AudioSampleFormat,
     pub flags: AudioFrameFlags,
     pub event_count: u16,
@@ -96,8 +121,27 @@ impl AudioFrameHeader {
         channels: ChannelCount,
         flags: AudioFrameFlags,
     ) -> Result<Self, ProtocolError> {
-        let payload_len = f32_payload_len(frames, channels)?;
+        Self::new_f32_with_audio_channels(
+            stream_id,
+            sequence,
+            sent_frame_time,
+            sample_rate,
+            frames,
+            channels.into(),
+            flags,
+        )
+    }
 
+    pub fn new_f32_with_audio_channels(
+        stream_id: StreamId,
+        sequence: u64,
+        sent_frame_time: u64,
+        sample_rate: SampleRate,
+        frames: FrameCount,
+        channels: AudioFrameChannelCount,
+        flags: AudioFrameFlags,
+    ) -> Result<Self, ProtocolError> {
+        let payload_len = f32_audio_payload_len(frames, channels)?;
         Ok(Self {
             stream_id,
             sequence,
@@ -165,9 +209,10 @@ impl AudioFrameHeader {
         let sample_rate = SampleRate::new(read_u32(source, 32))?;
         let payload_len = read_u32(source, 36);
         let frames = FrameCount::new(read_u16(source, 40))?;
-        let channels = ChannelCount::new(read_u16(source, 42))?;
+        let channels = AudioFrameChannelCount::new(read_u16(source, 42))?;
         let format = AudioSampleFormat::try_from(source[44])?;
-        let expected_payload_len = f32_payload_len(frames, channels)?;
+        let event_count = read_u16(source, 48);
+        let expected_payload_len = expected_payload_len(frames, channels, event_count)?;
 
         if payload_len != expected_payload_len {
             return Err(ProtocolError::InvalidPayloadLength {
@@ -185,10 +230,54 @@ impl AudioFrameHeader {
             channels,
             format,
             flags: AudioFrameFlags::from_bits(read_u16(source, 46)),
-            event_count: read_u16(source, 48),
+            event_count,
             payload_len,
         })
     }
+
+    pub fn with_event_count(mut self, event_count: u16) -> Result<Self, ProtocolError> {
+        self.event_count = event_count;
+        self.payload_len = expected_payload_len(self.frames, self.channels, event_count)?;
+        Ok(self)
+    }
+
+    pub fn audio_payload_len(self) -> Result<u32, ProtocolError> {
+        f32_audio_payload_len(self.frames, self.channels)
+    }
+
+    pub fn event_payload_len(self) -> Result<u32, ProtocolError> {
+        midi_event_payload_len(self.event_count)
+    }
+}
+
+fn expected_payload_len(
+    frames: FrameCount,
+    channels: AudioFrameChannelCount,
+    event_count: u16,
+) -> Result<u32, ProtocolError> {
+    let audio_payload_len = f32_audio_payload_len(frames, channels)?;
+    let event_payload_len = midi_event_payload_len(event_count)?;
+
+    audio_payload_len
+        .checked_add(event_payload_len)
+        .ok_or(ProtocolError::PayloadTooLarge)
+}
+
+fn f32_audio_payload_len(
+    frames: FrameCount,
+    channels: AudioFrameChannelCount,
+) -> Result<u32, ProtocolError> {
+    let samples = u32::from(frames.get())
+        .checked_mul(u32::from(channels.get()))
+        .ok_or(ProtocolError::PayloadTooLarge)?;
+
+    samples.checked_mul(4).ok_or(ProtocolError::PayloadTooLarge)
+}
+
+fn midi_event_payload_len(event_count: u16) -> Result<u32, ProtocolError> {
+    u32::from(event_count)
+        .checked_mul(MIDI_EVENT_LEN as u32)
+        .ok_or(ProtocolError::PayloadTooLarge)
 }
 
 fn put_u16(destination: &mut [u8], offset: usize, value: u16) {
@@ -267,5 +356,33 @@ mod tests {
             AudioFrameHeader::decode(&bytes),
             Err(ProtocolError::InvalidPayloadLength { .. })
         ));
+    }
+
+    #[test]
+    fn decodes_zero_channel_audio_frames() {
+        let header = AudioFrameHeader {
+            channels: AudioFrameChannelCount::new(0).expect("zero channels"),
+            payload_len: 0,
+            ..test_header()
+        };
+        let mut bytes = [0; AUDIO_FRAME_HEADER_LEN];
+
+        header.encode(&mut bytes).expect("header encodes");
+
+        assert_eq!(AudioFrameHeader::decode(&bytes), Ok(header));
+    }
+
+    #[test]
+    fn event_count_extends_payload_length() {
+        let header = test_header().with_event_count(2).expect("event payload");
+        let mut bytes = [0; AUDIO_FRAME_HEADER_LEN];
+
+        header.encode(&mut bytes).expect("header encodes");
+        assert_eq!(header.event_payload_len(), Ok((MIDI_EVENT_LEN * 2) as u32));
+        assert_eq!(
+            header.payload_len,
+            header.audio_payload_len().expect("audio payload") + (MIDI_EVENT_LEN * 2) as u32
+        );
+        assert_eq!(AudioFrameHeader::decode(&bytes), Ok(header));
     }
 }

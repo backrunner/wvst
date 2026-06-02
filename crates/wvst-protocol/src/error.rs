@@ -11,6 +11,9 @@ pub enum ProtocolError {
     InvalidHeaderLength(u16),
     InvalidSampleFormat(u8),
     InvalidWorkerAudioMessageKind(u16),
+    InvalidMidiEventKind(u8),
+    InvalidMidiChannel(u8),
+    InvalidMidiData { field: &'static str, value: u8 },
     InvalidPayloadLength { expected: u32, actual: u32 },
     PayloadTooLarge,
     InvalidCoreValue(String),
@@ -39,6 +42,15 @@ impl Display for ProtocolError {
             Self::InvalidSampleFormat(value) => write!(formatter, "invalid sample format: {value}"),
             Self::InvalidWorkerAudioMessageKind(value) => {
                 write!(formatter, "invalid worker audio message kind: {value}")
+            }
+            Self::InvalidMidiEventKind(value) => {
+                write!(formatter, "invalid MIDI event kind: {value}")
+            }
+            Self::InvalidMidiChannel(value) => {
+                write!(formatter, "invalid MIDI channel: {value}")
+            }
+            Self::InvalidMidiData { field, value } => {
+                write!(formatter, "invalid MIDI {field}: {value}")
             }
             Self::InvalidPayloadLength { expected, actual } => {
                 write!(
