@@ -19,6 +19,15 @@ fn initializes_reads_parameters_and_releases_controller() {
     controller
         .set_param_normalized(42, 0.75)
         .expect("set parameter");
+    let value_string = controller
+        .param_string_by_value(42, 0.25)
+        .expect("param string")
+        .expect("display value");
+    let parsed_value = controller
+        .param_value_by_string(42, "50")
+        .expect("param value");
+    let plain_value = controller.normalized_param_to_plain(42, 0.25);
+    let normalized_value = controller.plain_param_to_normalized(42, 25.0);
     let state = controller.get_state().expect("state");
     drop(controller);
 
@@ -29,6 +38,10 @@ fn initializes_reads_parameters_and_releases_controller() {
     assert_eq!(parameters[0].title.as_deref(), Some("Gain"));
     assert!(parameters[0].flags.can_automate);
     assert_eq!(fake.value, 0.75);
+    assert_eq!(value_string, "0.5");
+    assert_eq!(parsed_value, 0.5);
+    assert_eq!(plain_value, 25.0);
+    assert_eq!(normalized_value, 0.25);
     assert_eq!(state, [1, 2, 3]);
     assert_eq!(fake.terminate_calls, 1);
     assert_eq!(fake.release_calls, 1);

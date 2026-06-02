@@ -211,6 +211,23 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
         "instance.parameter.get" => {
             ipc_parameters::handle_instance_parameter_get(request.id, request.params, state)
         }
+        "instance.parameter.info" => {
+            ipc_parameters::handle_instance_parameter_info(request.id, request.params, state)
+        }
+        "instance.parameter.valueByString" => {
+            ipc_parameters::handle_instance_parameter_value_by_string(
+                request.id,
+                request.params,
+                state,
+            )
+        }
+        "instance.parameter.normalizedByPlain" => {
+            ipc_parameters::handle_instance_parameter_normalized_by_plain(
+                request.id,
+                request.params,
+                state,
+            )
+        }
         "instance.parameter.set" => {
             ipc_parameters::handle_instance_parameter_set(request.id, request.params, state)
         }
@@ -614,6 +631,30 @@ mod tests {
         let parameter_get_value: Value =
             serde_json::from_str(&parameter_get).expect("parameter get json");
         assert_eq!(parameter_get_value["error"]["code"], 4040);
+
+        let parameter_info = handle_ipc_line(
+            r#"{"id":16,"method":"instance.parameter.info","params":{"instanceId":7,"parameterId":1,"valueNormalized":0.5}}"#,
+            &mut state,
+        );
+        let parameter_info_value: Value =
+            serde_json::from_str(&parameter_info).expect("parameter info json");
+        assert_eq!(parameter_info_value["error"]["code"], 4220);
+
+        let parameter_value_by_string = handle_ipc_line(
+            r#"{"id":17,"method":"instance.parameter.valueByString","params":{"instanceId":7,"parameterId":1,"value":"0.5"}}"#,
+            &mut state,
+        );
+        let parameter_value_by_string_value: Value =
+            serde_json::from_str(&parameter_value_by_string).expect("value-by-string json");
+        assert_eq!(parameter_value_by_string_value["error"]["code"], 4220);
+
+        let parameter_normalized_by_plain = handle_ipc_line(
+            r#"{"id":18,"method":"instance.parameter.normalizedByPlain","params":{"instanceId":7,"parameterId":1,"valuePlain":50.0}}"#,
+            &mut state,
+        );
+        let parameter_normalized_by_plain_value: Value =
+            serde_json::from_str(&parameter_normalized_by_plain).expect("normalized-by-plain json");
+        assert_eq!(parameter_normalized_by_plain_value["error"]["code"], 4040);
 
         let start = handle_ipc_line(
             r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,

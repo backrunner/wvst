@@ -181,6 +181,60 @@ impl WorkerBackend {
         }
     }
 
+    pub(super) fn param_string_by_value(
+        &self,
+        id: u32,
+        value_normalized: f64,
+    ) -> Result<Option<String>, String> {
+        match self {
+            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller()
+                .ok_or_else(|| "edit controller not available".to_string())
+                .and_then(|controller| {
+                    controller
+                        .param_string_by_value(id, value_normalized)
+                        .map_err(error_message)
+                }),
+        }
+    }
+
+    pub(super) fn param_value_by_string(&self, id: u32, value: &str) -> Result<f64, String> {
+        match self {
+            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller()
+                .ok_or_else(|| "edit controller not available".to_string())
+                .and_then(|controller| {
+                    controller
+                        .param_value_by_string(id, value)
+                        .map_err(error_message)
+                }),
+        }
+    }
+
+    pub(super) fn normalized_param_to_plain(&self, id: u32, value_normalized: f64) -> Option<f64> {
+        match self {
+            Self::Passthrough(_) => None,
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller()
+                .map(|controller| controller.normalized_param_to_plain(id, value_normalized)),
+        }
+    }
+
+    pub(super) fn plain_param_to_normalized(&self, id: u32, plain_value: f64) -> Option<f64> {
+        match self {
+            Self::Passthrough(_) => None,
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller()
+                .map(|controller| controller.plain_param_to_normalized(id, plain_value)),
+        }
+    }
+
     pub(super) fn set_param_normalized(&self, id: u32, value: f64) -> Result<(), String> {
         match self {
             Self::Passthrough(_) => Err("edit controller not available".to_string()),

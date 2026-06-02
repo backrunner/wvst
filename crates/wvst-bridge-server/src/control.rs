@@ -275,6 +275,29 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
                 .await,
             session_authorized,
         ),
+        "instance.parameter.info" => ControlResponse::new(
+            control_instances::handle_instance_parameter_info(request.id, request.params, context)
+                .await,
+            session_authorized,
+        ),
+        "instance.parameter.valueByString" => ControlResponse::new(
+            control_instances::handle_instance_parameter_value_by_string(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.parameter.normalizedByPlain" => ControlResponse::new(
+            control_instances::handle_instance_parameter_normalized_by_plain(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.parameter.set" => ControlResponse::new(
             control_instances::handle_instance_parameter_set(request.id, request.params, context)
                 .await,

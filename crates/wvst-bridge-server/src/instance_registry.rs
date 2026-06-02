@@ -62,6 +62,31 @@ pub struct InstanceParameterParams {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct InstanceParameterInfoParams {
+    pub instance_id: u64,
+    pub parameter_id: u32,
+    #[serde(default)]
+    pub value_normalized: Option<f64>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceParameterValueByStringParams {
+    pub instance_id: u64,
+    pub parameter_id: u32,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceParameterNormalizedByPlainParams {
+    pub instance_id: u64,
+    pub parameter_id: u32,
+    pub value_plain: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstanceParameterSetParams {
     pub instance_id: u64,
     pub parameter_id: u32,

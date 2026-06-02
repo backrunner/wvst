@@ -115,6 +115,27 @@ export interface InstanceParameterGetResult {
   valueNormalized: number;
 }
 
+export interface InstanceParameterInfoOptions extends InstanceParameterGetOptions {
+  valueNormalized?: number;
+}
+
+export interface InstanceParameterInfoResult extends InstanceParameterGetResult {
+  valuePlain: number | null;
+  valueString: string | null;
+}
+
+export interface InstanceParameterValueByStringOptions extends InstanceParameterGetOptions {
+  value: string;
+}
+
+export type InstanceParameterValueByStringResult = InstanceParameterInfoResult;
+
+export interface InstanceParameterNormalizedByPlainOptions extends InstanceParameterGetOptions {
+  valuePlain: number;
+}
+
+export type InstanceParameterNormalizedByPlainResult = InstanceParameterInfoResult;
+
 export interface InstanceParameterSetOptions extends InstanceParameterGetOptions {
   valueNormalized: number;
 }
@@ -343,6 +364,13 @@ export interface InstanceApi {
   stop(options: InstanceProcessingOptions): Promise<InstanceProcessingResult>;
   parameters(options: InstanceParametersOptions): Promise<InstanceParametersResult>;
   parameterGet(options: InstanceParameterGetOptions): Promise<InstanceParameterGetResult>;
+  parameterInfo(options: InstanceParameterInfoOptions): Promise<InstanceParameterInfoResult>;
+  parameterValueByString(
+    options: InstanceParameterValueByStringOptions,
+  ): Promise<InstanceParameterValueByStringResult>;
+  parameterNormalizedByPlain(
+    options: InstanceParameterNormalizedByPlainOptions,
+  ): Promise<InstanceParameterNormalizedByPlainResult>;
   parameterSet(options: InstanceParameterSetOptions): Promise<InstanceParameterSetResult>;
   units(options: InstanceUnitsOptions): Promise<InstanceUnitsResult>;
   selectUnit(options: InstanceSelectUnitOptions): Promise<InstanceSelectUnitResult>;

@@ -123,6 +123,50 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(parameters_value["result"]["parameters"][0]["id"], 42);
     assert_eq!(parameters_value["result"]["parameters"][0]["title"], "Gain");
 
+    let parameter_info_request = serde_json::json!({
+        "id": 32,
+        "method": "instance.parameter.info",
+        "params": { "instanceId": instance_id, "parameterId": 42, "valueNormalized": 0.25 }
+    })
+    .to_string();
+    let parameter_info_value = request_json(&parameter_info_request, context).await;
+    assert_eq!(parameter_info_value["result"]["valuePlain"], 25.0);
+    assert_eq!(parameter_info_value["result"]["valueString"], "25 dB");
+
+    let parameter_value_by_string_request = serde_json::json!({
+        "id": 33,
+        "method": "instance.parameter.valueByString",
+        "params": { "instanceId": instance_id, "parameterId": 42, "value": "50 dB" }
+    })
+    .to_string();
+    let parameter_value_by_string_value =
+        request_json(&parameter_value_by_string_request, context).await;
+    assert_eq!(
+        parameter_value_by_string_value["result"]["valueNormalized"],
+        0.5
+    );
+    assert_eq!(
+        parameter_value_by_string_value["result"]["valueString"],
+        "50 dB"
+    );
+
+    let parameter_normalized_by_plain_request = serde_json::json!({
+        "id": 34,
+        "method": "instance.parameter.normalizedByPlain",
+        "params": { "instanceId": instance_id, "parameterId": 42, "valuePlain": 75.0 }
+    })
+    .to_string();
+    let parameter_normalized_by_plain_value =
+        request_json(&parameter_normalized_by_plain_request, context).await;
+    assert_eq!(
+        parameter_normalized_by_plain_value["result"]["valueNormalized"],
+        0.75
+    );
+    assert_eq!(
+        parameter_normalized_by_plain_value["result"]["valueString"],
+        "75 dB"
+    );
+
     let close_stream_request = serde_json::json!({
         "id": 4,
         "method": "stream.close",
@@ -521,6 +565,9 @@ while IFS= read -r line; do
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
     *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough",%s,"latencySamples":0,"tailSamples":0}}\n' "$id" "$runtime_capabilities" ;;
     *instance.parameters*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameters":[{"id":42,"title":"Gain","shortTitle":"Gain","units":"dB","stepCount":0,"defaultNormalizedValue":0.5,"unitId":0,"flags":{"raw":1,"canAutomate":true,"readOnly":false,"wrapAround":false,"list":false,"hidden":false,"programChange":false,"bypass":false}}]}}\n' "$id" ;;
+    *instance.parameter.info*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.25,"valuePlain":25.0,"valueString":"25 dB"}}\n' "$id" ;;
+    *instance.parameter.valueByString*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.5,"valuePlain":50.0,"valueString":"50 dB"}}\n' "$id" ;;
+    *instance.parameter.normalizedByPlain*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.75,"valuePlain":75.0,"valueString":"75 dB"}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
     *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0}]}}\n' "$id" "$runtime_capabilities" ;;

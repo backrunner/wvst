@@ -9,8 +9,14 @@ import type {
   InstanceGetStateResult,
   InstanceParameterGetOptions,
   InstanceParameterGetResult,
+  InstanceParameterInfoOptions,
+  InstanceParameterInfoResult,
+  InstanceParameterNormalizedByPlainOptions,
+  InstanceParameterNormalizedByPlainResult,
   InstanceParameterSetOptions,
   InstanceParameterSetResult,
+  InstanceParameterValueByStringOptions,
+  InstanceParameterValueByStringResult,
   InstanceParametersOptions,
   InstanceParametersResult,
   InstanceProgramDataOptions,
@@ -140,6 +146,18 @@ export class WVSTClient {
         this.request<InstanceParametersResult>("instance.parameters", options),
       parameterGet: (options: InstanceParameterGetOptions) =>
         this.request<InstanceParameterGetResult>("instance.parameter.get", options),
+      parameterInfo: (options: InstanceParameterInfoOptions) =>
+        this.request<InstanceParameterInfoResult>("instance.parameter.info", options),
+      parameterValueByString: (options: InstanceParameterValueByStringOptions) =>
+        this.request<InstanceParameterValueByStringResult>(
+          "instance.parameter.valueByString",
+          options,
+        ),
+      parameterNormalizedByPlain: (options: InstanceParameterNormalizedByPlainOptions) =>
+        this.request<InstanceParameterNormalizedByPlainResult>(
+          "instance.parameter.normalizedByPlain",
+          options,
+        ),
       parameterSet: (options: InstanceParameterSetOptions) =>
         this.request<InstanceParameterSetResult>("instance.parameter.set", options),
       units: (options: InstanceUnitsOptions) =>
