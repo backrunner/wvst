@@ -150,6 +150,8 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
     assert_eq!(metrics.audio_frame_fallbacks, 1);
     assert_eq!(metrics.audio_frames_routed, 1);
     assert_eq!(metrics.audio_frame_route_failures, 0);
+    assert_eq!(metrics.audio_route_latency.count, 2);
+    assert!(metrics.audio_route_latency.p50_us.is_some());
 
     state
         .instances
@@ -177,6 +179,8 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
     assert_eq!(metrics.audio_frame_fallbacks, 1);
     assert_eq!(metrics.audio_frames_routed, 1);
     assert_eq!(metrics.audio_frame_route_failures, 1);
+    assert_eq!(metrics.audio_route_latency.count, 3);
+    assert!(metrics.audio_route_latency.p95_us.is_some());
 
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));

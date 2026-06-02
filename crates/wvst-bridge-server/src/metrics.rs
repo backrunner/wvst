@@ -1,3 +1,4 @@
+use std::array;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -16,7 +17,24 @@ pub struct BridgeMetrics {
     worker_failures: AtomicU64,
     worker_restarts: AtomicU64,
     worker_auto_restarts: AtomicU64,
+    audio_route_latency: LatencyHistogram,
 }
+
+const LATENCY_BUCKETS_US: [u64; 13] = [
+    100,
+    250,
+    500,
+    1_000,
+    2_000,
+    5_000,
+    10_000,
+    20_000,
+    50_000,
+    100_000,
+    250_000,
+    500_000,
+    u64::MAX,
+];
 
 impl BridgeMetrics {
     pub fn new() -> Self {
@@ -32,6 +50,7 @@ impl BridgeMetrics {
             worker_failures: AtomicU64::new(0),
             worker_restarts: AtomicU64::new(0),
             worker_auto_restarts: AtomicU64::new(0),
+            audio_route_latency: LatencyHistogram::new(),
         }
     }
 
@@ -76,6 +95,10 @@ impl BridgeMetrics {
         self.worker_auto_restarts.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn record_audio_route_latency_us(&self, value: u64) {
+        self.audio_route_latency.record(value);
+    }
+
     pub fn snapshot(&self) -> BridgeMetricsSnapshot {
         BridgeMetricsSnapshot {
             uptime_ms: self.started_at.elapsed().as_millis() as u64,
@@ -89,6 +112,7 @@ impl BridgeMetrics {
             worker_failures: self.worker_failures.load(Ordering::Relaxed),
             worker_restarts: self.worker_restarts.load(Ordering::Relaxed),
             worker_auto_restarts: self.worker_auto_restarts.load(Ordering::Relaxed),
+            audio_route_latency: self.audio_route_latency.snapshot(),
         }
     }
 }
@@ -113,4 +137,110 @@ pub struct BridgeMetricsSnapshot {
     pub worker_failures: u64,
     pub worker_restarts: u64,
     pub worker_auto_restarts: u64,
+    pub audio_route_latency: LatencySnapshot,
+}
+
+#[derive(Debug)]
+struct LatencyHistogram {
+    buckets: [AtomicU64; LATENCY_BUCKETS_US.len()],
+}
+
+impl LatencyHistogram {
+    fn new() -> Self {
+        Self {
+            buckets: array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    fn record(&self, value_us: u64) {
+        let bucket = LATENCY_BUCKETS_US
+            .iter()
+            .position(|limit| value_us <= *limit)
+            .unwrap_or(LATENCY_BUCKETS_US.len() - 1);
+        self.buckets[bucket].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> LatencySnapshot {
+        let buckets = self
+            .buckets
+            .iter()
+            .enumerate()
+            .map(|(index, bucket)| LatencyBucketSnapshot {
+                le_us: bucket_upper_bound(index),
+                count: bucket.load(Ordering::Relaxed),
+            })
+            .collect::<Vec<_>>();
+        let count = buckets.iter().map(|bucket| bucket.count).sum();
+
+        LatencySnapshot {
+            count,
+            p50_us: percentile_from_buckets(&buckets, count, 50),
+            p95_us: percentile_from_buckets(&buckets, count, 95),
+            p99_us: percentile_from_buckets(&buckets, count, 99),
+            buckets,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencySnapshot {
+    pub count: u64,
+    pub p50_us: Option<u64>,
+    pub p95_us: Option<u64>,
+    pub p99_us: Option<u64>,
+    pub buckets: Vec<LatencyBucketSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyBucketSnapshot {
+    pub le_us: Option<u64>,
+    pub count: u64,
+}
+
+fn percentile_from_buckets(
+    buckets: &[LatencyBucketSnapshot],
+    total: u64,
+    percentile: u64,
+) -> Option<u64> {
+    if total == 0 {
+        return None;
+    }
+    let target = total.saturating_mul(percentile).div_ceil(100).max(1);
+    let mut cumulative = 0_u64;
+    for bucket in buckets {
+        cumulative = cumulative.saturating_add(bucket.count);
+        if cumulative >= target {
+            return bucket.le_us;
+        }
+    }
+
+    None
+}
+
+fn bucket_upper_bound(index: usize) -> Option<u64> {
+    let value = LATENCY_BUCKETS_US[index];
+    (value != u64::MAX).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_audio_route_latency_percentiles() {
+        let metrics = BridgeMetrics::new();
+
+        metrics.record_audio_route_latency_us(80);
+        metrics.record_audio_route_latency_us(700);
+        metrics.record_audio_route_latency_us(60_000);
+
+        let latency = metrics.snapshot().audio_route_latency;
+        assert_eq!(latency.count, 3);
+        assert_eq!(latency.p50_us, Some(1_000));
+        assert_eq!(latency.p95_us, Some(100_000));
+        assert_eq!(latency.p99_us, Some(100_000));
+        assert_eq!(latency.buckets[0].count, 1);
+    }
 }

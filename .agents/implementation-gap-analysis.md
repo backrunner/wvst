@@ -26,6 +26,7 @@
 - `wvst-host-worker` 已为每个实例预分配 audio scratch buffers，并复用 audio IPC request/response body buffers；passthrough audio IPC 不再为每个 block 重复分配输入/输出 sample Vec 或响应 frame Vec。
 - Bridge 二进制音频帧已能按 `streamId` 路由到对应 worker 的独立二进制 audio IPC，并回传 worker 处理后的 F32 frame；未匹配实例或非法帧暂时保留 echo fallback。
 - Bridge metrics 已区分二进制帧总量、成功路由音频帧、fallback echo 和音频路由失败，便于后续接入 drop/late/underflow/overflow 统计。
+- Bridge metrics 已加入二进制音频路由耗时直方图和 `audioRouteLatency` p50/p95/p99 微秒级快照，Web SDK metrics 类型已同步。
 - Bridge/Web SDK 已提供 `stream.open` / `stream.close` 控制 API，实例记录包含 `streamState`，Bridge 只将 open stream 的音频帧路由到 worker。
 - 对于已知 stream 的关闭或处理失败场景，Bridge 会返回带 `silence` / `end-of-stream` / `process-error` flag 的诊断静音音频帧，避免把异常伪装成正常 echo。
 - Web `bridge-worker` 已具备从 SAB input ring 读取 quantum、编码 WVST binary audio frame、发送 Bridge 并写回 output ring 的基础 audio pump；AudioWorklet processor 已支持通过 SAB ring 和计数器交换音频块。
@@ -102,7 +103,7 @@
 - Web 设备选择已有底层 helper、高层 session graph helper、capability API、device watcher、sample-rate guard、手动 stream restart 和基础 loopback metrics；仍缺少 sample-rate change 后的自动重建策略和真实端到端设备切换测量。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，仍缺少共享内存/预分配 buffer 和背压语义。
 - worker 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；runtime backend 已接入真实 VST `process()`，但当前仍经 worker instance mutex 串行处理，并保留 interleaved/planar scratch copy。
-- late/drop/underflow/overflow 策略和 p50/p95/p99 指标；当前只有 route/fallback/failure 计数，还没有时延分位数。
+- late/drop/underflow/overflow 策略和更完整的 jitter/端到端延迟指标；当前 Bridge 已有 audio route p50/p95/p99 分位数，但还不是 WebAudio 到 VST 再回 WebAudio 的端到端测量。
 
 ### 5. MIDI 与音源 VST
 
@@ -128,4 +129,4 @@
 3. 给 worker runtime backend 增加兼容失败诊断和更细粒度 runtime capability。
 4. 给 Bridge worker supervisor 增加恢复中状态/事件回传、quarantine 解除策略和 worker crash 事件回传。
 5. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
-6. 为 audio IPC 增加 backpressure/late-frame 指标和 p50/p95/p99 延迟统计。
+6. 为 audio IPC 增加 backpressure/late-frame/jitter 指标，并把 Bridge route latency 扩展到端到端 WebAudio 往返测量。

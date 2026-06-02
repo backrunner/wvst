@@ -19,6 +19,20 @@ export interface BridgeMetrics {
   workerFailures: number;
   workerRestarts: number;
   workerAutoRestarts: number;
+  audioRouteLatency: BridgeLatencyMetrics;
+}
+
+export interface BridgeLatencyMetrics {
+  count: number;
+  p50Us: number | null;
+  p95Us: number | null;
+  p99Us: number | null;
+  buckets: BridgeLatencyBucket[];
+}
+
+export interface BridgeLatencyBucket {
+  leUs: number | null;
+  count: number;
 }
 
 interface RpcResponse {

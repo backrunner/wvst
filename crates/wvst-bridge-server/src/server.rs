@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -150,8 +151,9 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
 
 async fn process_binary_payload(payload: Vec<u8>, state: &BridgeState) -> Vec<u8> {
     state.metrics.increment_binary_frames();
+    let started_at = Instant::now();
 
-    match route_audio_frame(&payload, state).await {
+    let response = match route_audio_frame(&payload, state).await {
         AudioRouteResult::Routed(response) => {
             state.metrics.increment_audio_frames_routed();
             response
@@ -164,7 +166,11 @@ async fn process_binary_payload(payload: Vec<u8>, state: &BridgeState) -> Vec<u8
             state.metrics.increment_audio_frame_fallbacks();
             payload
         }
-    }
+    };
+    state
+        .metrics
+        .record_audio_route_latency_us(started_at.elapsed().as_micros() as u64);
+    response
 }
 
 async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteResult {
