@@ -19,6 +19,10 @@ fn initializes_reads_parameters_and_releases_controller() {
     controller
         .set_param_normalized(42, 0.75)
         .expect("set parameter");
+    controller.begin_edit(42);
+    controller.perform_edit(42, 0.8).expect("perform edit");
+    controller.end_edit(42);
+    let handler_snapshot = controller.component_handler_snapshot();
     let value_string = controller
         .param_string_by_value(42, 0.25)
         .expect("param string")
@@ -37,7 +41,24 @@ fn initializes_reads_parameters_and_releases_controller() {
     assert_eq!(parameters[0].id, 42);
     assert_eq!(parameters[0].title.as_deref(), Some("Gain"));
     assert!(parameters[0].flags.can_automate);
-    assert_eq!(fake.value, 0.75);
+    assert_eq!(fake.value, 0.8);
+    assert_eq!(handler_snapshot.total_events, 3);
+    assert_eq!(
+        handler_snapshot.recent_events[0].kind,
+        crate::Vst3ComponentHandlerEventKind::BeginEdit
+    );
+    assert_eq!(
+        handler_snapshot.recent_events[1].kind,
+        crate::Vst3ComponentHandlerEventKind::PerformEdit
+    );
+    assert_eq!(
+        handler_snapshot.recent_events[1].value_normalized,
+        Some(0.8)
+    );
+    assert_eq!(
+        handler_snapshot.recent_events[2].kind,
+        crate::Vst3ComponentHandlerEventKind::EndEdit
+    );
     assert_eq!(value_string, "0.5");
     assert_eq!(parsed_value, 0.5);
     assert_eq!(plain_value, 25.0);

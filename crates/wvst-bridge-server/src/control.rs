@@ -305,6 +305,33 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
                 .await,
             session_authorized,
         ),
+        "instance.parameter.beginEdit" => ControlResponse::new(
+            control_instances::handle_instance_parameter_begin_edit(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.parameter.performEdit" => ControlResponse::new(
+            control_instances::handle_instance_parameter_perform_edit(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.parameter.endEdit" => ControlResponse::new(
+            control_instances::handle_instance_parameter_end_edit(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.getState" => ControlResponse::new(
             control_instances::handle_instance_get_state(request.id, request.params, context).await,
             session_authorized,

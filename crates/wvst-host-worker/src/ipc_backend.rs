@@ -294,6 +294,39 @@ impl WorkerBackend {
         }
     }
 
+    pub(super) fn begin_param_edit(&self, id: u32) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller()
+                .ok_or_else(|| "edit controller not available".to_string())
+                .map(|controller| controller.begin_edit(id)),
+        }
+    }
+
+    pub(super) fn perform_param_edit(&self, id: u32, value: f64) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller()
+                .ok_or_else(|| "edit controller not available".to_string())
+                .and_then(|controller| controller.perform_edit(id, value).map_err(error_message)),
+        }
+    }
+
+    pub(super) fn end_param_edit(&self, id: u32) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller()
+                .ok_or_else(|| "edit controller not available".to_string())
+                .map(|controller| controller.end_edit(id)),
+        }
+    }
+
     pub(super) fn controller_state(&self) -> Result<Option<Vec<u8>>, String> {
         match self {
             Self::Passthrough(_) => Ok(None),

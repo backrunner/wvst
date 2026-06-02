@@ -663,6 +663,100 @@ pub async fn handle_instance_parameter_set(
     }
 }
 
+pub async fn handle_instance_parameter_begin_edit(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid parameter begin edit params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .parameter_begin_edit(params.instance_id, params.parameter_id)
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_parameter_perform_edit(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterSetParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid parameter perform edit params: {error}"),
+            );
+        }
+    };
+    if !is_normalized_value(params.value_normalized) {
+        return response_error(id, 4220, "valueNormalized must be finite in [0, 1]");
+    }
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .parameter_perform_edit(
+            params.instance_id,
+            params.parameter_id,
+            params.value_normalized,
+        )
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_parameter_end_edit(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid parameter end edit params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .parameter_end_edit(params.instance_id, params.parameter_id)
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
 fn is_normalized_value(value: f64) -> bool {
     value.is_finite() && (0.0..=1.0).contains(&value)
 }

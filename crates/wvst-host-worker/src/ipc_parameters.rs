@@ -342,6 +342,117 @@ pub(super) fn handle_instance_parameter_set(
     }
 }
 
+pub(super) fn handle_instance_parameter_begin_edit(
+    id: Value,
+    params: Value,
+    state: &mut WorkerIpcState,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid parameter begin edit params: {error}"),
+            );
+        }
+    };
+    let Some(instance) = state.instances.get(&params.instance_id) else {
+        return response_error(
+            id,
+            4040,
+            format!("instance not found: {}", params.instance_id),
+        );
+    };
+
+    match instance.backend.begin_param_edit(params.parameter_id) {
+        Ok(()) => parameter_edit_response(
+            id,
+            params.instance_id,
+            params.parameter_id,
+            "begin-edit",
+            None,
+        ),
+        Err(error) => response_error(id, 4220, error),
+    }
+}
+
+pub(super) fn handle_instance_parameter_perform_edit(
+    id: Value,
+    params: Value,
+    state: &mut WorkerIpcState,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterSetParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid parameter perform edit params: {error}"),
+            );
+        }
+    };
+    if !is_normalized_value(params.value_normalized) {
+        return response_error(id, 4220, "valueNormalized must be finite in [0, 1]");
+    }
+    let Some(instance) = state.instances.get(&params.instance_id) else {
+        return response_error(
+            id,
+            4040,
+            format!("instance not found: {}", params.instance_id),
+        );
+    };
+
+    match instance
+        .backend
+        .perform_param_edit(params.parameter_id, params.value_normalized)
+    {
+        Ok(()) => parameter_edit_response(
+            id,
+            params.instance_id,
+            params.parameter_id,
+            "perform-edit",
+            Some(params.value_normalized),
+        ),
+        Err(error) => response_error(id, 4220, error),
+    }
+}
+
+pub(super) fn handle_instance_parameter_end_edit(
+    id: Value,
+    params: Value,
+    state: &mut WorkerIpcState,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid parameter end edit params: {error}"),
+            );
+        }
+    };
+    let Some(instance) = state.instances.get(&params.instance_id) else {
+        return response_error(
+            id,
+            4040,
+            format!("instance not found: {}", params.instance_id),
+        );
+    };
+
+    match instance.backend.end_param_edit(params.parameter_id) {
+        Ok(()) => parameter_edit_response(
+            id,
+            params.instance_id,
+            params.parameter_id,
+            "end-edit",
+            None,
+        ),
+        Err(error) => response_error(id, 4220, error),
+    }
+}
+
 fn is_normalized_value(value: f64) -> bool {
     value.is_finite() && (0.0..=1.0).contains(&value)
 }
@@ -373,6 +484,24 @@ fn parameter_info_response(
             "valueNormalized": value_normalized,
             "valuePlain": value_plain,
             "valueString": value_string,
+        }),
+    )
+}
+
+fn parameter_edit_response(
+    id: Value,
+    instance_id: u64,
+    parameter_id: u32,
+    edit_kind: &'static str,
+    value_normalized: Option<f64>,
+) -> String {
+    response_result(
+        id,
+        json!({
+            "instanceId": instance_id,
+            "parameterId": parameter_id,
+            "editKind": edit_kind,
+            "valueNormalized": value_normalized,
         }),
     )
 }

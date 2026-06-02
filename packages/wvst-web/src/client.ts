@@ -9,10 +9,16 @@ import type {
   InstanceGetStateResult,
   InstanceParameterGetOptions,
   InstanceParameterGetResult,
+  InstanceParameterBeginEditOptions,
+  InstanceParameterBeginEditResult,
+  InstanceParameterEndEditOptions,
+  InstanceParameterEndEditResult,
   InstanceParameterInfoOptions,
   InstanceParameterInfoResult,
   InstanceParameterNormalizedByPlainOptions,
   InstanceParameterNormalizedByPlainResult,
+  InstanceParameterPerformEditOptions,
+  InstanceParameterPerformEditResult,
   InstanceParameterSetOptions,
   InstanceParameterSetResult,
   InstanceParameterValueByStringOptions,
@@ -160,6 +166,12 @@ export class WVSTClient {
         ),
       parameterSet: (options: InstanceParameterSetOptions) =>
         this.request<InstanceParameterSetResult>("instance.parameter.set", options),
+      parameterBeginEdit: (options: InstanceParameterBeginEditOptions) =>
+        this.request<InstanceParameterBeginEditResult>("instance.parameter.beginEdit", options),
+      parameterPerformEdit: (options: InstanceParameterPerformEditOptions) =>
+        this.request<InstanceParameterPerformEditResult>("instance.parameter.performEdit", options),
+      parameterEndEdit: (options: InstanceParameterEndEditOptions) =>
+        this.request<InstanceParameterEndEditResult>("instance.parameter.endEdit", options),
       units: (options: InstanceUnitsOptions) =>
         this.request<InstanceUnitsResult>("instance.units", options),
       selectUnit: (options: InstanceSelectUnitOptions) =>

@@ -216,6 +216,43 @@ async fn creates_lists_and_destroys_instance() {
         "75 dB"
     );
 
+    let parameter_begin_edit_request = serde_json::json!({
+        "id": 35,
+        "method": "instance.parameter.beginEdit",
+        "params": { "instanceId": instance_id, "parameterId": 42 }
+    })
+    .to_string();
+    let parameter_begin_edit_value = request_json(&parameter_begin_edit_request, context).await;
+    assert_eq!(
+        parameter_begin_edit_value["result"]["editKind"],
+        "begin-edit"
+    );
+
+    let parameter_perform_edit_request = serde_json::json!({
+        "id": 36,
+        "method": "instance.parameter.performEdit",
+        "params": { "instanceId": instance_id, "parameterId": 42, "valueNormalized": 0.66 }
+    })
+    .to_string();
+    let parameter_perform_edit_value = request_json(&parameter_perform_edit_request, context).await;
+    assert_eq!(
+        parameter_perform_edit_value["result"]["editKind"],
+        "perform-edit"
+    );
+    assert_eq!(
+        parameter_perform_edit_value["result"]["valueNormalized"],
+        0.66
+    );
+
+    let parameter_end_edit_request = serde_json::json!({
+        "id": 37,
+        "method": "instance.parameter.endEdit",
+        "params": { "instanceId": instance_id, "parameterId": 42 }
+    })
+    .to_string();
+    let parameter_end_edit_value = request_json(&parameter_end_edit_request, context).await;
+    assert_eq!(parameter_end_edit_value["result"]["editKind"], "end-edit");
+
     let close_stream_request = serde_json::json!({
         "id": 4,
         "method": "stream.close",
@@ -626,6 +663,9 @@ while IFS= read -r line; do
     *instance.parameter.info*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.25,"valuePlain":25.0,"valueString":"25 dB"}}\n' "$id" ;;
     *instance.parameter.valueByString*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.5,"valuePlain":50.0,"valueString":"50 dB"}}\n' "$id" ;;
     *instance.parameter.normalizedByPlain*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.75,"valuePlain":75.0,"valueString":"75 dB"}}\n' "$id" ;;
+    *instance.parameter.beginEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"begin-edit","valueNormalized":null}}\n' "$id" ;;
+    *instance.parameter.performEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"perform-edit","valueNormalized":0.66}}\n' "$id" ;;
+    *instance.parameter.endEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"end-edit","valueNormalized":null}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
     *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0,"diagnostics":{"passthroughReason":{"kind":"non-bundle-path","message":"test fallback"},"componentHandler":{"totalEvents":2,"recentEvents":[{"sequence":1,"kind":"begin-edit","parameterId":42},{"sequence":2,"kind":"perform-edit","parameterId":42,"valueNormalized":0.75}]}}}]}}\n' "$id" "$runtime_capabilities" ;;

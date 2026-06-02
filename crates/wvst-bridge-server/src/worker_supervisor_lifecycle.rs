@@ -116,6 +116,56 @@ impl WorkerSupervisor {
         .await
     }
 
+    pub async fn parameter_begin_edit(
+        &self,
+        instance_id: u64,
+        parameter_id: u32,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.instance_request(
+            instance_id,
+            "instance.parameter.beginEdit",
+            json!({
+                "instanceId": instance_id,
+                "parameterId": parameter_id,
+            }),
+        )
+        .await
+    }
+
+    pub async fn parameter_perform_edit(
+        &self,
+        instance_id: u64,
+        parameter_id: u32,
+        value_normalized: f64,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.instance_request(
+            instance_id,
+            "instance.parameter.performEdit",
+            json!({
+                "instanceId": instance_id,
+                "parameterId": parameter_id,
+                "valueNormalized": value_normalized,
+            }),
+        )
+        .await
+    }
+
+    pub async fn parameter_end_edit(
+        &self,
+        instance_id: u64,
+        parameter_id: u32,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.instance_request(
+            instance_id,
+            "instance.parameter.endEdit",
+            json!({
+                "instanceId": instance_id,
+                "parameterId": parameter_id,
+            }),
+        )
+        .await
+    }
+
     pub async fn get_state(&self, instance_id: u64) -> Result<Value, WorkerSupervisorError> {
         self.instance_request(
             instance_id,

@@ -150,6 +150,20 @@ impl Vst3EditController {
         })
     }
 
+    pub fn begin_edit(&self, id: ParamId) {
+        self.component_handler.begin_edit(id);
+    }
+
+    pub fn perform_edit(&self, id: ParamId, value: ParamValue) -> HostResult<()> {
+        self.set_param_normalized(id, value)?;
+        self.component_handler.perform_edit(id, value);
+        Ok(())
+    }
+
+    pub fn end_edit(&self, id: ParamId) {
+        self.component_handler.end_edit(id);
+    }
+
     pub fn param_string_by_value(
         &self,
         id: ParamId,

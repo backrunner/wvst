@@ -231,6 +231,17 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
         "instance.parameter.set" => {
             ipc_parameters::handle_instance_parameter_set(request.id, request.params, state)
         }
+        "instance.parameter.beginEdit" => {
+            ipc_parameters::handle_instance_parameter_begin_edit(request.id, request.params, state)
+        }
+        "instance.parameter.performEdit" => ipc_parameters::handle_instance_parameter_perform_edit(
+            request.id,
+            request.params,
+            state,
+        ),
+        "instance.parameter.endEdit" => {
+            ipc_parameters::handle_instance_parameter_end_edit(request.id, request.params, state)
+        }
         "instance.getState" => {
             ipc_parameters::handle_instance_get_state(request.id, request.params, state)
         }
@@ -684,6 +695,30 @@ mod tests {
         let parameter_normalized_by_plain_value: Value =
             serde_json::from_str(&parameter_normalized_by_plain).expect("normalized-by-plain json");
         assert_eq!(parameter_normalized_by_plain_value["error"]["code"], 4040);
+
+        let parameter_begin_edit = handle_ipc_line(
+            r#"{"id":19,"method":"instance.parameter.beginEdit","params":{"instanceId":7,"parameterId":1}}"#,
+            &mut state,
+        );
+        let parameter_begin_edit_value: Value =
+            serde_json::from_str(&parameter_begin_edit).expect("begin-edit json");
+        assert_eq!(parameter_begin_edit_value["error"]["code"], 4220);
+
+        let parameter_perform_edit = handle_ipc_line(
+            r#"{"id":20,"method":"instance.parameter.performEdit","params":{"instanceId":7,"parameterId":1,"valueNormalized":0.5}}"#,
+            &mut state,
+        );
+        let parameter_perform_edit_value: Value =
+            serde_json::from_str(&parameter_perform_edit).expect("perform-edit json");
+        assert_eq!(parameter_perform_edit_value["error"]["code"], 4220);
+
+        let parameter_end_edit = handle_ipc_line(
+            r#"{"id":21,"method":"instance.parameter.endEdit","params":{"instanceId":7,"parameterId":1}}"#,
+            &mut state,
+        );
+        let parameter_end_edit_value: Value =
+            serde_json::from_str(&parameter_end_edit).expect("end-edit json");
+        assert_eq!(parameter_end_edit_value["error"]["code"], 4220);
 
         let start = handle_ipc_line(
             r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,

@@ -143,6 +143,24 @@ export interface InstanceParameterSetOptions extends InstanceParameterGetOptions
 
 export type InstanceParameterSetResult = InstanceParameterGetResult;
 
+export type InstanceParameterBeginEditOptions = InstanceParameterGetOptions;
+
+export interface InstanceParameterEditResult {
+  instanceId: number;
+  parameterId: number;
+  editKind: "begin-edit" | "perform-edit" | "end-edit";
+  valueNormalized: number | null;
+}
+
+export interface InstanceParameterPerformEditOptions extends InstanceParameterGetOptions {
+  valueNormalized: number;
+}
+
+export type InstanceParameterBeginEditResult = InstanceParameterEditResult;
+export type InstanceParameterPerformEditResult = InstanceParameterEditResult;
+export type InstanceParameterEndEditOptions = InstanceParameterGetOptions;
+export type InstanceParameterEndEditResult = InstanceParameterEditResult;
+
 export interface Vst3UnitMetadata {
   units: Vst3UnitInfoEntry[];
   programLists: Vst3ProgramList[];
@@ -371,6 +389,15 @@ export interface InstanceApi {
     options: InstanceParameterNormalizedByPlainOptions,
   ): Promise<InstanceParameterNormalizedByPlainResult>;
   parameterSet(options: InstanceParameterSetOptions): Promise<InstanceParameterSetResult>;
+  parameterBeginEdit(
+    options: InstanceParameterBeginEditOptions,
+  ): Promise<InstanceParameterBeginEditResult>;
+  parameterPerformEdit(
+    options: InstanceParameterPerformEditOptions,
+  ): Promise<InstanceParameterPerformEditResult>;
+  parameterEndEdit(
+    options: InstanceParameterEndEditOptions,
+  ): Promise<InstanceParameterEndEditResult>;
   units(options: InstanceUnitsOptions): Promise<InstanceUnitsResult>;
   selectUnit(options: InstanceSelectUnitOptions): Promise<InstanceSelectUnitResult>;
   unitByBus(options: InstanceUnitByBusOptions): Promise<InstanceUnitByBusResult>;

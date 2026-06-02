@@ -82,6 +82,28 @@ impl Vst3ComponentHandler {
     pub fn snapshot(&self) -> Vst3ComponentHandlerSnapshot {
         self.object.snapshot()
     }
+
+    pub fn begin_edit(&self, parameter_id: ParamId) {
+        self.object.record(
+            ComponentHandlerEventRecord::new(Vst3ComponentHandlerEventKind::BeginEdit)
+                .with_parameter_id(parameter_id),
+        );
+    }
+
+    pub fn perform_edit(&self, parameter_id: ParamId, value_normalized: ParamValue) {
+        self.object.record(
+            ComponentHandlerEventRecord::new(Vst3ComponentHandlerEventKind::PerformEdit)
+                .with_parameter_id(parameter_id)
+                .with_value_normalized(value_normalized),
+        );
+    }
+
+    pub fn end_edit(&self, parameter_id: ParamId) {
+        self.object.record(
+            ComponentHandlerEventRecord::new(Vst3ComponentHandlerEventKind::EndEdit)
+                .with_parameter_id(parameter_id),
+        );
+    }
 }
 
 impl Default for Vst3ComponentHandler {
