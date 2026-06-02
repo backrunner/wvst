@@ -9,8 +9,8 @@ use crate::vst3_abi::{
 use crate::{
     HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3BusType,
     Vst3ConnectionPoint, Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState,
-    Vst3ParameterChange, Vst3ProcessBuffers, Vst3ProcessingConfig, Vst3ProgramListData,
-    Vst3UnitData, state_stream::Vst3StateStream,
+    Vst3ParameterChange, Vst3ProcessBuffers, Vst3ProcessOutput, Vst3ProcessingConfig,
+    Vst3ProgramListData, Vst3UnitData, state_stream::Vst3StateStream,
 };
 
 #[derive(Debug)]
@@ -210,6 +210,29 @@ impl Vst3ComponentInstance {
             .prepare_input_parameter_changes(frames, parameter_changes)?;
         self.processor.process(&mut self.buffers)?;
         self.buffers.copy_output_to_interleaved(frames, output)
+    }
+
+    pub fn process_interleaved_f32_with_io_events_and_parameters(
+        &mut self,
+        frames: usize,
+        input: &[f32],
+        events: &[Vst3InputEvent],
+        parameter_changes: &[Vst3ParameterChange],
+        output: &mut [f32],
+        process_output: &mut Vst3ProcessOutput,
+    ) -> HostResult<()> {
+        process_output.clear();
+        self.process_interleaved_f32_with_events_and_parameters(
+            frames,
+            input,
+            events,
+            parameter_changes,
+            output,
+        )?;
+        self.buffers.output_events_into(&mut process_output.events);
+        self.buffers
+            .output_parameter_changes_into(&mut process_output.parameter_changes);
+        Ok(())
     }
 
     pub fn stop_processing(&mut self) -> HostResult<()> {

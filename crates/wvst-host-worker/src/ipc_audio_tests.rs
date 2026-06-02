@@ -6,7 +6,10 @@ use wvst_protocol::{
     MIDI_EVENT_LEN, MidiEvent, MidiEventKind, PARAMETER_AUTOMATION_EVENT_LEN,
     ParameterAutomationEvent, WorkerAudioIpcMessage,
 };
-use wvst_vst3_host::{VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3InputEvent, Vst3ParameterChange};
+use wvst_vst3_host::{
+    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3InputEvent, Vst3NoteEvent, Vst3OutputEvent,
+    Vst3ParameterChange, Vst3PolyPressureEvent,
+};
 
 use super::*;
 
@@ -183,6 +186,70 @@ fn maps_midi_controller_events_to_parameter_changes() {
     assert_eq!(parameter_changes[1].sample_offset, 4);
     assert_eq!(parameter_changes[1].parameter_id, 101);
     assert!((parameter_changes[1].value_normalized - (8192.0 / 16_383.0)).abs() < f64::EPSILON);
+}
+
+#[test]
+fn encodes_output_audio_midi_and_parameter_events() {
+    let header = test_header_with_event_counts(2, 1, 1);
+    let output = [0.1_f32, 0.2, 0.3, 0.4];
+    let events = [
+        Vst3OutputEvent::NoteOn(Vst3NoteEvent {
+            sample_offset: 0,
+            channel: 1,
+            pitch: 60,
+            velocity: 100.0 / 127.0,
+            note_id: 12,
+        }),
+        Vst3OutputEvent::PolyPressure(Vst3PolyPressureEvent {
+            sample_offset: 1,
+            channel: 1,
+            pitch: 60,
+            pressure: 64.0 / 127.0,
+            note_id: 12,
+        }),
+    ];
+    let parameter_changes = [Vst3ParameterChange {
+        sample_offset: 1,
+        parameter_id: 42,
+        value_normalized: 0.75,
+    }];
+    let mut frame = Vec::new();
+
+    encode_output_frame_into(header, 2, &output, &events, &parameter_changes, &mut frame)
+        .expect("encoded");
+
+    let response_header = AudioFrameHeader::decode(&frame).expect("response header");
+    assert_eq!(response_header.event_count, 2);
+    assert_eq!(response_header.parameter_event_count, 1);
+    let audio_end = AUDIO_FRAME_HEADER_LEN + response_header.audio_payload_len().unwrap() as usize;
+    let midi_end = audio_end + response_header.midi_event_payload_len().unwrap() as usize;
+    let parameter_end = midi_end + response_header.parameter_event_payload_len().unwrap() as usize;
+    assert_eq!(parameter_end, frame.len());
+    assert_eq!(
+        read_f32_payload(&frame[AUDIO_FRAME_HEADER_LEN..audio_end]).expect("payload"),
+        output.to_vec()
+    );
+    assert_eq!(
+        MidiEvent::decode(&frame[audio_end..audio_end + MIDI_EVENT_LEN]).expect("note on"),
+        {
+            let mut event = MidiEvent::new(0, MidiEventKind::NoteOn, 1, 60, 100).expect("event");
+            event.note_id = 12;
+            event
+        }
+    );
+    assert_eq!(
+        MidiEvent::decode(&frame[audio_end + MIDI_EVENT_LEN..midi_end]).expect("poly pressure"),
+        {
+            let mut event =
+                MidiEvent::new(1, MidiEventKind::PolyAftertouch, 1, 60, 64).expect("event");
+            event.note_id = 12;
+            event
+        }
+    );
+    assert_eq!(
+        ParameterAutomationEvent::decode(&frame[midi_end..parameter_end]).expect("parameter"),
+        ParameterAutomationEvent::new(1, 42, 0.75).expect("parameter")
+    );
 }
 
 fn create_instance(state: &mut WorkerIpcState, input_channels: usize, output_channels: usize) {

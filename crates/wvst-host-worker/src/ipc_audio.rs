@@ -10,8 +10,8 @@ use wvst_protocol::{
 };
 
 use super::WorkerIpcState;
-use super::ipc_midi::decode_midi_events_into;
-use super::ipc_parameter_events::decode_parameter_events_into;
+use super::ipc_midi::{decode_midi_events_into, encode_midi_events_into};
+use super::ipc_parameter_events::{decode_parameter_events_into, encode_parameter_events_into};
 
 #[cfg(test)]
 use wvst_protocol::WorkerAudioIpcMessage;
@@ -218,16 +218,26 @@ fn process_message_into(
             &instance.events,
             &instance.parameter_changes,
             output,
+            &mut instance.process_output,
         )
         .map_err(AudioProcessError::invalid)?;
 
-    encode_output_frame_into(input_header, output_channels, output, output_body)
+    encode_output_frame_into(
+        input_header,
+        output_channels,
+        output,
+        &instance.process_output.events,
+        &instance.process_output.parameter_changes,
+        output_body,
+    )
 }
 
 fn encode_output_frame_into(
     input_header: AudioFrameHeader,
     output_channels: usize,
     output: &[f32],
+    events: &[wvst_vst3_host::Vst3OutputEvent],
+    parameter_changes: &[wvst_vst3_host::Vst3ParameterChange],
     destination: &mut Vec<u8>,
 ) -> Result<(), AudioProcessError> {
     let output_channels = u16::try_from(output_channels)
@@ -243,6 +253,14 @@ fn encode_output_frame_into(
         output_channels,
         input_header.flags,
     )
+    .map_err(|error| AudioProcessError::invalid(error.to_string()))?
+    .with_event_counts(
+        u16::try_from(events.len())
+            .map_err(|_| AudioProcessError::invalid("MIDI output event count overflows u16"))?,
+        u16::try_from(parameter_changes.len()).map_err(|_| {
+            AudioProcessError::invalid("parameter output event count overflows u16")
+        })?,
+    )
     .map_err(|error| AudioProcessError::invalid(error.to_string()))?;
     let frame_len = AUDIO_FRAME_HEADER_LEN + header.payload_len as usize;
     destination.resize(frame_len, 0);
@@ -255,6 +273,22 @@ fn encode_output_frame_into(
         destination[offset..offset + 4].copy_from_slice(&sample.to_le_bytes());
         offset += 4;
     }
+    let midi_end = offset
+        + header.midi_event_payload_len().map_err(|error| {
+            AudioProcessError::invalid(format!("MIDI output event payload length failed: {error}"))
+        })? as usize;
+    encode_midi_events_into(events, &mut destination[offset..midi_end])
+        .map_err(AudioProcessError::invalid)?;
+    offset = midi_end;
+
+    let parameter_end = offset
+        + header.parameter_event_payload_len().map_err(|error| {
+            AudioProcessError::invalid(format!(
+                "parameter output event payload length failed: {error}"
+            ))
+        })? as usize;
+    encode_parameter_events_into(parameter_changes, &mut destination[offset..parameter_end])
+        .map_err(AudioProcessError::invalid)?;
 
     Ok(())
 }

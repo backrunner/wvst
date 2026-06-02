@@ -16,6 +16,7 @@ pub mod midi_mapping;
 pub mod module;
 pub mod parameter_changes;
 pub mod process_buffers;
+pub mod process_output;
 pub mod processor;
 pub mod state_stream;
 pub mod unit_data;
@@ -34,7 +35,8 @@ pub use connection_point::Vst3ConnectionPoint;
 pub use edit_controller::{Vst3EditController, Vst3ParameterFlags, Vst3ParameterInfo};
 pub use error::{HostError, HostResult};
 pub use event_list::{
-    DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3InputEvent, Vst3NoteEvent, Vst3PolyPressureEvent,
+    DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3InputEvent, Vst3NoteEvent, Vst3OutputEvent,
+    Vst3PolyPressureEvent,
 };
 pub use factory::{
     Vst3ComponentProbe, Vst3FactoryClass, Vst3FactoryInfo, Vst3LoadedComponent,
@@ -51,6 +53,7 @@ pub use parameter_changes::{
     DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK, Vst3ParameterChange, Vst3ParameterChanges,
 };
 pub use process_buffers::Vst3ProcessBuffers;
+pub use process_output::Vst3ProcessOutput;
 pub use processor::{HeadlessPluginInstance, ProcessStats};
 pub use unit_data::{Vst3ProgramListData, Vst3UnitData};
 pub use unit_info::{

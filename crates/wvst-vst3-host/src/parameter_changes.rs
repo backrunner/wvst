@@ -57,16 +57,21 @@ impl Vst3ParameterChanges {
 
     pub fn changes(&self) -> Vec<Vst3ParameterChange> {
         let mut changes = Vec::new();
+        self.changes_into(&mut changes);
+        changes
+    }
+
+    pub fn changes_into(&self, destination: &mut Vec<Vst3ParameterChange>) {
+        destination.clear();
         for queue in self.object.active_queues() {
             for point in &queue.points {
-                changes.push(Vst3ParameterChange {
+                destination.push(Vst3ParameterChange {
                     sample_offset: point.sample_offset.clamp(0, i32::from(u16::MAX)) as u16,
                     parameter_id: queue.parameter_id,
                     value_normalized: point.value,
                 });
             }
         }
-        changes
     }
 
     pub fn set_changes(

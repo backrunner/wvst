@@ -35,6 +35,35 @@ pub(super) fn decode_parameter_events_into(
     Ok(())
 }
 
+pub(super) fn encode_parameter_events_into(
+    changes: &[Vst3ParameterChange],
+    destination: &mut [u8],
+) -> Result<(), String> {
+    let expected_event_bytes = changes
+        .len()
+        .checked_mul(PARAMETER_AUTOMATION_EVENT_LEN)
+        .ok_or_else(|| "parameter output event payload length overflow".to_string())?;
+    if destination.len() != expected_event_bytes {
+        return Err(format!(
+            "parameter output event payload length mismatch: expected {expected_event_bytes}, got {}",
+            destination.len()
+        ));
+    }
+
+    for (index, change) in changes.iter().enumerate() {
+        ParameterAutomationEvent::new(
+            change.sample_offset,
+            change.parameter_id,
+            change.value_normalized,
+        )
+        .map_err(|error| error.to_string())?
+        .encode(&mut destination[index * PARAMETER_AUTOMATION_EVENT_LEN..])
+        .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 pub(super) fn push_mapped_parameter_change(
     frames: usize,
     destination: &mut Vec<Vst3ParameterChange>,

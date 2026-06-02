@@ -3,8 +3,8 @@ use wvst_scanner::PluginDescriptor;
 use wvst_vst3_host::{
     HeadlessPluginInstance, HostError, VST3_MIDI_CONTROLLER_AFTERTOUCH,
     VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3BusDirection, Vst3InputEvent, Vst3LifecycleState,
-    Vst3LoadedComponent, Vst3ParameterChange, Vst3ParameterInfo, Vst3ProcessingConfig,
-    Vst3UnitMetadata, create_vst3_component_instance,
+    Vst3LoadedComponent, Vst3ParameterChange, Vst3ParameterInfo, Vst3ProcessOutput,
+    Vst3ProcessingConfig, Vst3UnitMetadata, create_vst3_component_instance,
 };
 
 use super::InstanceCreateParams;
@@ -370,7 +370,9 @@ impl WorkerBackend {
         events: &[Vst3InputEvent],
         parameter_changes: &[Vst3ParameterChange],
         output: &mut [f32],
+        process_output: &mut Vst3ProcessOutput,
     ) -> Result<(), String> {
+        process_output.clear();
         match self {
             Self::Passthrough(plugin) => plugin
                 .process_interleaved_f32(frames, input, output)
@@ -379,12 +381,13 @@ impl WorkerBackend {
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .instance_mut()
-                .process_interleaved_f32_with_events_and_parameters(
+                .process_interleaved_f32_with_io_events_and_parameters(
                     frames,
                     input,
                     events,
                     parameter_changes,
                     output,
+                    process_output,
                 )
                 .map_err(error_message),
         }

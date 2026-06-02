@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
 use wvst_vst3_host::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
-    Vst3InputEvent, Vst3ParameterChange,
+    Vst3InputEvent, Vst3ParameterChange, Vst3ProcessOutput,
 };
 
 #[path = "ipc_audio.rs"]
@@ -48,6 +48,7 @@ struct WorkerInstance {
     buffers: AudioScratchBuffers,
     events: Vec<Vst3InputEvent>,
     parameter_changes: Vec<Vst3ParameterChange>,
+    process_output: Vst3ProcessOutput,
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +282,10 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
             buffers,
             events: Vec::with_capacity(DEFAULT_MAX_VST3_EVENTS_PER_BLOCK),
             parameter_changes: Vec::with_capacity(DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK),
+            process_output: Vst3ProcessOutput::with_capacities(
+                DEFAULT_MAX_VST3_EVENTS_PER_BLOCK,
+                DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
+            ),
         },
     );
 

@@ -1,8 +1,8 @@
 use wvst_protocol::{AudioFrameHeader, MIDI_EVENT_LEN, MidiEvent, MidiEventKind};
 use wvst_vst3_host::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, VST3_MIDI_CONTROLLER_AFTERTOUCH,
-    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3InputEvent, Vst3NoteEvent, Vst3ParameterChange,
-    Vst3PolyPressureEvent,
+    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3InputEvent, Vst3NoteEvent, Vst3OutputEvent,
+    Vst3ParameterChange, Vst3PolyPressureEvent,
 };
 
 use super::ipc_parameter_events::push_mapped_parameter_change;
@@ -48,6 +48,63 @@ pub(super) fn decode_midi_events_into(
     }
 
     Ok(())
+}
+
+pub(super) fn encode_midi_events_into(
+    events: &[Vst3OutputEvent],
+    destination: &mut [u8],
+) -> Result<(), String> {
+    let expected_event_bytes = events
+        .len()
+        .checked_mul(MIDI_EVENT_LEN)
+        .ok_or_else(|| "MIDI output event payload length overflow".to_string())?;
+    if destination.len() != expected_event_bytes {
+        return Err(format!(
+            "MIDI output event payload length mismatch: expected {expected_event_bytes}, got {}",
+            destination.len()
+        ));
+    }
+
+    for (index, event) in events.iter().enumerate() {
+        let event = vst3_output_event_to_midi_event(*event)?;
+        event
+            .encode(&mut destination[index * MIDI_EVENT_LEN..])
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn vst3_output_event_to_midi_event(event: Vst3OutputEvent) -> Result<MidiEvent, String> {
+    match event {
+        Vst3OutputEvent::NoteOn(event) => midi_note_event(MidiEventKind::NoteOn, event),
+        Vst3OutputEvent::NoteOff(event) => midi_note_event(MidiEventKind::NoteOff, event),
+        Vst3OutputEvent::PolyPressure(event) => {
+            let mut midi_event = MidiEvent::new(
+                event.sample_offset,
+                MidiEventKind::PolyAftertouch,
+                event.channel,
+                event.pitch,
+                unit_value_to_midi(event.pressure),
+            )
+            .map_err(|error| error.to_string())?;
+            midi_event.note_id = midi_note_id(event.note_id);
+            Ok(midi_event)
+        }
+    }
+}
+
+fn midi_note_event(kind: MidiEventKind, event: Vst3NoteEvent) -> Result<MidiEvent, String> {
+    let mut midi_event = MidiEvent::new(
+        event.sample_offset,
+        kind,
+        event.channel,
+        event.pitch,
+        unit_value_to_midi(event.velocity),
+    )
+    .map_err(|error| error.to_string())?;
+    midi_event.note_id = midi_note_id(event.note_id);
+    Ok(midi_event)
 }
 
 fn midi_event_to_vst3(event: MidiEvent) -> Option<Vst3InputEvent> {
@@ -255,6 +312,14 @@ fn midi_unit_value_f64(value: u8) -> f64 {
 fn midi_pitch_bend_value(lsb: u8, msb: u8) -> f64 {
     let value = u16::from(lsb) | (u16::from(msb) << 7);
     f64::from(value) / 16_383.0
+}
+
+fn unit_value_to_midi(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 127.0).round() as u8
+}
+
+fn midi_note_id(value: i32) -> u32 {
+    u32::try_from(value).unwrap_or(0)
 }
 
 fn vst3_note_id(value: u32) -> i32 {

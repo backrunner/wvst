@@ -64,6 +64,7 @@
 - `wvst-host-worker` metrics 已暴露 VST3 runtime diagnostics，其中包含 controller `IComponentHandler` 最近事件和累计事件数；Web SDK metrics 类型已同步，后续 Web 主动推送/参数同步可以复用该结构。
 - `wvst-vst3-host` 已提供可选 `IUnitInfo` facade，能读取 units、program lists、program names 和 selected unit；`wvst-host-worker` / Bridge / Web SDK 已提供 `instance.units` / `client.instances.units()` 查询 API。
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
+- VST3 runtime process path 已将插件写回的 output note on/off、poly pressure 和 output parameter changes 规范化为 WVST 协议事件，并由 worker audio IPC 在响应 frame 中编码为 audio + MIDI event section + parameter automation section；未知或越界 VST3 output event 会被过滤，避免污染 Web 数据面。
 - Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址、主动 shutdown、runtime event subscription、最近事件快照、外部 worker executable 注入和 worker timeout 配置。
 
 ## 距离完整能力的主要差距
@@ -107,7 +108,7 @@
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
 - Web 设备选择已有底层 helper、高层 session graph helper、capability API、device watcher、sample-rate guard、手动 stream restart 和基础 loopback metrics；仍缺少 sample-rate change 后的自动重建策略和真实端到端设备切换测量。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，仍缺少共享内存/预分配 buffer 和背压语义。
-- worker 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；runtime backend 已接入真实 VST `process()`，且 VST3 host 已捕获插件写回的 output events/parameter changes，但当前仍经 worker instance mutex 串行处理、保留 interleaved/planar scratch copy，并尚未把插件输出事件编码回 Web 响应帧。
+- worker 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；runtime backend 已接入真实 VST `process()`，且 VST3 host 已捕获插件写回的 output events/parameter changes 并编码回 Web 响应帧；当前仍经 worker instance mutex 串行处理、保留 interleaved/planar scratch copy，且未知 VST3 output event type 仍只做过滤不做 Web 侧扩展表达。
 - late/drop/jitter 首版 Bridge 诊断指标已完成；仍缺少 WebAudio 端 underflow/overflow 与 Bridge 序号指标的统一策略、端到端 WebAudio 往返延迟测量和共享内存/背压语义。
 
 ### 5. MIDI 与音源 VST

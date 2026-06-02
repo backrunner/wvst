@@ -3,7 +3,9 @@ use std::ptr;
 
 use wvst_core::audio::MAX_CHANNEL_COUNT;
 
-use crate::event_list::{DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3EventList, Vst3InputEvent};
+use crate::event_list::{
+    DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3EventList, Vst3InputEvent, Vst3OutputEvent,
+};
 use crate::parameter_changes::{
     DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK, Vst3ParameterChange, Vst3ParameterChanges,
 };
@@ -172,8 +174,18 @@ impl Vst3ProcessBuffers {
         self.output_events.events()
     }
 
+    pub fn output_events_into(&self, destination: &mut Vec<Vst3OutputEvent>) {
+        self.output_events
+            .output_events_into(self.prepared_frames, destination);
+    }
+
     pub fn output_parameter_changes(&self) -> Vec<Vst3ParameterChange> {
         self.output_parameter_changes.changes()
+    }
+
+    pub fn output_parameter_changes_into(&self, destination: &mut Vec<Vst3ParameterChange>) {
+        self.output_parameter_changes.changes_into(destination);
+        destination.retain(|change| usize::from(change.sample_offset) < self.prepared_frames);
     }
 
     pub fn copy_output_to_interleaved(&self, frames: usize, output: &mut [f32]) -> HostResult<()> {
