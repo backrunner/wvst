@@ -1,6 +1,8 @@
 pub mod audio_processor;
 pub mod bus_info;
 pub mod component;
+pub mod component_handler;
+pub mod edit_controller;
 pub mod error;
 pub mod event_list;
 pub mod factory;
@@ -10,6 +12,7 @@ pub mod metadata;
 pub mod module;
 pub mod process_buffers;
 pub mod processor;
+pub mod state_stream;
 mod vst3_abi;
 mod vst3_bus_abi;
 mod vst3_event_abi;
@@ -17,6 +20,7 @@ mod vst3_event_abi;
 pub use audio_processor::Vst3AudioProcessor;
 pub use bus_info::{Vst3AudioBusInfo, Vst3BusDirection, Vst3BusType};
 pub use component::Vst3ComponentInstance;
+pub use edit_controller::{Vst3EditController, Vst3ParameterFlags, Vst3ParameterInfo};
 pub use error::{HostError, HostResult};
 pub use event_list::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3InputEvent, Vst3NoteEvent, Vst3PolyPressureEvent,

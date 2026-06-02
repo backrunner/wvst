@@ -20,9 +20,22 @@ pub const VST3_FUNKNOWN_IID: &str = "0000000000000000C000000000000046";
 pub const VST3_I_PLUGIN_BASE_IID: &str = "22888DDB156E45AE8358B34808190625";
 pub const VST3_I_COMPONENT_IID: &str = "E831FF31F2D54301928EBBEE25697802";
 pub const VST3_I_AUDIO_PROCESSOR_IID: &str = "42043F99B7DA453CA569E79D9AAEC33D";
+pub const VST3_I_EDIT_CONTROLLER_IID: &str = "DCD7BBE37742448DA874AACC979C759E";
+pub const VST3_I_COMPONENT_HANDLER_IID: &str = "93A0BEA30BD045DB8E890B0CC1E46AC6";
 pub const VST3_I_HOST_APPLICATION_IID: &str = "58E595CCDB2D49698B6AAF8C36A664E5";
+pub const VST3_IBSTREAM_IID: &str = "C3BF6EA2309947529B6BF9901EE33E9B";
 pub const VST3_PROCESS_MODE_REALTIME: i32 = 0;
 pub const VST3_SAMPLE_32: i32 = 0;
+pub const VST3_PARAMETER_CAN_AUTOMATE: i32 = 1 << 0;
+pub const VST3_PARAMETER_IS_READ_ONLY: i32 = 1 << 1;
+pub const VST3_PARAMETER_IS_WRAP_AROUND: i32 = 1 << 2;
+pub const VST3_PARAMETER_IS_LIST: i32 = 1 << 3;
+pub const VST3_PARAMETER_IS_HIDDEN: i32 = 1 << 4;
+pub const VST3_PARAMETER_IS_PROGRAM_CHANGE: i32 = 1 << 15;
+pub const VST3_PARAMETER_IS_BYPASS: i32 = 1 << 16;
+pub const VST3_STREAM_SEEK_SET: i32 = 0;
+pub const VST3_STREAM_SEEK_CUR: i32 = 1;
+pub const VST3_STREAM_SEEK_END: i32 = 2;
 pub const VST3_MEDIA_TYPE_AUDIO: i32 = 0;
 pub const VST3_BUS_DIRECTION_INPUT: i32 = 0;
 pub const VST3_BUS_DIRECTION_OUTPUT: i32 = 1;
@@ -37,6 +50,9 @@ pub const VST3_SPEAKER_71_CINE: SpeakerArrangement = 0xff;
 
 pub type TBool = u8;
 pub type TUid = [u8; 16];
+pub type ParamId = u32;
+pub type ParamValue = f64;
+pub type UnitId = i32;
 pub type SampleRate = f64;
 pub type SpeakerArrangement = u64;
 pub type String128 = [u16; 128];
@@ -119,6 +135,162 @@ pub struct IComponentVTable {
     pub set_active: unsafe extern "system" fn(this: *mut IComponent, state: TBool) -> i32,
     pub set_state: unsafe extern "system" fn(this: *mut IComponent, state: *mut c_void) -> i32,
     pub get_state: unsafe extern "system" fn(this: *mut IComponent, state: *mut c_void) -> i32,
+}
+
+#[repr(C)]
+pub struct IEditController {
+    pub vtable: *const IEditControllerVTable,
+}
+
+#[repr(C)]
+pub struct IEditControllerVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IEditController,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IEditController) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IEditController) -> u32,
+    pub initialize:
+        unsafe extern "system" fn(this: *mut IEditController, context: *mut FUnknown) -> i32,
+    pub terminate: unsafe extern "system" fn(this: *mut IEditController) -> i32,
+    pub set_component_state:
+        unsafe extern "system" fn(this: *mut IEditController, state: *mut IBStream) -> i32,
+    pub set_state:
+        unsafe extern "system" fn(this: *mut IEditController, state: *mut IBStream) -> i32,
+    pub get_state:
+        unsafe extern "system" fn(this: *mut IEditController, state: *mut IBStream) -> i32,
+    pub get_parameter_count: unsafe extern "system" fn(this: *mut IEditController) -> i32,
+    pub get_parameter_info: unsafe extern "system" fn(
+        this: *mut IEditController,
+        param_index: i32,
+        info: *mut ParameterInfo,
+    ) -> i32,
+    pub get_param_string_by_value: unsafe extern "system" fn(
+        this: *mut IEditController,
+        id: ParamId,
+        value_normalized: ParamValue,
+        string: *mut String128,
+    ) -> i32,
+    pub get_param_value_by_string: unsafe extern "system" fn(
+        this: *mut IEditController,
+        id: ParamId,
+        string: *mut u16,
+        value_normalized: *mut ParamValue,
+    ) -> i32,
+    pub normalized_param_to_plain: unsafe extern "system" fn(
+        this: *mut IEditController,
+        id: ParamId,
+        value_normalized: ParamValue,
+    ) -> ParamValue,
+    pub plain_param_to_normalized: unsafe extern "system" fn(
+        this: *mut IEditController,
+        id: ParamId,
+        plain_value: ParamValue,
+    ) -> ParamValue,
+    pub get_param_normalized:
+        unsafe extern "system" fn(this: *mut IEditController, id: ParamId) -> ParamValue,
+    pub set_param_normalized: unsafe extern "system" fn(
+        this: *mut IEditController,
+        id: ParamId,
+        value: ParamValue,
+    ) -> i32,
+    pub set_component_handler: unsafe extern "system" fn(
+        this: *mut IEditController,
+        handler: *mut IComponentHandler,
+    ) -> i32,
+    pub create_view:
+        unsafe extern "system" fn(this: *mut IEditController, name: *const i8) -> *mut c_void,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ParameterInfo {
+    pub id: ParamId,
+    pub title: String128,
+    pub short_title: String128,
+    pub units: String128,
+    pub step_count: i32,
+    pub default_normalized_value: ParamValue,
+    pub unit_id: UnitId,
+    pub flags: i32,
+}
+
+impl Default for ParameterInfo {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            title: [0; 128],
+            short_title: [0; 128],
+            units: [0; 128],
+            step_count: 0,
+            default_normalized_value: 0.0,
+            unit_id: 0,
+            flags: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IComponentHandler {
+    pub vtable: *const IComponentHandlerVTable,
+}
+
+#[repr(C)]
+pub struct IComponentHandlerVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IComponentHandler,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IComponentHandler) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IComponentHandler) -> u32,
+    pub begin_edit: unsafe extern "system" fn(this: *mut IComponentHandler, id: ParamId) -> i32,
+    pub perform_edit: unsafe extern "system" fn(
+        this: *mut IComponentHandler,
+        id: ParamId,
+        value_normalized: ParamValue,
+    ) -> i32,
+    pub end_edit: unsafe extern "system" fn(this: *mut IComponentHandler, id: ParamId) -> i32,
+    pub restart_component:
+        unsafe extern "system" fn(this: *mut IComponentHandler, flags: i32) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IBStream {
+    pub vtable: *const IBStreamVTable,
+}
+
+#[repr(C)]
+pub struct IBStreamVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IBStream,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IBStream) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IBStream) -> u32,
+    pub read: unsafe extern "system" fn(
+        this: *mut IBStream,
+        buffer: *mut c_void,
+        num_bytes: i32,
+        num_bytes_read: *mut i32,
+    ) -> i32,
+    pub write: unsafe extern "system" fn(
+        this: *mut IBStream,
+        buffer: *mut c_void,
+        num_bytes: i32,
+        num_bytes_written: *mut i32,
+    ) -> i32,
+    pub seek: unsafe extern "system" fn(
+        this: *mut IBStream,
+        pos: i64,
+        mode: i32,
+        result: *mut i64,
+    ) -> i32,
+    pub tell: unsafe extern "system" fn(this: *mut IBStream, pos: *mut i64) -> i32,
 }
 
 #[repr(C)]

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{HostResult, Vst3ComponentInstance, Vst3ProcessingConfig};
+use crate::{
+    HostResult, Vst3ComponentInstance, Vst3EditController, Vst3ParameterInfo, Vst3ProcessingConfig,
+};
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,13 +35,19 @@ pub struct Vst3ComponentProbe {
 
 pub struct Vst3LoadedComponent {
     instance: Vst3ComponentInstance,
+    controller: Option<Vst3EditController>,
     _module: platform::LoadedPluginModule,
 }
 
 impl Vst3LoadedComponent {
-    fn new(instance: Vst3ComponentInstance, module: platform::LoadedPluginModule) -> Self {
+    fn new(
+        instance: Vst3ComponentInstance,
+        controller: Option<Vst3EditController>,
+        module: platform::LoadedPluginModule,
+    ) -> Self {
         Self {
             instance,
+            controller,
             _module: module,
         }
     }
@@ -50,6 +58,45 @@ impl Vst3LoadedComponent {
 
     pub fn instance_mut(&mut self) -> &mut Vst3ComponentInstance {
         &mut self.instance
+    }
+
+    pub fn controller(&self) -> Option<&Vst3EditController> {
+        self.controller.as_ref()
+    }
+
+    pub fn controller_mut(&mut self) -> Option<&mut Vst3EditController> {
+        self.controller.as_mut()
+    }
+
+    pub fn initialize_controller(&mut self) -> HostResult<()> {
+        if let Some(controller) = self.controller.as_mut() {
+            controller.initialize()?;
+        }
+        Ok(())
+    }
+
+    pub fn terminate_controller(&mut self) -> HostResult<()> {
+        if let Some(controller) = self.controller.as_mut() {
+            controller.terminate()?;
+        }
+        Ok(())
+    }
+
+    pub fn parameters(&self) -> HostResult<Vec<Vst3ParameterInfo>> {
+        self.controller
+            .as_ref()
+            .map_or_else(|| Ok(Vec::new()), Vst3EditController::parameters)
+    }
+
+    pub fn component_state(&self) -> HostResult<Vec<u8>> {
+        self.instance.get_state()
+    }
+
+    pub fn controller_state(&self) -> HostResult<Option<Vec<u8>>> {
+        self.controller
+            .as_ref()
+            .map(|controller| controller.get_state())
+            .transpose()
     }
 }
 
@@ -111,9 +158,12 @@ mod platform {
     use super::{Vst3FactoryClass, Vst3FactoryInfo};
     use crate::vst3_abi::{
         FUnknown, IPluginFactory, K_RESULT_OK, PClassInfo, PFactoryInfo,
-        VST3_I_AUDIO_PROCESSOR_IID, fixed_string, parse_tuid_hex, tuid_hex,
+        VST3_I_AUDIO_PROCESSOR_IID, VST3_I_EDIT_CONTROLLER_IID, fixed_string, parse_tuid_hex,
+        tuid_hex,
     };
-    use crate::{HostError, HostResult, Vst3ComponentInstance, Vst3ProcessingConfig};
+    use crate::{
+        HostError, HostResult, Vst3ComponentInstance, Vst3EditController, Vst3ProcessingConfig,
+    };
 
     type BundleEntry = unsafe extern "C" fn(bundle: CFBundleRef) -> Boolean;
     type BundleExit = unsafe extern "C" fn() -> Boolean;
@@ -169,9 +219,18 @@ mod platform {
                 processing_config,
             )
         }?;
+        let controller = match instance.controller_class_id()? {
+            Some(controller_class_id) => {
+                let controller =
+                    factory.create_instance(&controller_class_id, VST3_I_EDIT_CONTROLLER_IID)?;
+                Some(unsafe { Vst3EditController::from_raw(controller.into_raw().cast()) }?)
+            }
+            None => None,
+        };
 
         Ok(super::Vst3LoadedComponent::new(
             instance,
+            controller,
             LoadedPluginModule { _bundle: bundle },
         ))
     }

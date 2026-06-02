@@ -5,8 +5,9 @@ use super::{
     response_worker_supervisor_error,
 };
 use crate::instance_registry::{
-    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceProcessingParams,
-    InstanceRestartParams, InstanceStatusParams, StreamLifecycleParams, WorkerRuntimeInfo,
+    InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceParameterParams,
+    InstanceParameterSetParams, InstanceProcessingParams, InstanceRestartParams,
+    InstanceSetStateParams, InstanceStatusParams, StreamLifecycleParams, WorkerRuntimeInfo,
 };
 
 pub async fn handle_instance_create(
@@ -207,6 +208,130 @@ pub async fn handle_instance_status(
             let _ = context.instances.mark_worker_failed(params.instance_id);
             response_worker_supervisor_error(id, error)
         }
+    }
+}
+
+pub async fn handle_instance_parameters(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceStatusParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(id, -32602, format!("invalid instance params: {error}"));
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.workers.parameters(params.instance_id).await {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_parameter_get(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(id, -32602, format!("invalid parameter get params: {error}"));
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .parameter_get(params.instance_id, params.parameter_id)
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_parameter_set(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterSetParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(id, -32602, format!("invalid parameter set params: {error}"));
+        }
+    };
+    if !params.value_normalized.is_finite() || !(0.0..=1.0).contains(&params.value_normalized) {
+        return response_error(id, 4220, "valueNormalized must be finite in [0, 1]");
+    }
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .parameter_set(
+            params.instance_id,
+            params.parameter_id,
+            params.value_normalized,
+        )
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_get_state(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceStatusParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(id, -32602, format!("invalid get state params: {error}"));
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.workers.get_state(params.instance_id).await {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_set_state(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceSetStateParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(id, -32602, format!("invalid set state params: {error}"));
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .set_state(params.instance_id, params.state_base64)
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
     }
 }
 

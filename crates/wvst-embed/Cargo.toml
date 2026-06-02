@@ -1,0 +1,18 @@
+[package]
+name = "wvst-embed"
+description = "Embeddable WVST bridge runtime API for desktop applications."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
+wvst-bridge-server = { path = "../wvst-bridge-server" }
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

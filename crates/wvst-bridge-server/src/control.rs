@@ -165,6 +165,29 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             control_instances::handle_instance_stop(request.id, request.params, context).await,
             session_authorized,
         ),
+        "instance.parameters" => ControlResponse::new(
+            control_instances::handle_instance_parameters(request.id, request.params, context)
+                .await,
+            session_authorized,
+        ),
+        "instance.parameter.get" => ControlResponse::new(
+            control_instances::handle_instance_parameter_get(request.id, request.params, context)
+                .await,
+            session_authorized,
+        ),
+        "instance.parameter.set" => ControlResponse::new(
+            control_instances::handle_instance_parameter_set(request.id, request.params, context)
+                .await,
+            session_authorized,
+        ),
+        "instance.getState" => ControlResponse::new(
+            control_instances::handle_instance_get_state(request.id, request.params, context).await,
+            session_authorized,
+        ),
+        "instance.setState" => ControlResponse::new(
+            control_instances::handle_instance_set_state(request.id, request.params, context).await,
+            session_authorized,
+        ),
         "instance.destroy" => ControlResponse::new(
             control_instances::handle_instance_destroy(request.id, request.params, context).await,
             session_authorized,

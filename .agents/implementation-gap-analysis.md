@@ -51,6 +51,9 @@
 - `Vst3ComponentInstance::initialize()` 已传入 WVST `IHostApplication` host context，插件可通过 `queryInterface(IHostApplication)` 读取宿主名称；host-side `createInstance()` 仍暂不提供 message/attribute 对象。
 - `wvst-host-worker serve` 已接入首版 runtime backend：instance create 可持久保存 `Vst3LoadedComponent`，`instance.start/stop/destroy` 会驱动真实 VST3 lifecycle，worker audio IPC 可调用真实 `process()`；invalid class id 或非 bundle 路径仍回退 passthrough 以保持测试和开发路径可用。
 - worker create response、worker metrics、Bridge instance record 和 Web SDK `InstanceDescriptor` 已暴露 backend、`latencySamples`、`tailSamples`，Web 侧可以在挂载后读取插件处理延迟和 tail 信息。
+- VST3 controller 基础链路已接入：component 可查询 controller class id，macOS factory runtime 会创建可选 `IEditController`，worker 初始化 controller 并注册 no-op `IComponentHandler`，Bridge/worker 控制面已暴露参数列表、normalized 参数读写和 controller state base64 get/set。
+- `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler` host callback 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入和生命周期释放。
+- Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址并主动 shutdown。
 
 ## 距离完整能力的主要差距
 
@@ -80,7 +83,7 @@
 仍缺少：
 
 - 更完整的 host context extension、多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、audio bus 查询、selected-bus activation，并支持单个主 bus 的 mono/stereo/常见 3.0 到 7.1 speaker arrangement。
-- controller class id 查询和 Web/Bridge/worker 透传已完成；`IEditController` 对象仍未接入，参数、state、program list、unit metadata 仍缺少。
+- `IEditController`、参数列表、normalized 参数读写、controller state 和 component/controller state get 聚合已有首版；仍缺少完整 set 聚合、program list、unit metadata、parameter-change queue/sample-accurate automation 和真实第三方 controller 兼容验证。
 - 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
 
 ### 4. 低延迟音频数据面
@@ -109,7 +112,7 @@
 
 仍缺少：
 
-- `wvst-embed` 或等价可嵌入 API。
+- `wvst-embed` 已有基础 runtime API；仍缺少更完整的嵌入式配置、事件订阅、外部 worker executable 注入和应用生命周期集成示例。
 - macOS 安装、启动、授权、日志和诊断命令。
 - Windows/Linux worker supervision backend。
 

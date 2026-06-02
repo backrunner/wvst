@@ -53,6 +53,28 @@ pub struct InstanceProcessingParams {
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct InstanceParameterParams {
+    pub instance_id: u64,
+    pub parameter_id: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceParameterSetParams {
+    pub instance_id: u64,
+    pub parameter_id: u32,
+    pub value_normalized: f64,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceSetStateParams {
+    pub instance_id: u64,
+    pub state_base64: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StreamLifecycleParams {
     pub instance_id: u64,
 }

@@ -8,7 +8,7 @@ use crate::vst3_abi::{
 use crate::{
     HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3BusType,
     Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState, Vst3ProcessBuffers,
-    Vst3ProcessingConfig,
+    Vst3ProcessingConfig, state_stream::Vst3StateStream,
 };
 
 #[derive(Debug)]
@@ -78,6 +78,34 @@ impl Vst3ComponentInstance {
 
     pub fn controller_class_id(&self) -> HostResult<Option<String>> {
         self.component.controller_class_id()
+    }
+
+    pub fn get_state(&self) -> HostResult<Vec<u8>> {
+        self.require_state(
+            "get-state",
+            &[
+                Vst3LifecycleState::Created,
+                Vst3LifecycleState::Initialized,
+                Vst3LifecycleState::SetupDone,
+                Vst3LifecycleState::Activated,
+                Vst3LifecycleState::Stopped,
+            ],
+        )?;
+        self.component.get_state()
+    }
+
+    pub fn set_state(&mut self, state: &[u8]) -> HostResult<()> {
+        self.require_state(
+            "set-state",
+            &[
+                Vst3LifecycleState::Created,
+                Vst3LifecycleState::Initialized,
+                Vst3LifecycleState::SetupDone,
+                Vst3LifecycleState::Activated,
+                Vst3LifecycleState::Stopped,
+            ],
+        )?;
+        self.component.set_state(state)
     }
 
     pub fn initialize(&mut self) -> HostResult<()> {
@@ -278,6 +306,31 @@ impl Vst3ComponentHandle {
         }
 
         Ok((class_id != [0; 16]).then(|| tuid_hex(&class_id)))
+    }
+
+    fn get_state(&self) -> HostResult<Vec<u8>> {
+        let mut stream = Vst3StateStream::writable();
+        let result = unsafe {
+            // SAFETY: component/vtable were validated by from_raw. The stream
+            // object remains live for the duration of this call.
+            (self.vtable().get_state)(self.component.as_ptr(), stream.as_mut_ptr().cast())
+        };
+        if result != K_RESULT_OK {
+            return Err(HostError::ComponentCallFailed {
+                method: "getState",
+                result,
+            });
+        }
+        Ok(stream.into_bytes())
+    }
+
+    fn set_state(&mut self, state: &[u8]) -> HostResult<()> {
+        let mut stream = Vst3StateStream::from_bytes(state.to_vec());
+        self.call_result("setState", |component, vtable| unsafe {
+            // SAFETY: component/vtable were validated by from_raw. The stream
+            // object remains live for the duration of this call.
+            (vtable.set_state)(component, stream.as_mut_ptr().cast())
+        })
     }
 
     fn audio_buses(&mut self, direction: Vst3BusDirection) -> HostResult<Vec<Vst3AudioBusInfo>> {

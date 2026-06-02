@@ -18,6 +18,12 @@ pub enum HostError {
     },
     ComponentReturnedNull,
     ComponentVTableMissing,
+    EditControllerCallFailed {
+        method: &'static str,
+        result: i32,
+    },
+    EditControllerReturnedNull,
+    EditControllerVTableMissing,
     FactoryCallFailed {
         method: &'static str,
         result: i32,
@@ -59,6 +65,9 @@ pub enum HostError {
         expected: usize,
         actual: usize,
     },
+    InvalidStateStreamSeek {
+        position: i64,
+    },
     InvalidEventCount {
         max: usize,
         actual: usize,
@@ -95,6 +104,18 @@ impl Display for HostError {
             }
             Self::ComponentReturnedNull => formatter.write_str("VST3 component pointer is null"),
             Self::ComponentVTableMissing => formatter.write_str("VST3 component vtable is null"),
+            Self::EditControllerCallFailed { method, result } => {
+                write!(
+                    formatter,
+                    "VST3 edit controller call failed: {method} returned {result}"
+                )
+            }
+            Self::EditControllerReturnedNull => {
+                formatter.write_str("VST3 edit controller pointer is null")
+            }
+            Self::EditControllerVTableMissing => {
+                formatter.write_str("VST3 edit controller vtable is null")
+            }
             Self::FactoryCallFailed { method, result } => {
                 write!(
                     formatter,
@@ -173,6 +194,12 @@ impl Display for HostError {
                 write!(
                     formatter,
                     "invalid buffer length: expected {expected}, got {actual}"
+                )
+            }
+            Self::InvalidStateStreamSeek { position } => {
+                write!(
+                    formatter,
+                    "invalid VST3 state stream seek position: {position}"
                 )
             }
             Self::InvalidEventCount { max, actual } => {

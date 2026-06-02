@@ -89,6 +89,25 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(status_value["result"]["worker"]["ipcVersion"], 1);
     assert_eq!(status_value["result"]["worker"]["instances"], 1);
 
+    let parameters_request = serde_json::json!({
+        "id": 31,
+        "method": "instance.parameters",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let parameters_value = request_json(
+        &parameters_request,
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    assert_eq!(parameters_value["result"]["parameters"][0]["id"], 42);
+    assert_eq!(parameters_value["result"]["parameters"][0]["title"], "Gain");
+
     let close_stream_request = serde_json::json!({
         "id": 4,
         "method": "stream.close",
@@ -433,6 +452,7 @@ while IFS= read -r line; do
   case "$line" in
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
     *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}\n' "$id" ;;
+    *instance.parameters*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameters":[{"id":42,"title":"Gain","shortTitle":"Gain","units":"dB","stepCount":0,"defaultNormalizedValue":0.5,"unitId":0,"flags":{"raw":1,"canAutomate":true,"readOnly":false,"wrapAround":false,"list":false,"hidden":false,"programChange":false,"bypass":false}}]}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
     *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1}}\n' "$id" ;;

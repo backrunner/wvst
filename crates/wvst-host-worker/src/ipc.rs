@@ -15,6 +15,8 @@ mod ipc_backend;
 mod ipc_buffers;
 #[path = "ipc_midi.rs"]
 mod ipc_midi;
+#[path = "ipc_parameters.rs"]
+mod ipc_parameters;
 
 use ipc_backend::{WorkerBackend, WorkerBackendKind};
 use ipc_buffers::AudioScratchBuffers;
@@ -156,6 +158,21 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
         }
         "instance.stopProcessing" => {
             handle_instance_processing(request.id, request.params, state, false)
+        }
+        "instance.parameters" => {
+            ipc_parameters::handle_instance_parameters(request.id, request.params, state)
+        }
+        "instance.parameter.get" => {
+            ipc_parameters::handle_instance_parameter_get(request.id, request.params, state)
+        }
+        "instance.parameter.set" => {
+            ipc_parameters::handle_instance_parameter_set(request.id, request.params, state)
+        }
+        "instance.getState" => {
+            ipc_parameters::handle_instance_get_state(request.id, request.params, state)
+        }
+        "instance.setState" => {
+            ipc_parameters::handle_instance_set_state(request.id, request.params, state)
         }
         "instance.destroy" => handle_instance_destroy(request.id, request.params, state),
         _ => response_error(
@@ -326,6 +343,8 @@ fn worker_hello() -> Value {
             "vst3CreateInstance": true,
             "vst3AudioProcessorProbe": true,
             "vst3RuntimeInstance": true,
+            "vst3Parameters": true,
+            "vst3ControllerState": true,
             "preallocatedAudioBuffers": true,
             "sampleRateValidation": true
         }
@@ -428,6 +447,8 @@ mod tests {
         assert_eq!(value["result"]["workerName"], "wvst-host-worker");
         assert_eq!(value["result"]["ipcVersion"], WORKER_IPC_VERSION);
         assert_eq!(value["result"]["capabilities"]["instanceLifecycle"], true);
+        assert_eq!(value["result"]["capabilities"]["vst3Parameters"], true);
+        assert_eq!(value["result"]["capabilities"]["vst3ControllerState"], true);
     }
 
     #[test]
@@ -451,6 +472,21 @@ mod tests {
         );
         assert_eq!(metrics_value["result"]["runtime"][0]["latencySamples"], 0);
         assert_eq!(metrics_value["result"]["runtime"][0]["tailSamples"], 0);
+
+        let parameters = handle_ipc_line(
+            r#"{"id":9,"method":"instance.parameters","params":{"instanceId":7}}"#,
+            &mut state,
+        );
+        let parameters_value: Value = serde_json::from_str(&parameters).expect("params json");
+        assert_eq!(parameters_value["result"]["parameters"], json!([]));
+
+        let parameter_get = handle_ipc_line(
+            r#"{"id":10,"method":"instance.parameter.get","params":{"instanceId":7,"parameterId":1}}"#,
+            &mut state,
+        );
+        let parameter_get_value: Value =
+            serde_json::from_str(&parameter_get).expect("parameter get json");
+        assert_eq!(parameter_get_value["error"]["code"], 4040);
 
         let start = handle_ipc_line(
             r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,

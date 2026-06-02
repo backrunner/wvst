@@ -2,14 +2,14 @@ use serde::Serialize;
 use wvst_scanner::PluginDescriptor;
 use wvst_vst3_host::{
     HeadlessPluginInstance, HostError, Vst3InputEvent, Vst3LifecycleState, Vst3LoadedComponent,
-    Vst3ProcessingConfig, create_vst3_component_instance,
+    Vst3ParameterInfo, Vst3ProcessingConfig, create_vst3_component_instance,
 };
 
 use super::InstanceCreateParams;
 
 pub(super) enum WorkerBackend {
     Passthrough(HeadlessPluginInstance),
-    Vst3Runtime(Vst3LoadedComponent),
+    Vst3Runtime(Box<Vst3LoadedComponent>),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
@@ -39,12 +39,13 @@ impl WorkerBackend {
                     .instance_mut()
                     .initialize()
                     .map_err(error_message)?;
+                component.initialize_controller().map_err(error_message)?;
                 component
                     .instance_mut()
                     .setup_processing()
                     .map_err(error_message)?;
                 component.instance_mut().activate().map_err(error_message)?;
-                Ok(Self::Vst3Runtime(component))
+                Ok(Self::Vst3Runtime(Box::new(component)))
             }
             Err(HostError::InvalidClassId(_)) => Self::passthrough(descriptor, params),
             Err(error) => Err(error.to_string()),
@@ -82,6 +83,62 @@ impl WorkerBackend {
             Self::Vst3Runtime(component) => {
                 component.instance().controller_class_id().ok().flatten()
             }
+        }
+    }
+
+    pub(super) fn parameters(&self) -> Result<Vec<Vst3ParameterInfo>, String> {
+        match self {
+            Self::Passthrough(_) => Ok(Vec::new()),
+            Self::Vst3Runtime(component) => component.parameters().map_err(error_message),
+        }
+    }
+
+    pub(super) fn get_param_normalized(&self, id: u32) -> Option<f64> {
+        match self {
+            Self::Passthrough(_) => None,
+            Self::Vst3Runtime(component) => component
+                .controller()
+                .map(|controller| controller.get_param_normalized(id)),
+        }
+    }
+
+    pub(super) fn set_param_normalized(&self, id: u32, value: f64) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Vst3Runtime(component) => component
+                .controller()
+                .ok_or_else(|| "edit controller not available".to_string())
+                .and_then(|controller| {
+                    controller
+                        .set_param_normalized(id, value)
+                        .map_err(error_message)
+                }),
+        }
+    }
+
+    pub(super) fn controller_state(&self) -> Result<Option<Vec<u8>>, String> {
+        match self {
+            Self::Passthrough(_) => Ok(None),
+            Self::Vst3Runtime(component) => component.controller_state().map_err(error_message),
+        }
+    }
+
+    pub(super) fn component_state(&self) -> Result<Option<Vec<u8>>, String> {
+        match self {
+            Self::Passthrough(_) => Ok(None),
+            Self::Vst3Runtime(component) => {
+                component.component_state().map(Some).map_err(error_message)
+            }
+        }
+    }
+
+    pub(super) fn set_controller_state(&self, state: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Vst3Runtime(component) => component
+                .controller()
+                .ok_or_else(|| "edit controller not available".to_string())
+                .and_then(|controller| controller.set_state(state).map_err(error_message)),
         }
     }
 
@@ -140,6 +197,7 @@ impl WorkerBackend {
                         .terminate()
                         .map_err(error_message)?;
                 }
+                component.terminate_controller().map_err(error_message)?;
                 Ok(())
             }
         }
