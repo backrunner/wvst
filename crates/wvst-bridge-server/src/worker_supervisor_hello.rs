@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
+use wvst_protocol::WORKER_CONTROL_IPC_SCHEMA_VERSION;
 
 use super::{EXPECTED_WORKER_IPC_VERSION, StderrTail, WorkerSupervisorError};
 
@@ -20,6 +21,8 @@ struct WorkerCapabilities {
     binary_audio_process: bool,
     #[serde(default)]
     framed_control_ipc: bool,
+    #[serde(default)]
+    framed_control_ipc_version: Option<u16>,
 }
 
 pub(super) async fn validate_worker_hello(
@@ -83,6 +86,21 @@ pub(super) async fn validate_worker_hello(
         .await);
     }
 
+    if require_framed_control_ipc
+        && parsed.capabilities.framed_control_ipc_version != Some(WORKER_CONTROL_IPC_SCHEMA_VERSION)
+    {
+        return Err(incompatible_worker(
+            stderr,
+            format!(
+                "unsupported framedControlIpcVersion {:?}, expected {}",
+                parsed.capabilities.framed_control_ipc_version, WORKER_CONTROL_IPC_SCHEMA_VERSION
+            ),
+            Some(u64::from(parsed.ipc_version)),
+            hello,
+        )
+        .await);
+    }
+
     Ok(())
 }
 
@@ -103,4 +121,65 @@ async fn incompatible_worker(
 
 fn actual_ipc_version(hello: &Value) -> Option<u64> {
     hello.get("ipcVersion").and_then(Value::as_u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn accepts_matching_framed_control_ipc_version() {
+        let hello = json!({
+            "ipcVersion": EXPECTED_WORKER_IPC_VERSION,
+            "capabilities": {
+                "instanceLifecycle": true,
+                "binaryAudioProcess": true,
+                "framedControlIpc": true,
+                "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION
+            }
+        });
+
+        validate_worker_hello(&StderrTail::default(), hello, true)
+            .await
+            .expect("compatible hello");
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_framed_control_ipc_version_when_required() {
+        let hello = json!({
+            "ipcVersion": EXPECTED_WORKER_IPC_VERSION,
+            "capabilities": {
+                "instanceLifecycle": true,
+                "binaryAudioProcess": true,
+                "framedControlIpc": true
+            }
+        });
+
+        let error = validate_worker_hello(&StderrTail::default(), hello, true)
+            .await
+            .expect_err("incompatible hello");
+
+        assert!(matches!(
+            error,
+            WorkerSupervisorError::IncompatibleWorker { reason, .. }
+                if reason.contains("framedControlIpcVersion")
+        ));
+    }
+
+    #[tokio::test]
+    async fn allows_json_line_test_workers_without_framed_control_version() {
+        let hello = json!({
+            "ipcVersion": EXPECTED_WORKER_IPC_VERSION,
+            "capabilities": {
+                "instanceLifecycle": true,
+                "binaryAudioProcess": true
+            }
+        });
+
+        validate_worker_hello(&StderrTail::default(), hello, false)
+            .await
+            .expect("json-line worker compatibility");
+    }
 }

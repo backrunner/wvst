@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_protocol::{
-    WORKER_CONTROL_IPC_HEADER_LEN, WorkerControlIpcHeader, WorkerControlIpcMessage,
+    WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_SCHEMA_VERSION, WorkerControlIpcHeader,
+    WorkerControlIpcMessage,
 };
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
 use wvst_vst3_host::{
@@ -511,7 +512,8 @@ fn worker_hello() -> Value {
             "vst3ControllerState": true,
             "preallocatedAudioBuffers": true,
             "sampleRateValidation": true,
-            "framedControlIpc": true
+            "framedControlIpc": true,
+            "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION
         }
     })
 }
@@ -920,6 +922,10 @@ mod tests {
             .expect("response json");
         assert_eq!(response["id"], 1);
         assert_eq!(response["result"]["capabilities"]["framedControlIpc"], true);
+        assert_eq!(
+            response["result"]["capabilities"]["framedControlIpcVersion"],
+            WORKER_CONTROL_IPC_SCHEMA_VERSION
+        );
     }
 
     fn unique_temp_dir() -> std::path::PathBuf {

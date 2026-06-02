@@ -19,6 +19,7 @@ pub use worker_audio_ipc::{
     WorkerAudioIpcHeader, WorkerAudioIpcMessage, WorkerAudioMessageKind,
 };
 pub use worker_control_ipc::{
-    WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAGIC, WORKER_CONTROL_IPC_VERSION,
-    WorkerControlIpcHeader, WorkerControlIpcMessage, WorkerControlMessageKind,
+    WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAGIC, WORKER_CONTROL_IPC_SCHEMA_VERSION,
+    WORKER_CONTROL_IPC_VERSION, WorkerControlIpcHeader, WorkerControlIpcMessage,
+    WorkerControlMessageKind,
 };

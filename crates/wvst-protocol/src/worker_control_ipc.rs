@@ -3,6 +3,7 @@ use crate::ProtocolError;
 pub const WORKER_CONTROL_IPC_MAGIC: u32 = u32::from_le_bytes(*b"WVCI");
 pub const WORKER_CONTROL_IPC_VERSION: u16 = 1;
 pub const WORKER_CONTROL_IPC_HEADER_LEN: usize = 24;
+pub const WORKER_CONTROL_IPC_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u16)]
