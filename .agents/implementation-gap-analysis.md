@@ -15,6 +15,7 @@
 - `wvst-host-worker serve` 已提供常驻控制 IPC，支持 worker hello 和 fake passthrough instance create/destroy；音频处理已从 debug JSON 小块处理迁移到独立二进制 audio IPC。
 - Bridge `instance.create` 已能启动并绑定 `wvst-host-worker serve`，成功后实例进入 `ready` / `ready` 状态。
 - Bridge worker supervisor 已加入 stderr 摘要、启动失败计数和基础 quarantine，避免同一故障插件无限重启。
+- Bridge worker supervisor 已加入应用级 worker 实例数量上限，默认最多 64 个活跃 worker，可通过 `WVST_MAX_WORKER_INSTANCES` 或 runtime builder 配置；超限时控制面返回结构化 `resource-limit-exceeded` 错误并清理未启动实例记录。
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
 - Bridge `instance.status` 已加入可配置的 worker 自动恢复策略：heartbeat 失败后默认尝试重启同一实例并保留 `instanceId` / `streamId`，如果实例原先处于 `processing` 会重新进入 processing；Bridge metrics 已暴露 `workerAutoRestarts`。
@@ -74,7 +75,7 @@
 仍缺少：
 
 - `ready` 之后的 `processing` / `stopped` 生命周期已有控制 API，`starting`、`stopping`、自动恢复中等瞬态状态和事件推送已有首版；WebSocket server-push notification 已能把 Bridge event 主动发给授权 Web 客户端，仍缺少更细粒度生命周期事件。
-- 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；崩溃/恢复/quarantine 事件已有首版，仍缺少更完整的策略化资源回收和应用级资源上限。
+- 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；崩溃/恢复/quarantine 事件和 worker 实例数量上限已有首版，仍缺少更完整的策略化资源回收、CPU/内存级资源限制和池化调度策略。
 - 同一插件 N 个实例的 worker 池化、调度和资源上限策略；当前更接近一实例一 worker 的保守隔离原型。
 
 ### 2. 持久 worker IPC
@@ -134,5 +135,5 @@
 2. 用真实第三方插件验证 controller/automation/unit-info/program-data/message/attribute 兼容性。
 3. 给 worker runtime backend 增加兼容失败诊断和更细粒度 runtime capability。
 4. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
-5. 增加进程树 kill/wait 审计、资源上限策略和更细粒度 server-push 事件类型。
+5. 增加进程树 kill/wait 审计、CPU/内存资源上限策略和更细粒度 server-push 事件类型。
 6. 将 Bridge audio sequence/late/jitter 指标与 WebAudio worker/worklet underflow/overflow 指标打通，并把 Bridge route latency 扩展到端到端 WebAudio 往返测量。

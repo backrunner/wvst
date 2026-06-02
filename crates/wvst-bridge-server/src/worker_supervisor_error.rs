@@ -12,6 +12,7 @@ impl WorkerSupervisorError {
             Self::Quarantined { .. } => 4093,
             Self::IncompatibleWorker { .. } => 4094,
             Self::WorkerMissing { .. } | Self::AudioIpcUnavailable { .. } => 4041,
+            Self::ResourceLimitExceeded { .. } => 4290,
         }
     }
 
@@ -46,6 +47,9 @@ impl WorkerSupervisorError {
                 format!("worker audio IPC unavailable for instance {instance_id}")
             }
             Self::WorkerRejected { message, .. } => message.clone(),
+            Self::ResourceLimitExceeded { limit, active } => {
+                format!("worker instance limit reached: active {active}, limit {limit}")
+            }
         }
     }
 
@@ -106,6 +110,9 @@ impl WorkerSupervisorError {
                 stderr,
             } => {
                 json!({ "kind": "worker-rejected", "code": code, "message": message, "stderr": stderr })
+            }
+            Self::ResourceLimitExceeded { limit, active } => {
+                json!({ "kind": "resource-limit-exceeded", "resource": "worker-instances", "limit": limit, "active": active })
             }
         }
     }

@@ -15,6 +15,7 @@ use crate::instance_registry::InstanceRecord;
 
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_QUARANTINE_DURATION: Duration = Duration::from_secs(60);
+const DEFAULT_MAX_WORKER_INSTANCES: usize = 64;
 const EXPECTED_WORKER_IPC_VERSION: u16 = 1;
 const QUARANTINE_FAILURES: u32 = 3;
 const STDERR_TAIL_BYTES: usize = 4096;
@@ -35,6 +36,7 @@ pub struct WorkerSupervisor {
     executable: PathBuf,
     timeout: Duration,
     use_audio_ipc: bool,
+    max_instances: usize,
     failures: Mutex<BTreeMap<String, u32>>,
     processes: Mutex<BTreeMap<u64, Arc<Mutex<WorkerProcess>>>>,
     quarantine_duration: Duration,
@@ -47,6 +49,7 @@ pub struct WorkerSupervisorOptions {
     timeout: Duration,
     quarantine_duration: Duration,
     use_audio_ipc: bool,
+    max_instances: usize,
 }
 
 #[derive(Debug)]
@@ -125,6 +128,10 @@ pub enum WorkerSupervisorError {
         message: String,
         stderr: String,
     },
+    ResourceLimitExceeded {
+        limit: usize,
+        active: usize,
+    },
 }
 
 impl WorkerSupervisor {
@@ -137,6 +144,7 @@ impl WorkerSupervisor {
             executable: options.executable,
             timeout: options.timeout,
             use_audio_ipc: options.use_audio_ipc,
+            max_instances: options.max_instances,
             failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
             quarantine_duration: options.quarantine_duration,
@@ -149,6 +157,7 @@ impl WorkerSupervisor {
         record: &InstanceRecord,
     ) -> Result<Value, WorkerSupervisorError> {
         self.reject_if_quarantined(&record.plugin_id).await?;
+        self.reject_if_instance_limit_reached().await?;
 
         let result = self.start_instance_inner(record).await;
         match result {
@@ -249,6 +258,7 @@ impl WorkerSupervisorOptions {
             timeout: DEFAULT_IPC_TIMEOUT,
             quarantine_duration: DEFAULT_QUARANTINE_DURATION,
             use_audio_ipc: true,
+            max_instances: DEFAULT_MAX_WORKER_INSTANCES,
         }
     }
 
@@ -264,6 +274,11 @@ impl WorkerSupervisorOptions {
 
     pub fn with_audio_ipc(mut self, enabled: bool) -> Self {
         self.use_audio_ipc = enabled;
+        self
+    }
+
+    pub fn with_max_instances(mut self, max_instances: usize) -> Self {
+        self.max_instances = max_instances.max(1);
         self
     }
 }
@@ -492,6 +507,18 @@ impl WorkerSupervisor {
         if quarantined.remove(plugin_id).is_some() {
             drop(quarantined);
             self.failures.lock().await.remove(plugin_id);
+        }
+
+        Ok(())
+    }
+
+    async fn reject_if_instance_limit_reached(&self) -> Result<(), WorkerSupervisorError> {
+        let active = self.processes.lock().await.len();
+        if active >= self.max_instances {
+            return Err(WorkerSupervisorError::ResourceLimitExceeded {
+                limit: self.max_instances,
+                active,
+            });
         }
 
         Ok(())

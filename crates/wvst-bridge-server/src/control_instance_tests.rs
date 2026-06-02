@@ -213,6 +213,56 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn rejects_instance_create_when_worker_limit_is_reached() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
+    let events = BridgeEventBus::new();
+    let metrics = BridgeMetrics::new();
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let stream_tracker = AudioStreamTracker::new();
+    let worker_path = serve_worker_script();
+    let workers = WorkerSupervisor::with_options(
+        crate::worker_supervisor::WorkerSupervisorOptions::new(worker_path.clone())
+            .with_timeout(Duration::from_secs(5))
+            .with_audio_ipc(false)
+            .with_max_instances(1),
+    );
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        stream_tracker: &stream_tracker,
+        workers: &workers,
+    };
+
+    let first = request_json(&instance_create_request(1, &plugin_id), context).await;
+    assert!(first.get("error").is_none(), "{first}");
+
+    let second = request_json(&instance_create_request(2, &plugin_id), context).await;
+
+    assert_eq!(second["error"]["code"], 4290);
+    assert_eq!(second["error"]["data"]["kind"], "resource-limit-exceeded");
+    assert_eq!(second["error"]["data"]["resource"], "worker-instances");
+    assert_eq!(instances.list().len(), 1);
+    assert_eq!(metrics.snapshot().worker_failures, 1);
+
+    let first_instance = first["result"]["instanceId"].as_u64().expect("instance id");
+    let _ = request_json(
+        &instance_request(3, "instance.destroy", first_instance),
+        context,
+    )
+    .await;
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();

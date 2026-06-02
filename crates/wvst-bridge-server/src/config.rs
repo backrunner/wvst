@@ -5,6 +5,7 @@ use url::{Host, Url};
 use crate::{BridgeError, BridgeResult};
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:35876";
+const DEFAULT_MAX_WORKER_INSTANCES: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct BridgeConfig {
@@ -13,6 +14,7 @@ pub struct BridgeConfig {
     allowed_origins: Vec<String>,
     allow_loopback_origins: bool,
     worker_auto_restart: bool,
+    max_worker_instances: usize,
 }
 
 impl BridgeConfig {
@@ -40,6 +42,11 @@ impl BridgeConfig {
         let worker_auto_restart = std::env::var("WVST_WORKER_AUTO_RESTART")
             .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
             .unwrap_or(true);
+        let max_worker_instances = std::env::var("WVST_MAX_WORKER_INSTANCES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MAX_WORKER_INSTANCES);
 
         Ok(Self {
             bind_addr,
@@ -47,6 +54,7 @@ impl BridgeConfig {
             allowed_origins,
             allow_loopback_origins,
             worker_auto_restart,
+            max_worker_instances,
         })
     }
 
@@ -57,11 +65,17 @@ impl BridgeConfig {
             allowed_origins: Vec::new(),
             allow_loopback_origins: true,
             worker_auto_restart: true,
+            max_worker_instances: DEFAULT_MAX_WORKER_INSTANCES,
         }
     }
 
     pub fn with_worker_auto_restart(mut self, enabled: bool) -> Self {
         self.worker_auto_restart = enabled;
+        self
+    }
+
+    pub fn with_max_worker_instances(mut self, max_instances: usize) -> Self {
+        self.max_worker_instances = max_instances.max(1);
         self
     }
 
@@ -98,6 +112,10 @@ impl BridgeConfig {
 
     pub fn worker_auto_restart_enabled(&self) -> bool {
         self.worker_auto_restart
+    }
+
+    pub fn max_worker_instances(&self) -> usize {
+        self.max_worker_instances
     }
 }
 
@@ -150,6 +168,17 @@ mod tests {
             !config
                 .with_worker_auto_restart(false)
                 .worker_auto_restart_enabled()
+        );
+    }
+
+    #[test]
+    fn sets_default_and_overridden_worker_instance_limit() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+
+        assert_eq!(config.max_worker_instances(), DEFAULT_MAX_WORKER_INSTANCES);
+        assert_eq!(
+            config.with_max_worker_instances(2).max_worker_instances(),
+            2
         );
     }
 }

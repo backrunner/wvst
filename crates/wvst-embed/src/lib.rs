@@ -154,6 +154,11 @@ impl BridgeRuntimeBuilder {
         self
     }
 
+    pub fn max_worker_instances(mut self, max_instances: usize) -> Self {
+        self.options.config = self.options.config.with_max_worker_instances(max_instances);
+        self
+    }
+
     pub fn subscribe_events(&self) -> broadcast::Receiver<BridgeEvent> {
         self.events.subscribe()
     }
@@ -232,6 +237,7 @@ mod tests {
         let runtime = BridgeRuntime::builder(config)
             .worker_executable("/tmp/wvst-host-worker")
             .worker_timeout(Duration::from_millis(250))
+            .max_worker_instances(2)
             .build();
 
         assert_eq!(
@@ -239,5 +245,6 @@ mod tests {
             Some(std::path::Path::new("/tmp/wvst-host-worker"))
         );
         assert_eq!(runtime.worker_timeout, Duration::from_millis(250));
+        assert_eq!(runtime.config.max_worker_instances(), 2);
     }
 }

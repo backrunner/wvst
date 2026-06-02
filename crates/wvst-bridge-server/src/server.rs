@@ -63,7 +63,8 @@ impl BridgeServer {
         events.emit(BridgeEventKind::ServerStarting);
         let workers = WorkerSupervisor::with_options(
             WorkerSupervisorOptions::new(host_worker.executable_path().to_path_buf())
-                .with_timeout(host_worker.timeout()),
+                .with_timeout(host_worker.timeout())
+                .with_max_instances(config.max_worker_instances()),
         );
         if let Ok(local_addr) = listener.local_addr() {
             events.emit(BridgeEventKind::ServerStarted { local_addr });
