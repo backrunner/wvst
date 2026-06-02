@@ -9,6 +9,10 @@ use wvst_vst3_host::{HeadlessPluginInstance, create_vst3_component_probe};
 
 #[path = "ipc_audio.rs"]
 mod ipc_audio;
+#[path = "ipc_buffers.rs"]
+mod ipc_buffers;
+
+use ipc_buffers::AudioScratchBuffers;
 
 const WORKER_IPC_VERSION: u16 = 1;
 
@@ -25,6 +29,7 @@ struct WorkerInstance {
     output_channels: usize,
     processing: bool,
     backend: WorkerBackend,
+    buffers: AudioScratchBuffers,
     plugin: HeadlessPluginInstance,
 }
 
@@ -234,6 +239,14 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
         Ok(plugin) => plugin,
         Err(error) => return response_error(id, 4220, error.to_string()),
     };
+    let buffers = match AudioScratchBuffers::new(
+        params.max_block_frames,
+        params.input_channels,
+        params.output_channels,
+    ) {
+        Ok(buffers) => buffers,
+        Err(error) => return response_error(id, 4220, error),
+    };
 
     let ready = InstanceReady {
         instance_id: params.instance_id,
@@ -251,6 +264,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
             output_channels: params.output_channels,
             processing: false,
             backend,
+            buffers,
             plugin,
         },
     );
@@ -340,6 +354,7 @@ fn worker_hello() -> Value {
             "binaryAudioProcess": true,
             "vst3CreateInstance": true,
             "vst3AudioProcessorProbe": true,
+            "preallocatedAudioBuffers": true,
             "sampleRateValidation": true
         }
     })

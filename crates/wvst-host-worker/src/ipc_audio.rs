@@ -69,12 +69,12 @@ fn process_message(
         ));
     }
 
-    let state = state
+    let mut state = state
         .lock()
         .map_err(|_| AudioProcessError::invalid("worker state mutex poisoned"))?;
     let instance = state
         .instances
-        .values()
+        .values_mut()
         .find(|instance| instance.stream_id == input_header.stream_id.get())
         .ok_or_else(|| {
             AudioProcessError::not_found(format!(
@@ -122,14 +122,17 @@ fn process_message(
     }
 
     let frames = usize::from(input_header.frames.get());
-    let input = read_f32_payload(&message.body[AUDIO_FRAME_HEADER_LEN..])?;
-    let mut output = vec![0.0; frames * instance.output_channels];
-    instance
-        .plugin
-        .process_interleaved_f32(frames, &input, &mut output)
+    let output_channels = instance.output_channels;
+    let plugin = &instance.plugin;
+    let (input, output) = instance
+        .buffers
+        .prepare_process(frames, &message.body[AUDIO_FRAME_HEADER_LEN..])
+        .map_err(AudioProcessError::invalid)?;
+    plugin
+        .process_interleaved_f32(frames, input, output)
         .map_err(|error| AudioProcessError::invalid(error.to_string()))?;
 
-    encode_output_frame(input_header, instance.output_channels, &output)
+    encode_output_frame(input_header, output_channels, output)
 }
 
 fn encode_output_frame(
@@ -165,6 +168,7 @@ fn encode_output_frame(
     Ok(frame)
 }
 
+#[cfg(test)]
 fn read_f32_payload(payload: &[u8]) -> Result<Vec<f32>, AudioProcessError> {
     if payload.len() % 4 != 0 {
         return Err(AudioProcessError::invalid(
