@@ -69,6 +69,7 @@ fn record() -> InstanceRecord {
         worker_state: WorkerState::NotStarted,
         stream_state: StreamState::Open,
         backend: None,
+        controller_class_id: None,
         latency_samples: 0,
         tail_samples: 0,
     }

@@ -83,6 +83,8 @@ struct InstanceReady {
     stream_id: u64,
     worker_state: WorkerState,
     backend: WorkerBackendKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    controller_class_id: Option<String>,
     latency_samples: u32,
     tail_samples: u32,
 }
@@ -205,6 +207,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
         stream_id: params.stream_id,
         worker_state: WorkerState::Ready,
         backend: backend.kind(),
+        controller_class_id: backend.controller_class_id(),
         latency_samples: backend.latency_samples(),
         tail_samples: backend.tail_samples(),
     };

@@ -24,6 +24,7 @@ export interface InstanceDescriptor {
   workerState: "not-started" | "ready" | "processing" | "stopped" | "failed";
   streamState: "open" | "closed";
   backend?: string;
+  controllerClassId?: string;
   latencySamples: number;
   tailSamples: number;
 }

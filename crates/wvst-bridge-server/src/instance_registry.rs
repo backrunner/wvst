@@ -75,6 +75,8 @@ pub struct InstanceRecord {
     pub stream_state: StreamState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub controller_class_id: Option<String>,
     pub latency_samples: u32,
     pub tail_samples: u32,
 }
@@ -118,6 +120,7 @@ pub struct InstanceDestroyResult {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct WorkerRuntimeInfo {
     pub backend: Option<String>,
+    pub controller_class_id: Option<String>,
     pub latency_samples: u32,
     pub tail_samples: u32,
 }
@@ -127,6 +130,10 @@ impl WorkerRuntimeInfo {
         Self {
             backend: value
                 .get("backend")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            controller_class_id: value
+                .get("controllerClassId")
                 .and_then(Value::as_str)
                 .map(str::to_string),
             latency_samples: json_u32(value, "latencySamples"),
@@ -188,6 +195,7 @@ impl InstanceRegistry {
             worker_state: WorkerState::NotStarted,
             stream_state: StreamState::Open,
             backend: None,
+            controller_class_id: None,
             latency_samples: 0,
             tail_samples: 0,
         };
@@ -286,6 +294,7 @@ impl InstanceRegistry {
         }
         if let Some(runtime) = runtime {
             record.backend = runtime.backend;
+            record.controller_class_id = runtime.controller_class_id;
             record.latency_samples = runtime.latency_samples;
             record.tail_samples = runtime.tail_samples;
         }

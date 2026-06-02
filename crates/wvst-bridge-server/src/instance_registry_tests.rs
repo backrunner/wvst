@@ -15,6 +15,7 @@ fn creates_multiple_records_for_same_plugin() {
     assert_eq!(first.instance_id, 1);
     assert_eq!(first.stream_id, 1);
     assert_eq!(first.backend, None);
+    assert_eq!(first.controller_class_id, None);
     assert_eq!(first.latency_samples, 0);
     assert_eq!(first.tail_samples, 0);
     assert_eq!(second.instance_id, 2);
@@ -63,6 +64,7 @@ fn records_worker_runtime_info() {
             record.instance_id,
             WorkerRuntimeInfo {
                 backend: Some("vst3-runtime".to_string()),
+                controller_class_id: Some("2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a".to_string()),
                 latency_samples: 64,
                 tail_samples: 128,
             },
@@ -70,6 +72,10 @@ fn records_worker_runtime_info() {
         .expect("ready");
 
     assert_eq!(ready.backend.as_deref(), Some("vst3-runtime"));
+    assert_eq!(
+        ready.controller_class_id.as_deref(),
+        Some("2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a")
+    );
     assert_eq!(ready.latency_samples, 64);
     assert_eq!(ready.tail_samples, 128);
     assert_eq!(registry.list()[0].latency_samples, 64);

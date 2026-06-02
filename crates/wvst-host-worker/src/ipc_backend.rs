@@ -76,6 +76,15 @@ impl WorkerBackend {
         }
     }
 
+    pub(super) fn controller_class_id(&self) -> Option<String> {
+        match self {
+            Self::Passthrough(_) => None,
+            Self::Vst3Runtime(component) => {
+                component.instance().controller_class_id().ok().flatten()
+            }
+        }
+    }
+
     pub(super) fn start_processing(&mut self) -> Result<(), String> {
         match self {
             Self::Passthrough(_) => Ok(()),

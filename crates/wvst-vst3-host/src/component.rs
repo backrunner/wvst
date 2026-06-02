@@ -2,7 +2,8 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
-    BusInfo, FUnknown, IComponent, IComponentVTable, K_RESULT_OK, VST3_MEDIA_TYPE_AUDIO,
+    BusInfo, FUnknown, IComponent, IComponentVTable, K_RESULT_OK, TUid, VST3_MEDIA_TYPE_AUDIO,
+    tuid_hex,
 };
 use crate::{
     HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3BusType,
@@ -73,6 +74,10 @@ impl Vst3ComponentInstance {
             ],
         )?;
         self.component.audio_buses(direction)
+    }
+
+    pub fn controller_class_id(&self) -> HostResult<Option<String>> {
+        self.component.controller_class_id()
     }
 
     pub fn initialize(&mut self) -> HostResult<()> {
@@ -258,6 +263,23 @@ impl Vst3ComponentHandle {
         })
     }
 
+    fn controller_class_id(&self) -> HostResult<Option<String>> {
+        let mut class_id: TUid = [0; 16];
+        let result = unsafe {
+            // SAFETY: component and vtable were validated by from_raw; class_id
+            // is writable stack storage for the component's controller TUID.
+            (self.vtable().get_controller_class_id)(self.component.as_ptr(), &mut class_id)
+        };
+        if result != K_RESULT_OK {
+            return Err(HostError::ComponentCallFailed {
+                method: "getControllerClassId",
+                result,
+            });
+        }
+
+        Ok((class_id != [0; 16]).then(|| tuid_hex(&class_id)))
+    }
+
     fn audio_buses(&mut self, direction: Vst3BusDirection) -> HostResult<Vec<Vst3AudioBusInfo>> {
         let direction_abi = direction.as_abi();
         let count = self.call_count("getBusCount", |component, vtable| unsafe {
@@ -382,6 +404,10 @@ mod bus_selection_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "component_controller_tests.rs"]
+mod component_controller_tests;
 
 #[cfg(test)]
 #[path = "component_tests.rs"]
