@@ -35,6 +35,13 @@ pub(super) enum WorkerBackendKind {
     Vst3Runtime,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct WorkerBackendDiagnostics {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    component_handler: Option<wvst_vst3_host::Vst3ComponentHandlerSnapshot>,
+}
+
 impl WorkerBackend {
     pub(super) fn from_create_params(
         params: &InstanceCreateParams,
@@ -94,6 +101,17 @@ impl WorkerBackend {
         match self {
             Self::Passthrough(_) => 0,
             Self::Vst3Runtime(runtime) => runtime.component.instance().tail_samples(),
+        }
+    }
+
+    pub(super) fn diagnostics(&self) -> WorkerBackendDiagnostics {
+        match self {
+            Self::Passthrough(_) => WorkerBackendDiagnostics {
+                component_handler: None,
+            },
+            Self::Vst3Runtime(runtime) => WorkerBackendDiagnostics {
+                component_handler: runtime.component.component_handler_snapshot(),
+            },
         }
     }
 

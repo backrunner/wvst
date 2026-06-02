@@ -27,6 +27,9 @@ mod vst3_event_abi;
 pub use audio_processor::Vst3AudioProcessor;
 pub use bus_info::{Vst3AudioBusInfo, Vst3BusDirection, Vst3BusType};
 pub use component::Vst3ComponentInstance;
+pub use component_handler::{
+    Vst3ComponentHandlerEvent, Vst3ComponentHandlerEventKind, Vst3ComponentHandlerSnapshot,
+};
 pub use connection_point::Vst3ConnectionPoint;
 pub use edit_controller::{Vst3EditController, Vst3ParameterFlags, Vst3ParameterInfo};
 pub use error::{HostError, HostResult};

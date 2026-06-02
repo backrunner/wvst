@@ -241,7 +241,33 @@ export interface InstanceWorkerMetrics {
   ipcVersion: number;
   instances: number;
   processingInstances: number;
-  [key: string]: JsonValue;
+  runtime?: InstanceWorkerRuntimeMetrics[];
+  [key: string]: JsonValue | InstanceWorkerRuntimeMetrics[] | undefined;
+}
+
+export interface InstanceWorkerRuntimeMetrics {
+  streamId: number;
+  backend: string;
+  latencySamples: number;
+  tailSamples: number;
+  diagnostics?: InstanceWorkerRuntimeDiagnostics;
+}
+
+export interface InstanceWorkerRuntimeDiagnostics {
+  componentHandler?: Vst3ComponentHandlerSnapshot | null;
+}
+
+export interface Vst3ComponentHandlerSnapshot {
+  totalEvents: number;
+  recentEvents: Vst3ComponentHandlerEvent[];
+}
+
+export interface Vst3ComponentHandlerEvent {
+  sequence: number;
+  kind: "begin-edit" | "perform-edit" | "end-edit" | "restart-component";
+  parameterId?: number;
+  valueNormalized?: number;
+  flags?: number;
 }
 
 export interface InstanceStatusResult {

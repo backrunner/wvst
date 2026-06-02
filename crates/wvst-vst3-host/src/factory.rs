@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    HostResult, Vst3BusDirection, Vst3ComponentInstance, Vst3ConnectionPoint, Vst3EditController,
-    Vst3ParameterInfo, Vst3ProcessingConfig,
+    HostResult, Vst3BusDirection, Vst3ComponentHandlerSnapshot, Vst3ComponentInstance,
+    Vst3ConnectionPoint, Vst3EditController, Vst3ParameterInfo, Vst3ProcessingConfig,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -115,6 +115,12 @@ impl Vst3LoadedComponent {
             .as_ref()
             .map(|controller| controller.get_state())
             .transpose()
+    }
+
+    pub fn component_handler_snapshot(&self) -> Option<Vst3ComponentHandlerSnapshot> {
+        self.controller
+            .as_ref()
+            .map(Vst3EditController::component_handler_snapshot)
     }
 
     pub fn set_component_state(&mut self, state: &[u8]) -> HostResult<()> {

@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 
 use serde::{Deserialize, Serialize};
 
-use crate::component_handler::Vst3ComponentHandler;
+use crate::component_handler::{Vst3ComponentHandler, Vst3ComponentHandlerSnapshot};
 use crate::midi_mapping::Vst3MidiMapping;
 use crate::state_stream::Vst3StateStream;
 use crate::unit_info::Vst3UnitInfo;
@@ -244,6 +244,10 @@ impl Vst3EditController {
         };
         // SAFETY: queryInterface returned a referenced IConnectionPoint pointer.
         unsafe { Vst3ConnectionPoint::from_raw(object.cast()) }.map(Some)
+    }
+
+    pub fn component_handler_snapshot(&self) -> Vst3ComponentHandlerSnapshot {
+        self.component_handler.snapshot()
     }
 
     fn set_component_handler(&mut self) -> HostResult<()> {

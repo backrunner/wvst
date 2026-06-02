@@ -425,6 +425,7 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
                     "backend": instance.backend.kind(),
                     "latencySamples": instance.backend.latency_samples(),
                     "tailSamples": instance.backend.tail_samples(),
+                    "diagnostics": instance.backend.diagnostics(),
                 })
             })
             .collect::<Vec<_>>(),
@@ -521,6 +522,10 @@ mod tests {
         );
         assert_eq!(metrics_value["result"]["runtime"][0]["latencySamples"], 0);
         assert_eq!(metrics_value["result"]["runtime"][0]["tailSamples"], 0);
+        assert_eq!(
+            metrics_value["result"]["runtime"][0]["diagnostics"]["componentHandler"],
+            Value::Null
+        );
 
         let parameters = handle_ipc_line(
             r#"{"id":9,"method":"instance.parameters","params":{"instanceId":7}}"#,
