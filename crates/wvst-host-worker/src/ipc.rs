@@ -12,29 +12,38 @@ use wvst_protocol::{
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
 use wvst_vst3_host::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
-    Vst3InputEvent, Vst3ParameterChange, Vst3ProcessOutput,
+    DEFAULT_MAX_VST3_STATE_BYTES, Vst3InputEvent, Vst3ParameterChange, Vst3ProcessOutput,
 };
 
 #[path = "ipc_audio.rs"]
 mod ipc_audio;
 #[path = "ipc_backend.rs"]
 mod ipc_backend;
+#[path = "ipc_backend_error.rs"]
+mod ipc_backend_error;
 #[path = "ipc_buffers.rs"]
 mod ipc_buffers;
 #[path = "ipc_capabilities.rs"]
 mod ipc_capabilities;
+#[path = "ipc_connection.rs"]
+mod ipc_connection;
 #[path = "ipc_midi.rs"]
 mod ipc_midi;
 #[path = "ipc_parameter_events.rs"]
 mod ipc_parameter_events;
 #[path = "ipc_parameters.rs"]
 mod ipc_parameters;
+#[path = "ipc_payload.rs"]
+mod ipc_payload;
+#[path = "ipc_state.rs"]
+mod ipc_state;
 #[path = "ipc_unit_data.rs"]
 mod ipc_unit_data;
 #[path = "ipc_units.rs"]
 mod ipc_units;
 
 use ipc_backend::{WorkerBackend, WorkerBackendKind};
+use ipc_backend_error::WorkerBackendError;
 use ipc_buffers::AudioScratchBuffers;
 use ipc_capabilities::WorkerRuntimeCapabilities;
 
@@ -353,16 +362,16 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
             ipc_parameters::handle_instance_parameter_end_edit(request.id, request.params, state)
         }
         "instance.getState" => {
-            ipc_parameters::handle_instance_get_state(request.id, request.params, state)
+            ipc_state::handle_instance_get_state(request.id, request.params, state)
         }
         "instance.setState" => {
-            ipc_parameters::handle_instance_set_state(request.id, request.params, state)
+            ipc_state::handle_instance_set_state(request.id, request.params, state)
         }
         "instance.connection.notifyComponent" => {
-            ipc_parameters::handle_instance_notify_component(request.id, request.params, state)
+            ipc_connection::handle_instance_notify_component(request.id, request.params, state)
         }
         "instance.connection.notifyController" => {
-            ipc_parameters::handle_instance_notify_controller(request.id, request.params, state)
+            ipc_connection::handle_instance_notify_controller(request.id, request.params, state)
         }
         "instance.destroy" => handle_instance_destroy(request.id, request.params, state),
         _ => response_error(
@@ -469,7 +478,7 @@ fn handle_instance_destroy(id: Value, params: Value, state: &mut WorkerIpcState)
         );
     };
     if let Err(error) = instance.backend.terminate(instance.processing) {
-        return response_error(id, 4220, error);
+        return response_backend_error(id, 4220, &error);
     }
     let stream_id = instance.stream_id;
     state.instances.remove(&params.instance_id);
@@ -515,7 +524,7 @@ fn handle_instance_processing(
         instance.backend.stop_processing()
     };
     if let Err(error) = backend_result {
-        return response_error(id, 4220, error);
+        return response_backend_error(id, 4220, &error);
     }
 
     instance.processing = processing;
@@ -556,7 +565,10 @@ fn worker_hello() -> Value {
             "preallocatedAudioBuffers": true,
             "sampleRateValidation": true,
             "framedControlIpc": true,
-            "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION
+            "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION,
+            "vst3ControlErrors": true,
+            "vst3ControlPayloadLimits": true,
+            "maxVst3StateBytes": DEFAULT_MAX_VST3_STATE_BYTES
         }
     })
 }
@@ -639,6 +651,13 @@ fn response_error(id: Value, code: i64, message: impl Into<String>) -> String {
     }))
 }
 
+fn response_backend_error(id: Value, code: i64, error: &WorkerBackendError) -> String {
+    match error.data() {
+        Some(data) => response_error_data(id, code, error.message(), data.clone()),
+        None => response_error(id, code, error.message()),
+    }
+}
+
 fn response_error_data(id: Value, code: i64, message: impl Into<String>, data: Value) -> String {
     serialize_json(json!({
         "jsonrpc": "2.0",
@@ -676,6 +695,11 @@ mod tests {
         assert_eq!(value["result"]["capabilities"]["vst3ProgramListData"], true);
         assert_eq!(value["result"]["capabilities"]["vst3UnitData"], true);
         assert_eq!(value["result"]["capabilities"]["vst3ControllerState"], true);
+        assert_eq!(value["result"]["capabilities"]["vst3ControlErrors"], true);
+        assert_eq!(
+            value["result"]["capabilities"]["maxVst3StateBytes"],
+            DEFAULT_MAX_VST3_STATE_BYTES
+        );
     }
 
     #[test]

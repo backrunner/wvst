@@ -61,6 +61,7 @@ pub use parameter_changes::{
 pub use process_buffers::Vst3ProcessBuffers;
 pub use process_output::Vst3ProcessOutput;
 pub use processor::{HeadlessPluginInstance, ProcessStats};
+pub use state_stream::DEFAULT_MAX_VST3_STATE_BYTES;
 pub use unit_data::{Vst3ProgramListData, Vst3UnitData};
 pub use unit_info::{
     Vst3ProgramInfo, Vst3ProgramList, Vst3UnitInfo, Vst3UnitInfoEntry, Vst3UnitMetadata,

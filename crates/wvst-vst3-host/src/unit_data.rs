@@ -1,11 +1,10 @@
 use std::ptr::NonNull;
 
-use crate::state_stream::Vst3StateStream;
 use crate::vst3_abi::{
     IProgramListData, IProgramListDataVTable, IUnitData, IUnitDataVTable, K_RESULT_FALSE,
     K_RESULT_OK, ProgramListId, UnitId, VST3_I_PROGRAM_LIST_DATA_IID, VST3_I_UNIT_DATA_IID,
 };
-use crate::{HostError, HostResult};
+use crate::{DEFAULT_MAX_VST3_STATE_BYTES, HostError, HostResult, state_stream::Vst3StateStream};
 
 #[derive(Debug)]
 pub struct Vst3ProgramListData {
@@ -50,12 +49,19 @@ impl Vst3ProgramListData {
         list_id: ProgramListId,
         program_index: i32,
     ) -> HostResult<Vec<u8>> {
-        let mut stream = Vst3StateStream::writable();
-        self.call_result("getProgramData", |data, vtable| unsafe {
+        let mut stream = Vst3StateStream::bounded_writable(DEFAULT_MAX_VST3_STATE_BYTES);
+        let result = unsafe {
             // SAFETY: stream object remains live for the duration of this call.
-            (vtable.get_program_data)(data, list_id, program_index, stream.as_mut_ptr())
-        })?;
-        Ok(stream.into_bytes())
+            (self.vtable().get_program_data)(
+                self.data.as_ptr(),
+                list_id,
+                program_index,
+                stream.as_mut_ptr(),
+            )
+        };
+        stream.check_write_limit()?;
+        component_result("getProgramData", result)?;
+        stream.into_bytes_checked()
     }
 
     pub fn set_program_data(
@@ -127,12 +133,14 @@ impl Vst3UnitData {
     }
 
     pub fn get_unit_data(&self, unit_id: UnitId) -> HostResult<Vec<u8>> {
-        let mut stream = Vst3StateStream::writable();
-        self.call_result("getUnitData", |data, vtable| unsafe {
+        let mut stream = Vst3StateStream::bounded_writable(DEFAULT_MAX_VST3_STATE_BYTES);
+        let result = unsafe {
             // SAFETY: stream object remains live for the duration of this call.
-            (vtable.get_unit_data)(data, unit_id, stream.as_mut_ptr())
-        })?;
-        Ok(stream.into_bytes())
+            (self.vtable().get_unit_data)(self.data.as_ptr(), unit_id, stream.as_mut_ptr())
+        };
+        stream.check_write_limit()?;
+        component_result("getUnitData", result)?;
+        stream.into_bytes_checked()
     }
 
     pub fn set_unit_data(&self, unit_id: UnitId, bytes: &[u8]) -> HostResult<()> {

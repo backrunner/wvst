@@ -375,7 +375,7 @@ impl AudioProcessError {
         }
     }
 
-    fn from_backend_error(error: super::ipc_backend::WorkerBackendError) -> Self {
+    fn from_backend_error(error: super::ipc_backend_error::WorkerBackendError) -> Self {
         Self {
             status_code: AUDIO_ERROR_INVALID_REQUEST,
             message: error.message().to_string(),

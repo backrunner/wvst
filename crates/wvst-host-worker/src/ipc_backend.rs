@@ -1,5 +1,4 @@
 use serde::Serialize;
-use serde_json::{Value, json};
 use wvst_scanner::PluginDescriptor;
 use wvst_vst3_host::{
     HeadlessPluginInstance, HostError, VST3_MIDI_CONTROLLER_AFTERTOUCH,
@@ -10,8 +9,9 @@ use wvst_vst3_host::{
 
 use super::{
     InstanceCreateParams,
+    ipc_backend_error::WorkerBackendError,
     ipc_capabilities::WorkerRuntimeCapabilities,
-    ipc_parameters::{DecodedMessageAttribute, DecodedMessageAttributeValue},
+    ipc_connection::{DecodedMessageAttribute, DecodedMessageAttributeValue},
 };
 
 pub(super) enum WorkerBackend {
@@ -195,14 +195,17 @@ impl WorkerBackend {
         }
     }
 
-    pub(super) fn parameters(&self) -> Result<Vec<Vst3ParameterInfo>, String> {
+    pub(super) fn parameters(&self) -> Result<Vec<Vst3ParameterInfo>, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(Vec::new()),
-            Self::Vst3Runtime(runtime) => runtime.component.parameters().map_err(error_message),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .parameters()
+                .map_err(|error| WorkerBackendError::vst3_control("controller.parameters", error)),
         }
     }
 
-    pub(super) fn unit_metadata(&self) -> Result<Option<Vst3UnitMetadata>, String> {
+    pub(super) fn unit_metadata(&self) -> Result<Option<Vst3UnitMetadata>, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => runtime
@@ -215,7 +218,7 @@ impl WorkerBackend {
                 })
                 .transpose()
                 .map(|value| value.flatten())
-                .map_err(error_message),
+                .map_err(|error| WorkerBackendError::vst3_control("controller.unit-info", error)),
         }
     }
 
@@ -233,32 +236,46 @@ impl WorkerBackend {
         &self,
         id: u32,
         value_normalized: f64,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
-                .ok_or_else(|| "edit controller not available".to_string())
+                .ok_or_else(|| WorkerBackendError::plain("edit controller not available"))
                 .and_then(|controller| {
                     controller
                         .param_string_by_value(id, value_normalized)
-                        .map_err(error_message)
+                        .map_err(|error| {
+                            WorkerBackendError::vst3_control(
+                                "controller.get-param-string-by-value",
+                                error,
+                            )
+                        })
                 }),
         }
     }
 
-    pub(super) fn param_value_by_string(&self, id: u32, value: &str) -> Result<f64, String> {
+    pub(super) fn param_value_by_string(
+        &self,
+        id: u32,
+        value: &str,
+    ) -> Result<f64, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
-                .ok_or_else(|| "edit controller not available".to_string())
+                .ok_or_else(|| WorkerBackendError::plain("edit controller not available"))
                 .and_then(|controller| {
                     controller
                         .param_value_by_string(id, value)
-                        .map_err(error_message)
+                        .map_err(|error| {
+                            WorkerBackendError::vst3_control(
+                                "controller.get-param-value-by-string",
+                                error,
+                            )
+                        })
                 }),
         }
     }
@@ -283,92 +300,117 @@ impl WorkerBackend {
         }
     }
 
-    pub(super) fn set_param_normalized(&self, id: u32, value: f64) -> Result<(), String> {
+    pub(super) fn set_param_normalized(
+        &self,
+        id: u32,
+        value: f64,
+    ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
-                .ok_or_else(|| "edit controller not available".to_string())
+                .ok_or_else(|| WorkerBackendError::plain("edit controller not available"))
                 .and_then(|controller| {
-                    controller
-                        .set_param_normalized(id, value)
-                        .map_err(error_message)
+                    controller.set_param_normalized(id, value).map_err(|error| {
+                        WorkerBackendError::vst3_control("controller.set-param-normalized", error)
+                    })
                 }),
         }
     }
 
-    pub(super) fn begin_param_edit(&mut self, id: u32) -> Result<(), String> {
+    pub(super) fn begin_param_edit(&mut self, id: u32) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller_mut()
-                .ok_or_else(|| "edit controller not available".to_string())
-                .and_then(|controller| controller.begin_edit(id).map_err(error_message)),
+                .ok_or_else(|| WorkerBackendError::plain("edit controller not available"))
+                .and_then(|controller| {
+                    controller.begin_edit(id).map_err(|error| {
+                        WorkerBackendError::vst3_control("controller.begin-edit", error)
+                    })
+                }),
         }
     }
 
-    pub(super) fn perform_param_edit(&mut self, id: u32, value: f64) -> Result<(), String> {
+    pub(super) fn perform_param_edit(
+        &mut self,
+        id: u32,
+        value: f64,
+    ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller_mut()
-                .ok_or_else(|| "edit controller not available".to_string())
-                .and_then(|controller| controller.perform_edit(id, value).map_err(error_message)),
+                .ok_or_else(|| WorkerBackendError::plain("edit controller not available"))
+                .and_then(|controller| {
+                    controller.perform_edit(id, value).map_err(|error| {
+                        WorkerBackendError::vst3_control("controller.perform-edit", error)
+                    })
+                }),
         }
     }
 
-    pub(super) fn end_param_edit(&mut self, id: u32) -> Result<(), String> {
+    pub(super) fn end_param_edit(&mut self, id: u32) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller_mut()
-                .ok_or_else(|| "edit controller not available".to_string())
-                .and_then(|controller| controller.end_edit(id).map_err(error_message)),
+                .ok_or_else(|| WorkerBackendError::plain("edit controller not available"))
+                .and_then(|controller| {
+                    controller.end_edit(id).map_err(|error| {
+                        WorkerBackendError::vst3_control("controller.end-edit", error)
+                    })
+                }),
         }
     }
 
-    pub(super) fn controller_state(&self) -> Result<Option<Vec<u8>>, String> {
+    pub(super) fn controller_state(&self) -> Result<Option<Vec<u8>>, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(None),
-            Self::Vst3Runtime(runtime) => {
-                runtime.component.controller_state().map_err(error_message)
-            }
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller_state()
+                .map_err(|error| WorkerBackendError::vst3_control("controller.get-state", error)),
         }
     }
 
-    pub(super) fn component_state(&self) -> Result<Option<Vec<u8>>, String> {
+    pub(super) fn component_state(&self) -> Result<Option<Vec<u8>>, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .component_state()
                 .map(Some)
-                .map_err(error_message),
+                .map_err(|error| WorkerBackendError::vst3_control("component.get-state", error)),
         }
     }
 
-    pub(super) fn set_controller_state(&self, state: &[u8]) -> Result<(), String> {
+    pub(super) fn set_controller_state(&self, state: &[u8]) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("edit controller not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
-                .ok_or_else(|| "edit controller not available".to_string())
-                .and_then(|controller| controller.set_state(state).map_err(error_message)),
+                .ok_or_else(|| WorkerBackendError::plain("edit controller not available"))
+                .and_then(|controller| {
+                    controller.set_state(state).map_err(|error| {
+                        WorkerBackendError::vst3_control("controller.set-state", error)
+                    })
+                }),
         }
     }
 
-    pub(super) fn set_component_state(&mut self, state: &[u8]) -> Result<(), String> {
+    pub(super) fn set_component_state(&mut self, state: &[u8]) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("component state not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("component state not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .set_component_state(state)
-                .map_err(error_message),
+                .map_err(|error| WorkerBackendError::vst3_control("component.set-state", error)),
         }
     }
 
@@ -376,7 +418,7 @@ impl WorkerBackend {
         &mut self,
         message_id: &str,
         attributes: &[DecodedMessageAttribute],
-    ) -> Result<Option<()>, String> {
+    ) -> Result<Option<()>, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => notify_connection_point(
@@ -392,7 +434,7 @@ impl WorkerBackend {
         &mut self,
         message_id: &str,
         attributes: &[DecodedMessageAttribute],
-    ) -> Result<Option<()>, String> {
+    ) -> Result<Option<()>, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => notify_connection_point(
@@ -404,14 +446,14 @@ impl WorkerBackend {
         }
     }
 
-    pub(super) fn select_unit(&self, unit_id: i32) -> Result<i32, String> {
+    pub(super) fn select_unit(&self, unit_id: i32) -> Result<i32, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("unit info not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("unit info not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .select_unit(unit_id)
-                .map_err(error_message)?
-                .ok_or_else(|| "unit info not available".to_string()),
+                .map_err(|error| WorkerBackendError::vst3_control("controller.select-unit", error))?
+                .ok_or_else(|| WorkerBackendError::plain("unit info not available")),
         }
     }
 
@@ -420,13 +462,13 @@ impl WorkerBackend {
         direction: Vst3BusDirection,
         bus_index: i32,
         channel: i32,
-    ) -> Result<Option<i32>, String> {
+    ) -> Result<Option<i32>, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .unit_by_audio_bus(direction, bus_index, channel)
-                .map_err(error_message),
+                .map_err(|error| WorkerBackendError::vst3_control("controller.unit-by-bus", error)),
         }
     }
 
@@ -435,25 +477,29 @@ impl WorkerBackend {
         list_or_unit_id: i32,
         program_index: i32,
         data: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("unit info not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("unit info not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .set_unit_program_data(list_or_unit_id, program_index, data)
-                .map_err(error_message)?
-                .ok_or_else(|| "unit info not available".to_string()),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("controller.set-unit-program-data", error)
+                })?
+                .ok_or_else(|| WorkerBackendError::plain("unit info not available")),
         }
     }
 
-    pub(super) fn program_data_supported(&self, list_id: i32) -> Result<bool, String> {
+    pub(super) fn program_data_supported(&self, list_id: i32) -> Result<bool, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(false),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .program_data_supported(list_id)
                 .map(|supported| supported.unwrap_or(false))
-                .map_err(error_message),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("component.program-data-supported", error)
+                }),
         }
     }
 
@@ -461,14 +507,18 @@ impl WorkerBackend {
         &self,
         list_id: i32,
         program_index: i32,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("program list data not available".to_string()),
+            Self::Passthrough(_) => {
+                Err(WorkerBackendError::plain("program list data not available"))
+            }
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .get_program_data(list_id, program_index)
-                .map_err(error_message)?
-                .ok_or_else(|| "program list data not available".to_string()),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("component.get-program-data", error)
+                })?
+                .ok_or_else(|| WorkerBackendError::plain("program list data not available")),
         }
     }
 
@@ -477,69 +527,87 @@ impl WorkerBackend {
         list_id: i32,
         program_index: i32,
         data: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("program list data not available".to_string()),
+            Self::Passthrough(_) => {
+                Err(WorkerBackendError::plain("program list data not available"))
+            }
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .set_program_data(list_id, program_index, data)
-                .map_err(error_message)?
-                .ok_or_else(|| "program list data not available".to_string()),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("component.set-program-data", error)
+                })?
+                .ok_or_else(|| WorkerBackendError::plain("program list data not available")),
         }
     }
 
-    pub(super) fn unit_data_supported(&self, unit_id: i32) -> Result<bool, String> {
+    pub(super) fn unit_data_supported(&self, unit_id: i32) -> Result<bool, WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(false),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .unit_data_supported(unit_id)
                 .map(|supported| supported.unwrap_or(false))
-                .map_err(error_message),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("component.unit-data-supported", error)
+                }),
         }
     }
 
-    pub(super) fn get_unit_data(&self, unit_id: i32) -> Result<Vec<u8>, String> {
+    pub(super) fn get_unit_data(&self, unit_id: i32) -> Result<Vec<u8>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("unit data not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("unit data not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .get_unit_data(unit_id)
-                .map_err(error_message)?
-                .ok_or_else(|| "unit data not available".to_string()),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("component.get-unit-data", error)
+                })?
+                .ok_or_else(|| WorkerBackendError::plain("unit data not available")),
         }
     }
 
-    pub(super) fn set_unit_data(&self, unit_id: i32, data: &[u8]) -> Result<(), String> {
+    pub(super) fn set_unit_data(
+        &self,
+        unit_id: i32,
+        data: &[u8],
+    ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err("unit data not available".to_string()),
+            Self::Passthrough(_) => Err(WorkerBackendError::plain("unit data not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .set_unit_data(unit_id, data)
-                .map_err(error_message)?
-                .ok_or_else(|| "unit data not available".to_string()),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("component.set-unit-data", error)
+                })?
+                .ok_or_else(|| WorkerBackendError::plain("unit data not available")),
         }
     }
 
-    pub(super) fn start_processing(&mut self) -> Result<(), String> {
+    pub(super) fn start_processing(&mut self) -> Result<(), WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(()),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .instance_mut()
                 .start_processing()
-                .map_err(error_message),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("component.start-processing", error)
+                }),
         }
     }
 
-    pub(super) fn stop_processing(&mut self) -> Result<(), String> {
+    pub(super) fn stop_processing(&mut self) -> Result<(), WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(()),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .instance_mut()
                 .stop_processing()
-                .map_err(error_message),
+                .map_err(|error| {
+                    WorkerBackendError::vst3_control("component.stop-processing", error)
+                }),
         }
     }
 
@@ -581,7 +649,7 @@ impl WorkerBackend {
         }
     }
 
-    pub(super) fn terminate(&mut self, processing: bool) -> Result<(), String> {
+    pub(super) fn terminate(&mut self, processing: bool) -> Result<(), WorkerBackendError> {
         match self {
             Self::Passthrough(_) => Ok(()),
             Self::Vst3Runtime(runtime) => {
@@ -590,19 +658,22 @@ impl WorkerBackend {
                         .component
                         .instance_mut()
                         .stop_processing()
-                        .map_err(error_message)?;
+                        .map_err(|error| {
+                            WorkerBackendError::vst3_control("component.stop-processing", error)
+                        })?;
                 }
                 if runtime.component.instance().state() != Vst3LifecycleState::Terminated {
                     runtime
                         .component
                         .instance_mut()
                         .terminate()
-                        .map_err(error_message)?;
+                        .map_err(|error| {
+                            WorkerBackendError::vst3_control("component.terminate", error)
+                        })?;
                 }
-                runtime
-                    .component
-                    .terminate_controller()
-                    .map_err(error_message)?;
+                runtime.component.terminate_controller().map_err(|error| {
+                    WorkerBackendError::vst3_control("controller.terminate", error)
+                })?;
                 Ok(())
             }
         }
@@ -637,11 +708,11 @@ fn notify_connection_point(
     target: ConnectionNotifyTarget,
     message_id: &str,
     attributes: &[DecodedMessageAttribute],
-) -> Result<Option<()>, String> {
+) -> Result<Option<()>, WorkerBackendError> {
     let mut message = Vst3HostMessage::new();
     message
         .set_id(message_id)
-        .map_err(|error| error.to_string())?;
+        .map_err(WorkerBackendError::plain)?;
     for attribute in attributes {
         match &attribute.value {
             DecodedMessageAttributeValue::Int(value) => {
@@ -657,64 +728,19 @@ fn notify_connection_point(
                 message.attributes_mut().set_binary(&attribute.key, value)
             }
         }
-        .map_err(|error| error.to_string())?;
+        .map_err(WorkerBackendError::plain)?;
     }
     match target {
-        ConnectionNotifyTarget::Component => component
-            .notify_component(&mut message)
-            .map_err(error_message),
-        ConnectionNotifyTarget::Controller => component
-            .notify_controller(&mut message)
-            .map_err(error_message),
-    }
-}
-
-#[derive(Debug)]
-pub(super) struct WorkerBackendError {
-    message: String,
-    data: Option<Value>,
-}
-
-impl WorkerBackendError {
-    fn plain(error: impl std::fmt::Display) -> Self {
-        Self {
-            message: error.to_string(),
-            data: None,
+        ConnectionNotifyTarget::Component => {
+            component.notify_component(&mut message).map_err(|error| {
+                WorkerBackendError::vst3_control("connection-point.notify-component", error)
+            })
         }
-    }
-
-    fn vst3_init(stage: &'static str, error: HostError) -> Self {
-        let message = error.to_string();
-        Self {
-            message: message.clone(),
-            data: Some(json!({
-                "kind": "vst3-runtime-init",
-                "stage": stage,
-                "hostError": host_error_kind(&error),
-                "message": message,
-            })),
+        ConnectionNotifyTarget::Controller => {
+            component.notify_controller(&mut message).map_err(|error| {
+                WorkerBackendError::vst3_control("connection-point.notify-controller", error)
+            })
         }
-    }
-
-    fn vst3_process(stage: &'static str, error: HostError) -> Self {
-        let message = error.to_string();
-        Self {
-            message: message.clone(),
-            data: Some(json!({
-                "kind": "vst3-runtime-process",
-                "stage": stage,
-                "hostError": host_error_kind(&error),
-                "message": message,
-            })),
-        }
-    }
-
-    pub(super) fn message(&self) -> &str {
-        &self.message
-    }
-
-    pub(super) fn data(&self) -> Option<&Value> {
-        self.data.as_ref()
     }
 }
 
@@ -818,51 +844,4 @@ fn processing_config(params: &InstanceCreateParams) -> Result<Vst3ProcessingConf
 
 fn error_message(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-
-fn host_error_kind(error: &HostError) -> &'static str {
-    match error {
-        HostError::AudioProcessorCallFailed { .. } => "audio-processor-call-failed",
-        HostError::AudioProcessorReturnedNull => "audio-processor-returned-null",
-        HostError::AudioProcessorVTableMissing => "audio-processor-vtable-missing",
-        HostError::BundleExecutableNotFound(_) => "bundle-executable-not-found",
-        HostError::ComponentCallFailed { .. } => "component-call-failed",
-        HostError::ComponentReturnedNull => "component-returned-null",
-        HostError::ComponentVTableMissing => "component-vtable-missing",
-        HostError::ConnectionPointCallFailed { .. } => "connection-point-call-failed",
-        HostError::ConnectionPointMessageNull => "connection-point-message-null",
-        HostError::ConnectionPointReturnedNull => "connection-point-returned-null",
-        HostError::ConnectionPointVTableMissing => "connection-point-vtable-missing",
-        HostError::EditControllerCallFailed { .. } => "edit-controller-call-failed",
-        HostError::EditControllerParameterEditAlreadyActive { .. } => {
-            "edit-controller-parameter-edit-already-active"
-        }
-        HostError::EditControllerParameterEditNotActive { .. } => {
-            "edit-controller-parameter-edit-not-active"
-        }
-        HostError::EditControllerReturnedNull => "edit-controller-returned-null",
-        HostError::EditControllerVTableMissing => "edit-controller-vtable-missing",
-        HostError::FactoryCallFailed { .. } => "factory-call-failed",
-        HostError::FactoryReturnedNull => "factory-returned-null",
-        HostError::InstanceCreationFailed { .. } => "instance-creation-failed",
-        HostError::InstanceReturnedNull { .. } => "instance-returned-null",
-        HostError::InvalidClassId(_) => "invalid-class-id",
-        HostError::InvalidLifecycleTransition { .. } => "invalid-lifecycle-transition",
-        HostError::InterfaceQueryFailed { .. } => "interface-query-failed",
-        HostError::InterfaceReturnedNull { .. } => "interface-returned-null",
-        HostError::InvalidInterfaceId(_) => "invalid-interface-id",
-        HostError::InvalidMaxBlockFrames(_) => "invalid-max-block-frames",
-        HostError::InvalidSampleRate(_) => "invalid-sample-rate",
-        HostError::UnsupportedSpeakerArrangement(_) => "unsupported-speaker-arrangement",
-        HostError::MissingSymbol(_) => "missing-symbol",
-        HostError::ModuleLoadFailed(_) => "module-load-failed",
-        HostError::UnsupportedPlatform(_) => "unsupported-platform",
-        HostError::InvalidChannelCount { .. } => "invalid-channel-count",
-        HostError::InvalidBufferLength { .. } => "invalid-buffer-length",
-        HostError::InvalidStateStreamSeek { .. } => "invalid-state-stream-seek",
-        HostError::InvalidEventCount { .. } => "invalid-event-count",
-        HostError::InvalidEventSampleOffset { .. } => "invalid-event-sample-offset",
-        HostError::InvalidParameterChangeCount { .. } => "invalid-parameter-change-count",
-        HostError::InvalidParameterChangeValue { .. } => "invalid-parameter-change-value",
-    }
 }

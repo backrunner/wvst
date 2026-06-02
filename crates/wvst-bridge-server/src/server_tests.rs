@@ -8,6 +8,17 @@ use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId};
 
 use crate::instance_registry::StreamLifecycleParams;
 
+#[test]
+fn control_message_too_large_response_is_structured() {
+    let response = control_message_too_large_response(4, 5);
+    let value: serde_json::Value = serde_json::from_str(&response).expect("json");
+
+    assert_eq!(value["error"]["code"], 4130);
+    assert_eq!(value["error"]["data"]["kind"], "control-message-too-large");
+    assert_eq!(value["error"]["data"]["maxBytes"], 4);
+    assert_eq!(value["error"]["data"]["actualBytes"], 5);
+}
+
 #[tokio::test]
 async fn responds_to_hello_and_echoes_binary_frames() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
@@ -50,6 +61,46 @@ async fn responds_to_hello_and_echoes_binary_frames() {
         .expect("echoed response")
         .expect("valid websocket message");
     assert_eq!(echoed.into_data(), vec![1, 2, 3]);
+
+    let _ = shutdown_sender.send(());
+}
+
+#[tokio::test]
+async fn rejects_oversized_control_messages() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
+        .with_max_control_message_bytes(8);
+    let server = BridgeServer::bind(config).await.expect("server binds");
+    let addr = server.local_addr().expect("local addr");
+    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+
+    tokio::spawn(async move {
+        let _ = server
+            .serve_until(async {
+                let _ = shutdown_receiver.await;
+            })
+            .await;
+    });
+
+    let (mut websocket, _) = connect_async(format!("ws://{addr}"))
+        .await
+        .expect("client connects");
+
+    websocket
+        .send(Message::Text(r#"{"id":1,"method":"bridge.hello"}"#.into()))
+        .await
+        .expect("oversized control sends");
+
+    let response = websocket
+        .next()
+        .await
+        .expect("oversized response")
+        .expect("valid websocket message");
+    let value: serde_json::Value =
+        serde_json::from_str(response.to_text().expect("response text")).expect("response json");
+
+    assert_eq!(value["id"], serde_json::Value::Null);
+    assert_eq!(value["error"]["code"], 4130);
+    assert_eq!(value["error"]["data"]["kind"], "control-message-too-large");
 
     let _ = shutdown_sender.send(());
 }

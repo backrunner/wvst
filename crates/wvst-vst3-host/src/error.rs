@@ -81,6 +81,10 @@ pub enum HostError {
     InvalidStateStreamSeek {
         position: i64,
     },
+    StateStreamWriteLimitExceeded {
+        max: usize,
+        actual: usize,
+    },
     InvalidEventCount {
         max: usize,
         actual: usize,
@@ -248,6 +252,12 @@ impl Display for HostError {
                 write!(
                     formatter,
                     "invalid VST3 state stream seek position: {position}"
+                )
+            }
+            Self::StateStreamWriteLimitExceeded { max, actual } => {
+                write!(
+                    formatter,
+                    "VST3 state stream write limit exceeded: max {max} bytes, got {actual}"
                 )
             }
             Self::InvalidEventCount { max, actual } => {

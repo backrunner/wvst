@@ -1,11 +1,13 @@
 use std::net::SocketAddr;
 
 use url::{Host, Url};
+use wvst_protocol::WORKER_CONTROL_IPC_MAX_BODY_LEN;
 
 use crate::{BridgeError, BridgeResult};
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:35876";
 const DEFAULT_MAX_WORKER_INSTANCES: usize = 64;
+const DEFAULT_MAX_CONTROL_MESSAGE_BYTES: usize = WORKER_CONTROL_IPC_MAX_BODY_LEN as usize;
 
 #[derive(Debug, Clone)]
 pub struct BridgeConfig {
@@ -15,6 +17,7 @@ pub struct BridgeConfig {
     allow_loopback_origins: bool,
     worker_auto_restart: bool,
     max_worker_instances: usize,
+    max_control_message_bytes: usize,
 }
 
 impl BridgeConfig {
@@ -47,6 +50,11 @@ impl BridgeConfig {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_MAX_WORKER_INSTANCES);
+        let max_control_message_bytes = std::env::var("WVST_MAX_CONTROL_MESSAGE_BYTES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MAX_CONTROL_MESSAGE_BYTES);
 
         Ok(Self {
             bind_addr,
@@ -55,6 +63,7 @@ impl BridgeConfig {
             allow_loopback_origins,
             worker_auto_restart,
             max_worker_instances,
+            max_control_message_bytes,
         })
     }
 
@@ -66,6 +75,7 @@ impl BridgeConfig {
             allow_loopback_origins: true,
             worker_auto_restart: true,
             max_worker_instances: DEFAULT_MAX_WORKER_INSTANCES,
+            max_control_message_bytes: DEFAULT_MAX_CONTROL_MESSAGE_BYTES,
         }
     }
 
@@ -76,6 +86,11 @@ impl BridgeConfig {
 
     pub fn with_max_worker_instances(mut self, max_instances: usize) -> Self {
         self.max_worker_instances = max_instances.max(1);
+        self
+    }
+
+    pub fn with_max_control_message_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_control_message_bytes = max_bytes.max(1);
         self
     }
 
@@ -116,6 +131,10 @@ impl BridgeConfig {
 
     pub fn max_worker_instances(&self) -> usize {
         self.max_worker_instances
+    }
+
+    pub fn max_control_message_bytes(&self) -> usize {
+        self.max_control_message_bytes
     }
 }
 
@@ -179,6 +198,22 @@ mod tests {
         assert_eq!(
             config.with_max_worker_instances(2).max_worker_instances(),
             2
+        );
+    }
+
+    #[test]
+    fn sets_default_and_overridden_control_message_limit() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+
+        assert_eq!(
+            config.max_control_message_bytes(),
+            DEFAULT_MAX_CONTROL_MESSAGE_BYTES
+        );
+        assert_eq!(
+            config
+                .with_max_control_message_bytes(1024)
+                .max_control_message_bytes(),
+            1024
         );
     }
 }

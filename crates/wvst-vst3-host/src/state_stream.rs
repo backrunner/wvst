@@ -8,6 +8,8 @@ use crate::vst3_abi::{
 };
 use crate::{HostError, HostResult};
 
+pub const DEFAULT_MAX_VST3_STATE_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug)]
 pub struct Vst3StateStream {
     object: Box<StateStreamObject>,
@@ -18,14 +20,24 @@ impl Vst3StateStream {
         Self::from_bytes(Vec::new())
     }
 
+    pub fn bounded_writable(max_bytes: usize) -> Self {
+        Self::with_bytes_and_limit(Vec::new(), Some(max_bytes))
+    }
+
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self::with_bytes_and_limit(bytes, None)
+    }
+
+    fn with_bytes_and_limit(bytes: Vec<u8>, max_len: Option<usize>) -> Self {
         Self {
             object: Box::new(StateStreamObject {
                 iface: IBStream {
                     vtable: &STATE_STREAM_VTABLE,
                 },
                 data: bytes,
+                max_len,
                 position: 0,
+                write_limit_exceeded: None,
             }),
         }
     }
@@ -37,6 +49,20 @@ impl Vst3StateStream {
     pub fn into_bytes(self) -> Vec<u8> {
         self.object.data
     }
+
+    pub fn into_bytes_checked(self) -> HostResult<Vec<u8>> {
+        self.check_write_limit()?;
+
+        Ok(self.object.data)
+    }
+
+    pub fn check_write_limit(&self) -> HostResult<()> {
+        if let (Some(max), Some(actual)) = (self.object.max_len, self.object.write_limit_exceeded) {
+            return Err(HostError::StateStreamWriteLimitExceeded { max, actual });
+        }
+
+        Ok(())
+    }
 }
 
 #[repr(C)]
@@ -44,7 +70,9 @@ impl Vst3StateStream {
 struct StateStreamObject {
     iface: IBStream,
     data: Vec<u8>,
+    max_len: Option<usize>,
     position: usize,
+    write_limit_exceeded: Option<usize>,
 }
 
 const STATE_STREAM_VTABLE: IBStreamVTable = IBStreamVTable {
@@ -137,6 +165,13 @@ unsafe extern "system" fn stream_write(
         Some(value) => value,
         None => return K_RESULT_FALSE,
     };
+    if let Some(max_len) = stream.max_len
+        && end > max_len
+    {
+        stream.write_limit_exceeded = Some(end);
+        write_i32(num_bytes_written, 0);
+        return K_RESULT_FALSE;
+    }
     if end > stream.data.len() {
         stream.data.resize(end, 0);
     }
@@ -265,5 +300,27 @@ mod tests {
 
         assert_eq!(position, 1);
         assert_eq!(output[0], 2);
+    }
+
+    #[test]
+    fn bounded_writable_reports_write_limit() {
+        let mut stream = Vst3StateStream::bounded_writable(2);
+        let raw = stream.as_mut_ptr();
+        let input = [1_u8, 2, 3];
+        let mut written = 0;
+
+        let result = unsafe {
+            ((*(*raw).vtable).write)(raw, input.as_ptr().cast_mut().cast(), 3, &mut written)
+        };
+        assert_eq!(result, K_RESULT_FALSE);
+        assert_eq!(written, 0);
+        assert!(stream.check_write_limit().is_err());
+        let error = stream
+            .into_bytes_checked()
+            .expect_err("write limit should be reported");
+        assert!(matches!(
+            error,
+            HostError::StateStreamWriteLimitExceeded { max: 2, actual: 3 }
+        ));
     }
 }

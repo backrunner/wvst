@@ -1,10 +1,7 @@
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 
-use super::{WorkerIpcState, response_error, response_result};
+use super::{WorkerIpcState, response_backend_error, response_error, response_result};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,45 +49,6 @@ struct InstanceStateParams {
     instance_id: u64,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct InstanceSetStateParams {
-    instance_id: u64,
-    #[serde(default)]
-    state_base64: Option<String>,
-    #[serde(default)]
-    component_state_base64: Option<String>,
-    #[serde(default)]
-    controller_state_base64: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct InstanceConnectionNotifyParams {
-    instance_id: u64,
-    message_id: String,
-    #[serde(default)]
-    attributes: Option<BTreeMap<String, Vst3MessageAttribute>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-enum Vst3MessageAttribute {
-    Int {
-        value: i64,
-    },
-    Float {
-        value: f64,
-    },
-    String {
-        value: String,
-    },
-    Binary {
-        #[serde(rename = "valueBase64")]
-        value_base64: String,
-    },
-}
-
 pub(super) fn handle_instance_parameters(
     id: Value,
     params: Value,
@@ -118,7 +76,7 @@ pub(super) fn handle_instance_parameters(
                 "parameters": parameters,
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -153,7 +111,7 @@ pub(super) fn handle_instance_units(
                 "unitInfo": unit_info,
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -276,7 +234,7 @@ pub(super) fn handle_instance_parameter_value_by_string(
     {
         Ok(value) if is_normalized_value(value) => value,
         Ok(_) => return response_error(id, 4220, "converted valueNormalized is outside [0, 1]"),
-        Err(error) => return response_error(id, 4220, error),
+        Err(error) => return response_backend_error(id, 4220, &error),
     };
     parameter_info_response(
         id,
@@ -366,7 +324,7 @@ pub(super) fn handle_instance_parameter_set(
                 "valueNormalized": params.value_normalized,
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -401,7 +359,7 @@ pub(super) fn handle_instance_parameter_begin_edit(
             "begin-edit",
             None,
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -442,7 +400,7 @@ pub(super) fn handle_instance_parameter_perform_edit(
             "perform-edit",
             Some(params.value_normalized),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -477,7 +435,7 @@ pub(super) fn handle_instance_parameter_end_edit(
             "end-edit",
             None,
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -501,7 +459,7 @@ fn parameter_info_response(
         .param_string_by_value(parameter_id, value_normalized)
     {
         Ok(value) => value,
-        Err(error) => return response_error(id, 4220, error),
+        Err(error) => return response_backend_error(id, 4220, &error),
     };
 
     response_result(
@@ -532,257 +490,6 @@ fn parameter_edit_response(
             "valueNormalized": value_normalized,
         }),
     )
-}
-
-pub(super) fn handle_instance_get_state(
-    id: Value,
-    params: Value,
-    state: &mut WorkerIpcState,
-) -> String {
-    let params = match serde_json::from_value::<InstanceStateParams>(params) {
-        Ok(params) => params,
-        Err(error) => {
-            return response_error(id, -32602, format!("invalid get state params: {error}"));
-        }
-    };
-    let Some(instance) = state.instances.get(&params.instance_id) else {
-        return response_error(
-            id,
-            4040,
-            format!("instance not found: {}", params.instance_id),
-        );
-    };
-
-    let component_state = match instance.backend.component_state() {
-        Ok(state) => state,
-        Err(error) => return response_error(id, 4220, error),
-    };
-    let controller_state = match instance.backend.controller_state() {
-        Ok(state) => state,
-        Err(error) => return response_error(id, 4220, error),
-    };
-    if component_state.is_none() && controller_state.is_none() {
-        return response_error(id, 4040, "plugin state not available");
-    }
-
-    response_result(
-        id,
-        json!({
-            "instanceId": params.instance_id,
-            "componentStateBase64": component_state.map(|state| BASE64.encode(state)),
-            "controllerStateBase64": controller_state.as_ref().map(|state| BASE64.encode(state)),
-            "stateBase64": controller_state.map(|state| BASE64.encode(state)),
-        }),
-    )
-}
-
-pub(super) fn handle_instance_set_state(
-    id: Value,
-    params: Value,
-    state: &mut WorkerIpcState,
-) -> String {
-    let params = match serde_json::from_value::<InstanceSetStateParams>(params) {
-        Ok(params) => params,
-        Err(error) => {
-            return response_error(id, -32602, format!("invalid set state params: {error}"));
-        }
-    };
-    let component_state = match decode_optional_base64(
-        "componentStateBase64",
-        params.component_state_base64.as_deref(),
-    ) {
-        Ok(bytes) => bytes,
-        Err(error) => return response_error(id, 4220, error),
-    };
-    let controller_state = match decode_optional_base64(
-        "controllerStateBase64",
-        params
-            .controller_state_base64
-            .as_deref()
-            .or(params.state_base64.as_deref()),
-    ) {
-        Ok(bytes) => bytes,
-        Err(error) => return response_error(id, 4220, error),
-    };
-    if component_state.is_none() && controller_state.is_none() {
-        return response_error(
-            id,
-            -32602,
-            "set state requires componentStateBase64, controllerStateBase64, or stateBase64",
-        );
-    }
-
-    let Some(instance) = state.instances.get_mut(&params.instance_id) else {
-        return response_error(
-            id,
-            4040,
-            format!("instance not found: {}", params.instance_id),
-        );
-    };
-
-    if let Some(state_bytes) = component_state.as_deref()
-        && let Err(error) = instance.backend.set_component_state(state_bytes)
-    {
-        return response_error(id, 4220, error);
-    }
-    if let Some(state_bytes) = controller_state.as_deref()
-        && let Err(error) = instance.backend.set_controller_state(state_bytes)
-    {
-        return response_error(id, 4220, error);
-    }
-
-    response_result(
-        id,
-        json!({
-            "instanceId": params.instance_id,
-            "componentStateBytes": component_state.as_ref().map(Vec::len),
-            "controllerStateBytes": controller_state.as_ref().map(Vec::len),
-            "stateBytes": controller_state.as_ref().map(Vec::len),
-        }),
-    )
-}
-
-pub(super) fn handle_instance_notify_component(
-    id: Value,
-    params: Value,
-    state: &mut WorkerIpcState,
-) -> String {
-    handle_instance_connection_notify(id, params, state, ConnectionNotifyTarget::Component)
-}
-
-pub(super) fn handle_instance_notify_controller(
-    id: Value,
-    params: Value,
-    state: &mut WorkerIpcState,
-) -> String {
-    handle_instance_connection_notify(id, params, state, ConnectionNotifyTarget::Controller)
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ConnectionNotifyTarget {
-    Component,
-    Controller,
-}
-
-fn handle_instance_connection_notify(
-    id: Value,
-    params: Value,
-    state: &mut WorkerIpcState,
-    target: ConnectionNotifyTarget,
-) -> String {
-    let params = match serde_json::from_value::<InstanceConnectionNotifyParams>(params) {
-        Ok(params) => params,
-        Err(error) => {
-            return response_error(
-                id,
-                -32602,
-                format!("invalid connection notify params: {error}"),
-            );
-        }
-    };
-    if params.message_id.is_empty() {
-        return response_error(id, -32602, "messageId is required");
-    }
-
-    let Some(instance) = state.instances.get_mut(&params.instance_id) else {
-        return response_error(
-            id,
-            4040,
-            format!("instance not found: {}", params.instance_id),
-        );
-    };
-
-    let raw_attributes = params.attributes.unwrap_or_default();
-    let attributes = match decode_message_attributes(&raw_attributes) {
-        Ok(attributes) => attributes,
-        Err(error) => return response_error(id, 4220, error),
-    };
-
-    let result = match target {
-        ConnectionNotifyTarget::Component => instance
-            .backend
-            .notify_component(&params.message_id, &attributes),
-        ConnectionNotifyTarget::Controller => instance
-            .backend
-            .notify_controller(&params.message_id, &attributes),
-    };
-
-    match result {
-        Ok(notified) => response_result(
-            id,
-            json!({
-                "instanceId": params.instance_id,
-                "target": match target {
-                    ConnectionNotifyTarget::Component => "component",
-                    ConnectionNotifyTarget::Controller => "controller",
-                },
-                "messageId": params.message_id,
-                "attributeCount": attributes.len(),
-                "notified": notified.is_some(),
-            }),
-        ),
-        Err(error) => response_error(id, 4220, error),
-    }
-}
-
-pub(super) struct DecodedMessageAttribute {
-    pub(super) key: String,
-    pub(super) value: DecodedMessageAttributeValue,
-}
-
-pub(super) enum DecodedMessageAttributeValue {
-    Int(i64),
-    Float(f64),
-    String(String),
-    Binary(Vec<u8>),
-}
-
-fn decode_message_attributes(
-    attributes: &BTreeMap<String, Vst3MessageAttribute>,
-) -> Result<Vec<DecodedMessageAttribute>, String> {
-    attributes
-        .iter()
-        .map(|(key, attribute)| {
-            if key.is_empty() {
-                return Err("message attribute key must not be empty".to_string());
-            }
-            let value = match attribute {
-                Vst3MessageAttribute::Int { value } => DecodedMessageAttributeValue::Int(*value),
-                Vst3MessageAttribute::Float { value } => {
-                    if !value.is_finite() {
-                        return Err(format!("message attribute {key} float must be finite"));
-                    }
-                    DecodedMessageAttributeValue::Float(*value)
-                }
-                Vst3MessageAttribute::String { value } => {
-                    DecodedMessageAttributeValue::String(value.clone())
-                }
-                Vst3MessageAttribute::Binary { value_base64 } => {
-                    DecodedMessageAttributeValue::Binary(decode_base64(
-                        "message attribute valueBase64",
-                        value_base64,
-                    )?)
-                }
-            };
-            Ok(DecodedMessageAttribute {
-                key: key.clone(),
-                value,
-            })
-        })
-        .collect()
-}
-
-fn decode_optional_base64(
-    label: &'static str,
-    value: Option<&str>,
-) -> Result<Option<Vec<u8>>, String> {
-    value.map(|value| decode_base64(label, value)).transpose()
-}
-
-fn decode_base64(label: &'static str, value: &str) -> Result<Vec<u8>, String> {
-    BASE64
-        .decode(value.as_bytes())
-        .map_err(|error| format!("invalid {label}: {error}"))
 }
 
 fn finite_plain_value(value: f64) -> Option<f64> {

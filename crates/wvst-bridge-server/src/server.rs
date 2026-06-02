@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures_util::{SinkExt, StreamExt};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio_tungstenite::accept_hdr_async;
@@ -202,6 +202,18 @@ where
 {
     match message {
         Message::Text(text) => {
+            if text.len() > state.config.max_control_message_bytes() {
+                let response = control_message_too_large_response(
+                    state.config.max_control_message_bytes(),
+                    text.len(),
+                );
+                sender
+                    .send(Message::Text(response.into()))
+                    .await
+                    .map_err(crate::error::BridgeError::from)?;
+                return Ok(Some(session_authorized));
+            }
+
             let response = handle_control_text(
                 text.as_ref(),
                 ControlContext {
@@ -246,6 +258,24 @@ where
             Ok(None)
         }
     }
+}
+
+fn control_message_too_large_response(max_bytes: usize, actual_bytes: usize) -> String {
+    serialize_json(json!({
+        "jsonrpc": "2.0",
+        "id": Value::Null,
+        "error": {
+            "code": 4130,
+            "message": format!(
+                "control message too large: max {max_bytes} bytes, got {actual_bytes}"
+            ),
+            "data": {
+                "kind": "control-message-too-large",
+                "maxBytes": max_bytes,
+                "actualBytes": actual_bytes
+            }
+        }
+    }))
 }
 
 async fn send_event_notification<S>(sender: &mut S, event: BridgeEvent) -> BridgeResult<()>

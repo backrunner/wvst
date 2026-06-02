@@ -15,7 +15,9 @@ use crate::vst3_abi::{
     VST3_PARAMETER_IS_LIST, VST3_PARAMETER_IS_PROGRAM_CHANGE, VST3_PARAMETER_IS_READ_ONLY,
     VST3_PARAMETER_IS_WRAP_AROUND, parse_tuid_hex,
 };
-use crate::{HostError, HostResult, Vst3ConnectionPoint, Vst3HostContext};
+use crate::{
+    DEFAULT_MAX_VST3_STATE_BYTES, HostError, HostResult, Vst3ConnectionPoint, Vst3HostContext,
+};
 
 #[derive(Debug)]
 pub struct Vst3EditController {
@@ -226,12 +228,19 @@ impl Vst3EditController {
     }
 
     pub fn get_state(&self) -> HostResult<Vec<u8>> {
-        let mut stream = Vst3StateStream::writable();
-        self.call_result("getState", |controller, vtable| unsafe {
+        let mut stream = Vst3StateStream::bounded_writable(DEFAULT_MAX_VST3_STATE_BYTES);
+        let result = unsafe {
             // SAFETY: stream object remains live for the duration of the call.
-            (vtable.get_state)(controller, stream.as_mut_ptr())
-        })?;
-        Ok(stream.into_bytes())
+            (self.vtable().get_state)(self.controller.as_ptr(), stream.as_mut_ptr())
+        };
+        stream.check_write_limit()?;
+        if result != K_RESULT_OK {
+            return Err(HostError::EditControllerCallFailed {
+                method: "getState",
+                result,
+            });
+        }
+        stream.into_bytes_checked()
     }
 
     pub fn set_state(&self, state: &[u8]) -> HostResult<()> {

@@ -7,10 +7,10 @@ use crate::vst3_abi::{
     tuid_hex,
 };
 use crate::{
-    HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3BusType,
-    Vst3ConnectionPoint, Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState,
-    Vst3ParameterChange, Vst3ProcessBuffers, Vst3ProcessOutput, Vst3ProcessingConfig,
-    Vst3ProgramListData, Vst3UnitData, state_stream::Vst3StateStream,
+    DEFAULT_MAX_VST3_STATE_BYTES, HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor,
+    Vst3BusDirection, Vst3BusType, Vst3ConnectionPoint, Vst3HostContext, Vst3InputEvent,
+    Vst3Lifecycle, Vst3LifecycleState, Vst3ParameterChange, Vst3ProcessBuffers, Vst3ProcessOutput,
+    Vst3ProcessingConfig, Vst3ProgramListData, Vst3UnitData, state_stream::Vst3StateStream,
 };
 
 #[derive(Debug)]
@@ -382,19 +382,20 @@ impl Vst3ComponentHandle {
     }
 
     fn get_state(&self) -> HostResult<Vec<u8>> {
-        let mut stream = Vst3StateStream::writable();
+        let mut stream = Vst3StateStream::bounded_writable(DEFAULT_MAX_VST3_STATE_BYTES);
         let result = unsafe {
             // SAFETY: component/vtable were validated by from_raw. The stream
             // object remains live for the duration of this call.
             (self.vtable().get_state)(self.component.as_ptr(), stream.as_mut_ptr().cast())
         };
+        stream.check_write_limit()?;
         if result != K_RESULT_OK {
             return Err(HostError::ComponentCallFailed {
                 method: "getState",
                 result,
             });
         }
-        Ok(stream.into_bytes())
+        stream.into_bytes_checked()
     }
 
     fn set_state(&mut self, state: &[u8]) -> HostResult<()> {

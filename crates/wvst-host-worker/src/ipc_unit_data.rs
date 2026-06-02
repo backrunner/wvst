@@ -3,7 +3,10 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{WorkerIpcState, response_error, response_result};
+use super::{
+    WorkerIpcState, ipc_payload::decode_control_base64, response_backend_error, response_error,
+    response_result,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,7 +69,7 @@ pub(super) fn handle_instance_program_data_supported(
                 "supported": supported,
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -107,7 +110,7 @@ pub(super) fn handle_instance_get_program_data(
                 "dataBytes": data.len(),
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -151,7 +154,7 @@ pub(super) fn handle_instance_set_program_data(
                 "dataBytes": data.len(),
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -183,7 +186,7 @@ pub(super) fn handle_instance_unit_data_supported(
                 "supported": supported,
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -216,7 +219,7 @@ pub(super) fn handle_instance_get_unit_data(
                 "dataBytes": data.len(),
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -252,12 +255,10 @@ pub(super) fn handle_instance_set_unit_data(
                 "dataBytes": data.len(),
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
 fn decode_base64(label: &'static str, value: &str) -> Result<Vec<u8>, String> {
-    BASE64
-        .decode(value.as_bytes())
-        .map_err(|error| format!("invalid {label}: {error}"))
+    decode_control_base64(label, value)
 }

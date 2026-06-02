@@ -1,10 +1,11 @@
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wvst_vst3_host::Vst3BusDirection;
 
-use super::{WorkerIpcState, response_error, response_result};
+use super::{
+    WorkerIpcState, ipc_payload::decode_control_base64, response_backend_error, response_error,
+    response_result,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,7 +60,7 @@ pub(super) fn handle_instance_select_unit(
                 "selectedUnitId": selected_unit_id,
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -100,7 +101,7 @@ pub(super) fn handle_instance_unit_by_bus(
                 "unitId": unit_id,
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -145,7 +146,7 @@ pub(super) fn handle_instance_set_unit_program_data(
                 "dataBytes": data.len(),
             }),
         ),
-        Err(error) => response_error(id, 4220, error),
+        Err(error) => response_backend_error(id, 4220, &error),
     }
 }
 
@@ -158,7 +159,5 @@ fn parse_audio_bus_direction(value: &str) -> Result<Vst3BusDirection, String> {
 }
 
 fn decode_base64(label: &'static str, value: &str) -> Result<Vec<u8>, String> {
-    BASE64
-        .decode(value.as_bytes())
-        .map_err(|error| format!("invalid {label}: {error}"))
+    decode_control_base64(label, value)
 }
