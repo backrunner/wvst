@@ -47,8 +47,8 @@
 - `create_vst3_component_probe()` 现在会通过 `queryInterface` 验证 component 是否暴露 `IAudioProcessor`；`wvst-host-worker component-probe` 可继续作为隔离探测命令使用。
 - `wvst-vst3-host` 已加入纯 Rust `Vst3Lifecycle` 状态机和 `Vst3ProcessingConfig`，覆盖 `created -> initialized -> setup-done -> activated -> processing -> stopped -> terminated` 的合法顺序和非法转移测试。
 - `wvst-vst3-host` 已加入 `Vst3ProcessBuffers`，能预分配 planar input/output buffer，将 interleaved f32 输入转换为 VST3 channel buffers，并把 planar 输出复制回 interleaved f32；同时覆盖无输入音源 VST 的 buffer 路径。
-- `wvst-vst3-host` 已加入 VST3 `IEventList` / `Event` ABI skeleton 和 `Vst3EventList` safe wrapper，`ProcessData.input_events` 现在指向稳定的预分配事件列表，每个 block 会清空旧事件并填充新的 note/poly pressure 事件。
-- `wvst-vst3-host` 已加入 VST3 `IParameterChanges` / `IParamValueQueue` ABI skeleton 和 `Vst3ParameterChanges` safe wrapper，`ProcessData.input_parameter_changes` 现在指向稳定的 host-owned 参数队列，每个 block 会按 ParamID 分组填充 sample-accurate normalized automation points。
+- `wvst-vst3-host` 已加入 VST3 `IEventList` / `Event` ABI skeleton 和 `Vst3EventList` safe wrapper，`ProcessData.input_events` / `output_events` 现在都指向稳定的预分配事件列表，每个 block 会清空旧事件；输入侧会填充新的 note/poly pressure 事件，输出侧可捕获插件通过 `addEvent` 写回的事件。
+- `wvst-vst3-host` 已加入 VST3 `IParameterChanges` / `IParamValueQueue` ABI skeleton 和 `Vst3ParameterChanges` safe wrapper，`ProcessData.input_parameter_changes` / `output_parameter_changes` 现在都指向稳定的 host-owned 参数队列；输入侧会按 ParamID 分组填充 sample-accurate normalized automation points，输出侧可捕获插件通过 `addParameterData/addPoint` 写回的参数变化。
 - `wvst-vst3-host` 已加入 VST3 host-owned `ProcessContext` 和 `IProcessContextRequirements` 查询，`ProcessData.process_context` 指向稳定堆内存并随 block 推进 sample timeline、tempo、拍号和 musical position；worker diagnostics 已暴露插件声明的 process context requirements bitmask。
 - `wvst-vst3-host` 已加入 `Vst3AudioProcessor` facade，能封装 owned `IAudioProcessor` 指针并调用 `canProcessSampleSize`、`setupProcessing`、`setProcessing`、`process`、latency/tail 查询；fake ABI fixture 已覆盖真实 `ProcessData` 指针链路。
 - `wvst-vst3-host` 已加入 `Vst3ComponentInstance` holder，能持有 owned `IComponent` + `Vst3AudioProcessor`，并将 initialize、setupProcessing、setActive、setProcessing、process、terminate 串入 `Vst3Lifecycle`；fake component/processor fixture 已覆盖完整生命周期和错误传播。
@@ -107,7 +107,7 @@
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
 - Web 设备选择已有底层 helper、高层 session graph helper、capability API、device watcher、sample-rate guard、手动 stream restart 和基础 loopback metrics；仍缺少 sample-rate change 后的自动重建策略和真实端到端设备切换测量。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，仍缺少共享内存/预分配 buffer 和背压语义。
-- worker 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；runtime backend 已接入真实 VST `process()`，但当前仍经 worker instance mutex 串行处理，并保留 interleaved/planar scratch copy。
+- worker 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；runtime backend 已接入真实 VST `process()`，且 VST3 host 已捕获插件写回的 output events/parameter changes，但当前仍经 worker instance mutex 串行处理、保留 interleaved/planar scratch copy，并尚未把插件输出事件编码回 Web 响应帧。
 - late/drop/jitter 首版 Bridge 诊断指标已完成；仍缺少 WebAudio 端 underflow/overflow 与 Bridge 序号指标的统一策略、端到端 WebAudio 往返延迟测量和共享内存/背压语义。
 
 ### 5. MIDI 与音源 VST

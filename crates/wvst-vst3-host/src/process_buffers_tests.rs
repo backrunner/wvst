@@ -2,7 +2,7 @@ use super::*;
 use crate::event_list::{Vst3InputEvent, Vst3NoteEvent};
 use crate::parameter_changes::Vst3ParameterChange;
 use crate::vst3_abi::IParameterChanges;
-use crate::vst3_abi::{Event, IEventList, VST3_EVENT_TYPE_NOTE_ON};
+use crate::vst3_abi::{Event, IEventList, ParamId, VST3_EVENT_TYPE_NOTE_ON};
 use crate::vst3_abi::{ProcessContext, VST3_PROCESS_CONTEXT_PLAYING};
 
 #[test]
@@ -283,6 +283,70 @@ fn exposes_prepared_parameter_changes_to_process_data() {
     assert_eq!(result, 0);
     assert_eq!(sample_offset, 18);
     assert_eq!(value, 0.75);
+}
+
+#[test]
+fn captures_output_events_written_by_plugin() {
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
+    buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
+    let event_list = buffers.process_data.output_events.cast::<IEventList>();
+    let mut event = Event {
+        sample_offset: 7,
+        event_type: VST3_EVENT_TYPE_NOTE_ON,
+        ..Event::default()
+    };
+
+    let result = unsafe { ((*(*event_list).vtable).add_event)(event_list, &mut event) };
+
+    assert!(!event_list.is_null());
+    assert_eq!(result, 0);
+    assert_eq!(buffers.output_events().len(), 1);
+    assert_eq!(buffers.output_events()[0].sample_offset, 7);
+    assert_eq!(
+        buffers.output_events()[0].event_type,
+        VST3_EVENT_TYPE_NOTE_ON
+    );
+
+    buffers
+        .prepare_interleaved_f32(64, &[])
+        .expect("next block");
+    assert!(buffers.output_events().is_empty());
+}
+
+#[test]
+fn captures_output_parameter_changes_written_by_plugin() {
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
+    buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
+    let changes = buffers
+        .process_data
+        .output_parameter_changes
+        .cast::<IParameterChanges>();
+    let parameter_id: ParamId = 42;
+    let mut queue_index = -1;
+    let queue = unsafe {
+        ((*(*changes).vtable).add_parameter_data)(changes, &parameter_id, &mut queue_index)
+    };
+    let mut point_index = -1;
+    let result = unsafe { ((*(*queue).vtable).add_point)(queue, 9, 0.25, &mut point_index) };
+
+    assert!(!changes.is_null());
+    assert!(!queue.is_null());
+    assert_eq!(queue_index, 0);
+    assert_eq!(result, 0);
+    assert_eq!(point_index, 0);
+    assert_eq!(
+        buffers.output_parameter_changes(),
+        vec![Vst3ParameterChange {
+            sample_offset: 9,
+            parameter_id: 42,
+            value_normalized: 0.25,
+        }]
+    );
+
+    buffers
+        .prepare_interleaved_f32(64, &[])
+        .expect("next block");
+    assert!(buffers.output_parameter_changes().is_empty());
 }
 
 #[test]

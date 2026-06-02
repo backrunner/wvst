@@ -61,6 +61,10 @@ impl Vst3EventList {
         self.object.events.clear();
     }
 
+    pub fn events(&self) -> &[Event] {
+        &self.object.events
+    }
+
     pub fn set_events(&mut self, frames: usize, events: &[Vst3InputEvent]) -> HostResult<()> {
         if events.len() > self.object.max_events {
             return Err(HostError::InvalidEventCount {

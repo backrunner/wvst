@@ -3,14 +3,16 @@ use std::ptr;
 use std::slice;
 
 use crate::vst3_abi::{
-    AudioBusBuffers, IAudioProcessor, IAudioProcessorVTable, IProcessContextRequirements,
-    IProcessContextRequirementsVTable, K_RESULT_FALSE, K_RESULT_OK, ProcessData, ProcessSetup,
-    SpeakerArrangement, VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID, VST3_PROCESS_CONTEXT_NEED_TEMPO,
-    VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE, VST3_SAMPLE_32, VST3_SPEAKER_51, VST3_SPEAKER_STEREO,
-    parse_tuid_hex,
+    AudioBusBuffers, Event, EventPayload, IAudioProcessor, IAudioProcessorVTable, IEventList,
+    IProcessContextRequirements, IProcessContextRequirementsVTable, K_RESULT_FALSE, K_RESULT_OK,
+    ParamId, PolyPressureEvent, ProcessData, ProcessSetup, SpeakerArrangement,
+    VST3_EVENT_TYPE_POLY_PRESSURE, VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID,
+    VST3_PROCESS_CONTEXT_NEED_TEMPO, VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE, VST3_SAMPLE_32,
+    VST3_SPEAKER_51, VST3_SPEAKER_STEREO, parse_tuid_hex,
 };
 
 use super::*;
+use crate::Vst3ParameterChange;
 
 #[test]
 fn sets_up_processes_and_releases_audio_processor() {
@@ -63,6 +65,40 @@ fn sets_up_processes_and_releases_audio_processor() {
     drop(processor);
 
     assert_eq!(fake.release_calls, 1);
+}
+
+#[test]
+fn captures_plugin_output_events_and_parameter_changes() {
+    let mut fake = FakeProcessor::new();
+    fake.write_output_event = true;
+    fake.write_output_parameter_change = true;
+    let mut processor =
+        unsafe { Vst3AudioProcessor::from_raw(fake.raw_processor()) }.expect("processor");
+    let config = Vst3ProcessingConfig::new(48_000, 128, 0, 2).expect("config");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
+
+    processor.setup_realtime_f32(config).expect("setup");
+    buffers.prepare_interleaved_f32(16, &[]).expect("prepare");
+    processor.process(&mut buffers).expect("process");
+
+    assert_eq!(buffers.output_events().len(), 1);
+    assert_eq!(buffers.output_events()[0].sample_offset, 3);
+    assert_eq!(
+        buffers.output_events()[0].event_type,
+        VST3_EVENT_TYPE_POLY_PRESSURE
+    );
+    assert_eq!(
+        unsafe { buffers.output_events()[0].payload.poly_pressure.pressure },
+        0.5
+    );
+    assert_eq!(
+        buffers.output_parameter_changes(),
+        vec![Vst3ParameterChange {
+            sample_offset: 4,
+            parameter_id: 7,
+            value_normalized: 0.75,
+        }]
+    );
 }
 
 #[test]
@@ -207,6 +243,8 @@ struct FakeProcessor {
     tail_samples: u32,
     process_context_requirements: Option<u32>,
     requirements_release_calls: u32,
+    write_output_event: bool,
+    write_output_parameter_change: bool,
 }
 
 impl FakeProcessor {
@@ -237,6 +275,8 @@ impl FakeProcessor {
             tail_samples: 0,
             process_context_requirements: None,
             requirements_release_calls: 0,
+            write_output_event: false,
+            write_output_parameter_change: false,
         }
     }
 
@@ -375,6 +415,7 @@ unsafe extern "system" fn fake_process(this: *mut IAudioProcessor, data: *mut Pr
     // call; tests keep the backing buffers alive for the full call duration.
     let data = unsafe { &mut *data };
     fake.last_num_samples = data.num_samples;
+    write_plugin_outputs(fake, data);
     process_first_audio_bus(data)
 }
 
@@ -453,6 +494,59 @@ fn process_first_audio_bus(data: &mut ProcessData) -> i32 {
     }
 
     K_RESULT_OK
+}
+
+fn write_plugin_outputs(fake: &FakeProcessor, data: &mut ProcessData) {
+    if fake.write_output_event {
+        write_output_event(data);
+    }
+    if fake.write_output_parameter_change {
+        write_output_parameter_change(data);
+    }
+}
+
+fn write_output_event(data: &mut ProcessData) {
+    if data.output_events.is_null() {
+        return;
+    }
+
+    let output_events = data.output_events.cast::<IEventList>();
+    let mut event = Event {
+        sample_offset: 3,
+        event_type: VST3_EVENT_TYPE_POLY_PRESSURE,
+        payload: EventPayload {
+            poly_pressure: PolyPressureEvent {
+                channel: 1,
+                pitch: 64,
+                pressure: 0.5,
+                note_id: 10,
+            },
+        },
+        ..Event::default()
+    };
+    unsafe {
+        ((*(*output_events).vtable).add_event)(output_events, &mut event);
+    }
+}
+
+fn write_output_parameter_change(data: &mut ProcessData) {
+    if data.output_parameter_changes.is_null() {
+        return;
+    }
+
+    let changes = data
+        .output_parameter_changes
+        .cast::<crate::vst3_abi::IParameterChanges>();
+    let parameter_id: ParamId = 7;
+    let queue = unsafe {
+        ((*(*changes).vtable).add_parameter_data)(changes, &parameter_id, ptr::null_mut())
+    };
+    if queue.is_null() {
+        return;
+    }
+    unsafe {
+        ((*(*queue).vtable).add_point)(queue, 4, 0.75, ptr::null_mut());
+    }
 }
 
 fn write_instrument_output(outputs: &mut [*mut f32], frames: usize) {

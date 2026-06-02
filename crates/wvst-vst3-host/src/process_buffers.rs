@@ -26,7 +26,9 @@ pub struct Vst3ProcessBuffers {
     input_buses: Vec<AudioBusBuffers>,
     output_buses: Vec<AudioBusBuffers>,
     input_events: Vst3EventList,
+    output_events: Vst3EventList,
     input_parameter_changes: Vst3ParameterChanges,
+    output_parameter_changes: Vst3ParameterChanges,
     process_context: Box<ProcessContext>,
     process_data: ProcessData,
 }
@@ -57,7 +59,10 @@ impl Vst3ProcessBuffers {
         };
         let output_buses = vec![audio_bus(output_channels)];
         let input_events = Vst3EventList::new(DEFAULT_MAX_VST3_EVENTS_PER_BLOCK);
+        let output_events = Vst3EventList::new(DEFAULT_MAX_VST3_EVENTS_PER_BLOCK);
         let input_parameter_changes =
+            Vst3ParameterChanges::new(DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK);
+        let output_parameter_changes =
             Vst3ParameterChanges::new(DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK);
         let process_context = Box::new(ProcessContext::stopped(sample_rate));
 
@@ -73,7 +78,9 @@ impl Vst3ProcessBuffers {
             input_buses,
             output_buses,
             input_events,
+            output_events,
             input_parameter_changes,
+            output_parameter_changes,
             process_context,
             process_data: empty_process_data(),
         };
@@ -97,7 +104,9 @@ impl Vst3ProcessBuffers {
     pub fn prepare_interleaved_f32(&mut self, frames: usize, input: &[f32]) -> HostResult<()> {
         self.validate_frames(frames)?;
         self.input_events.clear();
+        self.output_events.clear();
         self.input_parameter_changes.clear();
+        self.output_parameter_changes.clear();
 
         let expected_input = checked_sample_len(frames, self.input_channels)?;
         if input.len() != expected_input {
@@ -157,6 +166,14 @@ impl Vst3ProcessBuffers {
     ) -> HostResult<()> {
         self.validate_frames(frames)?;
         self.input_parameter_changes.set_changes(frames, changes)
+    }
+
+    pub fn output_events(&self) -> &[crate::vst3_abi::Event] {
+        self.output_events.events()
+    }
+
+    pub fn output_parameter_changes(&self) -> Vec<Vst3ParameterChange> {
+        self.output_parameter_changes.changes()
     }
 
     pub fn copy_output_to_interleaved(&self, frames: usize, output: &mut [f32]) -> HostResult<()> {
@@ -266,8 +283,11 @@ impl Vst3ProcessBuffers {
         self.process_data.num_inputs = self.input_buses.len() as i32;
         self.process_data.num_outputs = self.output_buses.len() as i32;
         self.process_data.input_events = self.input_events.as_raw_ptr().cast::<c_void>();
+        self.process_data.output_events = self.output_events.as_raw_ptr().cast::<c_void>();
         self.process_data.input_parameter_changes =
             self.input_parameter_changes.as_raw_ptr().cast::<c_void>();
+        self.process_data.output_parameter_changes =
+            self.output_parameter_changes.as_raw_ptr().cast::<c_void>();
         self.process_data.process_context =
             (&mut *self.process_context as *mut ProcessContext).cast::<c_void>();
     }
