@@ -19,6 +19,7 @@ pub struct BridgeConfig {
     max_worker_instances: usize,
     max_control_message_bytes: usize,
     worker_memory_limit_bytes: Option<u64>,
+    worker_cpu_time_limit_seconds: Option<u64>,
 }
 
 impl BridgeConfig {
@@ -60,6 +61,10 @@ impl BridgeConfig {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0);
+        let worker_cpu_time_limit_seconds = std::env::var("WVST_WORKER_CPU_TIME_LIMIT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0);
 
         Ok(Self {
             bind_addr,
@@ -70,6 +75,7 @@ impl BridgeConfig {
             max_worker_instances,
             max_control_message_bytes,
             worker_memory_limit_bytes,
+            worker_cpu_time_limit_seconds,
         })
     }
 
@@ -83,6 +89,7 @@ impl BridgeConfig {
             max_worker_instances: DEFAULT_MAX_WORKER_INSTANCES,
             max_control_message_bytes: DEFAULT_MAX_CONTROL_MESSAGE_BYTES,
             worker_memory_limit_bytes: None,
+            worker_cpu_time_limit_seconds: None,
         }
     }
 
@@ -108,6 +115,16 @@ impl BridgeConfig {
 
     pub fn without_worker_memory_limit(mut self) -> Self {
         self.worker_memory_limit_bytes = None;
+        self
+    }
+
+    pub fn with_worker_cpu_time_limit_seconds(mut self, seconds: u64) -> Self {
+        self.worker_cpu_time_limit_seconds = Some(seconds.max(1));
+        self
+    }
+
+    pub fn without_worker_cpu_time_limit(mut self) -> Self {
+        self.worker_cpu_time_limit_seconds = None;
         self
     }
 
@@ -156,6 +173,10 @@ impl BridgeConfig {
 
     pub fn worker_memory_limit_bytes(&self) -> Option<u64> {
         self.worker_memory_limit_bytes
+    }
+
+    pub fn worker_cpu_time_limit_seconds(&self) -> Option<u64> {
+        self.worker_cpu_time_limit_seconds
     }
 }
 
@@ -255,6 +276,27 @@ mod tests {
                 .with_worker_memory_limit_bytes(128 * 1024 * 1024)
                 .without_worker_memory_limit()
                 .worker_memory_limit_bytes(),
+            None
+        );
+    }
+
+    #[test]
+    fn configures_optional_worker_cpu_time_limit() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+
+        assert_eq!(config.worker_cpu_time_limit_seconds(), None);
+        assert_eq!(
+            config
+                .clone()
+                .with_worker_cpu_time_limit_seconds(30)
+                .worker_cpu_time_limit_seconds(),
+            Some(30)
+        );
+        assert_eq!(
+            config
+                .with_worker_cpu_time_limit_seconds(30)
+                .without_worker_cpu_time_limit()
+                .worker_cpu_time_limit_seconds(),
             None
         );
     }

@@ -187,6 +187,14 @@ impl BridgeRuntimeBuilder {
         self
     }
 
+    pub fn worker_cpu_time_limit_seconds(mut self, seconds: u64) -> Self {
+        self.options.config = self
+            .options
+            .config
+            .with_worker_cpu_time_limit_seconds(seconds);
+        self
+    }
+
     pub fn subscribe_events(&self) -> broadcast::Receiver<BridgeEvent> {
         self.events.subscribe()
     }
@@ -281,6 +289,7 @@ mod tests {
             .worker_timeout(Duration::from_millis(250))
             .max_worker_instances(2)
             .worker_memory_limit_bytes(64 * 1024 * 1024)
+            .worker_cpu_time_limit_seconds(30)
             .build();
 
         assert_eq!(
@@ -293,5 +302,6 @@ mod tests {
             runtime.config.worker_memory_limit_bytes(),
             Some(64 * 1024 * 1024)
         );
+        assert_eq!(runtime.config.worker_cpu_time_limit_seconds(), Some(30));
     }
 }

@@ -366,7 +366,8 @@ impl WorkerProcess {
                 executable,
                 message: error.to_string(),
             })?;
-        let termination_target = WorkerTerminationTarget::from_child(&child);
+        let termination_target =
+            WorkerTerminationTarget::from_child_with_limits(&child, resource_limits);
         let stdin = child
             .stdin
             .take()

@@ -3,12 +3,14 @@ use tokio::process::{Child, Command};
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub struct WorkerResourceLimits {
     address_space_bytes: Option<u64>,
+    cpu_time_seconds: Option<u64>,
 }
 
 impl WorkerResourceLimits {
     pub const fn none() -> Self {
         Self {
             address_space_bytes: None,
+            cpu_time_seconds: None,
         }
     }
 
@@ -17,12 +19,21 @@ impl WorkerResourceLimits {
         self
     }
 
+    pub const fn with_cpu_time_seconds(mut self, seconds: u64) -> Self {
+        self.cpu_time_seconds = Some(seconds);
+        self
+    }
+
     pub const fn address_space_bytes(&self) -> Option<u64> {
         self.address_space_bytes
     }
 
+    pub const fn cpu_time_seconds(&self) -> Option<u64> {
+        self.cpu_time_seconds
+    }
+
     pub const fn is_empty(&self) -> bool {
-        self.address_space_bytes.is_none()
+        self.address_space_bytes.is_none() && self.cpu_time_seconds.is_none()
     }
 }
 
@@ -42,6 +53,10 @@ impl WorkerTerminationTarget {
     }
 
     pub fn from_child(child: &Child) -> Self {
+        Self::from_child_with_limits(child, WorkerResourceLimits::none())
+    }
+
+    pub fn from_child_with_limits(child: &Child, _limits: WorkerResourceLimits) -> Self {
         Self {
             process_group_id: child.id(),
         }
@@ -94,6 +109,16 @@ fn apply_unix_resource_limits(limits: WorkerResourceLimits) -> std::io::Result<(
         )
         .map_err(std::io::Error::from)?;
     }
+    if let Some(seconds) = limits.cpu_time_seconds {
+        rustix::process::setrlimit(
+            rustix::process::Resource::Cpu,
+            rustix::process::Rlimit {
+                current: Some(seconds),
+                maximum: Some(seconds),
+            },
+        )
+        .map_err(std::io::Error::from)?;
+    }
 
     Ok(())
 }
@@ -103,8 +128,12 @@ impl WorkerTerminationTarget {
     pub fn configure_command(_command: &mut Command, _limits: WorkerResourceLimits) {}
 
     pub fn from_child(child: &Child) -> Self {
+        Self::from_child_with_limits(child, WorkerResourceLimits::none())
+    }
+
+    pub fn from_child_with_limits(child: &Child, limits: WorkerResourceLimits) -> Self {
         Self {
-            job: windows::JobHandle::create_for_child(child),
+            job: windows::JobHandle::create_for_child(child, limits),
         }
     }
 
@@ -125,7 +154,11 @@ impl WorkerTerminationTarget {
 impl WorkerTerminationTarget {
     pub fn configure_command(_command: &mut Command, _limits: WorkerResourceLimits) {}
 
-    pub fn from_child(_child: &Child) -> Self {
+    pub fn from_child(child: &Child) -> Self {
+        Self::from_child_with_limits(child, WorkerResourceLimits::none())
+    }
+
+    pub fn from_child_with_limits(_child: &Child, _limits: WorkerResourceLimits) -> Self {
         Self {}
     }
 
@@ -148,6 +181,7 @@ mod tests {
 
         assert!(limits.is_empty());
         assert_eq!(limits.address_space_bytes(), None);
+        assert_eq!(limits.cpu_time_seconds(), None);
     }
 
     #[test]
@@ -157,20 +191,31 @@ mod tests {
         assert!(!limits.is_empty());
         assert_eq!(limits.address_space_bytes(), Some(64 * 1024 * 1024));
     }
+
+    #[test]
+    fn resource_limits_store_cpu_time_limit() {
+        let limits = WorkerResourceLimits::none().with_cpu_time_seconds(30);
+
+        assert!(!limits.is_empty());
+        assert_eq!(limits.cpu_time_seconds(), Some(30));
+    }
 }
 
 #[cfg(windows)]
 mod windows {
+    use super::WorkerResourceLimits;
     use tokio::process::Child;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_JOB_MEMORY,
+        JOB_OBJECT_LIMIT_JOB_TIME, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
         SetInformationJobObject, TerminateJobObject,
     };
 
     pub const EXIT_TERMINATE: u32 = 1;
     pub const EXIT_KILL: u32 = 9;
+    const WINDOWS_100NS_PER_SECOND: u64 = 10_000_000;
 
     #[derive(Debug)]
     pub struct JobHandle(HANDLE);
@@ -185,7 +230,7 @@ mod windows {
     unsafe impl Sync for JobHandle {}
 
     impl JobHandle {
-        pub fn create_for_child(child: &Child) -> Option<Self> {
+        pub fn create_for_child(child: &Child, limits: WorkerResourceLimits) -> Option<Self> {
             let process = child.raw_handle()?;
             let job = unsafe {
                 // SAFETY: Null security attributes and name are accepted by
@@ -195,17 +240,17 @@ mod windows {
             };
             let handle = Self::from_raw(job)?;
 
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let limit_size = u32::try_from(std::mem::size_of_val(&limits)).ok()?;
+            let mut job_limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            apply_resource_limits(&mut job_limits, limits);
+            let limit_size = u32::try_from(std::mem::size_of_val(&job_limits)).ok()?;
             let limits_set = unsafe {
-                // SAFETY: `limits` points to a properly initialized
+                // SAFETY: `job_limits` points to a properly initialized
                 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION value and size matches
                 // the pointed value for the selected information class.
                 SetInformationJobObject(
                     handle.0,
                     JobObjectExtendedLimitInformation,
-                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    (&job_limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
                     limit_size,
                 )
             };
@@ -245,6 +290,27 @@ mod windows {
             unsafe {
                 // SAFETY: JobHandle owns this handle and closes it exactly once.
                 CloseHandle(self.0);
+            }
+        }
+    }
+
+    fn apply_resource_limits(
+        job_limits: &mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        resource_limits: WorkerResourceLimits,
+    ) {
+        job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Some(bytes) = resource_limits.address_space_bytes() {
+            if let Ok(bytes) = usize::try_from(bytes) {
+                job_limits.JobMemoryLimit = bytes;
+                job_limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+            }
+        }
+        if let Some(seconds) = resource_limits.cpu_time_seconds() {
+            if let Some(ticks) = seconds.checked_mul(WINDOWS_100NS_PER_SECOND) {
+                if let Ok(ticks) = i64::try_from(ticks) {
+                    job_limits.BasicLimitInformation.PerJobUserTimeLimit = ticks;
+                    job_limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_TIME;
+                }
             }
         }
     }

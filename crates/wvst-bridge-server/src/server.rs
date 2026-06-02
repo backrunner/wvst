@@ -145,10 +145,14 @@ impl BridgeServer {
 }
 
 fn worker_resource_limits(config: &BridgeConfig) -> WorkerResourceLimits {
-    config
-        .worker_memory_limit_bytes()
-        .map(|bytes| WorkerResourceLimits::none().with_address_space_bytes(bytes))
-        .unwrap_or_else(WorkerResourceLimits::none)
+    let mut limits = WorkerResourceLimits::none();
+    if let Some(bytes) = config.worker_memory_limit_bytes() {
+        limits = limits.with_address_space_bytes(bytes);
+    }
+    if let Some(seconds) = config.worker_cpu_time_limit_seconds() {
+        limits = limits.with_cpu_time_seconds(seconds);
+    }
+    limits
 }
 
 #[allow(clippy::result_large_err)]
