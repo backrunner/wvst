@@ -12,6 +12,7 @@ pub struct BridgeConfig {
     token: Option<String>,
     allowed_origins: Vec<String>,
     allow_loopback_origins: bool,
+    worker_auto_restart: bool,
 }
 
 impl BridgeConfig {
@@ -36,12 +37,16 @@ impl BridgeConfig {
         let allow_loopback_origins = std::env::var("WVST_ALLOW_LOOPBACK_ORIGINS")
             .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
             .unwrap_or(true);
+        let worker_auto_restart = std::env::var("WVST_WORKER_AUTO_RESTART")
+            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
 
         Ok(Self {
             bind_addr,
             token,
             allowed_origins,
             allow_loopback_origins,
+            worker_auto_restart,
         })
     }
 
@@ -51,7 +56,13 @@ impl BridgeConfig {
             token: None,
             allowed_origins: Vec::new(),
             allow_loopback_origins: true,
+            worker_auto_restart: true,
         }
+    }
+
+    pub fn with_worker_auto_restart(mut self, enabled: bool) -> Self {
+        self.worker_auto_restart = enabled;
+        self
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
@@ -83,6 +94,10 @@ impl BridgeConfig {
 
     pub fn allowed_origins(&self) -> &[String] {
         &self.allowed_origins
+    }
+
+    pub fn worker_auto_restart_enabled(&self) -> bool {
+        self.worker_auto_restart
     }
 }
 
@@ -124,5 +139,17 @@ mod tests {
         assert!(config.token_is_valid(Some("secret")));
         assert!(!config.token_is_valid(None));
         assert!(!config.token_is_valid(Some("wrong")));
+    }
+
+    #[test]
+    fn enables_worker_auto_restart_by_default() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+
+        assert!(config.worker_auto_restart_enabled());
+        assert!(
+            !config
+                .with_worker_auto_restart(false)
+                .worker_auto_restart_enabled()
+        );
     }
 }

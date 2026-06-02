@@ -7,8 +7,10 @@ use super::{
 use crate::instance_registry::{
     InstanceCreateParams, InstanceDestroyParams, InstanceError, InstanceParameterParams,
     InstanceParameterSetParams, InstanceProcessingParams, InstanceRestartParams,
-    InstanceSetStateParams, InstanceStatusParams, StreamLifecycleParams, WorkerRuntimeInfo,
+    InstanceSetStateParams, InstanceState, InstanceStatusParams, StreamLifecycleParams,
+    WorkerRuntimeInfo,
 };
+use crate::worker_supervisor::WorkerSupervisorError;
 
 pub async fn handle_instance_create(
     id: Value,
@@ -194,20 +196,81 @@ pub async fn handle_instance_status(
         }
     };
 
-    if let Err(error) = context.instances.get(params.instance_id) {
-        return response_instance_error(id, error);
-    }
+    let record = match context.instances.get(params.instance_id) {
+        Ok(record) => record,
+        Err(error) => return response_instance_error(id, error),
+    };
 
     match context.workers.heartbeat_instance(params.instance_id).await {
         Ok(worker) => match context.instances.mark_worker_ready(params.instance_id) {
             Ok(instance) => response_result(id, json!({ "instance": instance, "worker": worker })),
             Err(error) => response_instance_error(id, error),
         },
-        Err(error) => {
-            context.metrics.increment_worker_failures();
-            let _ = context.instances.mark_worker_failed(params.instance_id);
-            response_worker_supervisor_error(id, error)
+        Err(error) => handle_status_worker_failure(id, record, error, context).await,
+    }
+}
+
+async fn handle_status_worker_failure(
+    id: Value,
+    record: crate::instance_registry::InstanceRecord,
+    error: WorkerSupervisorError,
+    context: ControlContext<'_>,
+) -> String {
+    context.metrics.increment_worker_failures();
+    if !context.config.worker_auto_restart_enabled() {
+        let _ = context.instances.mark_worker_failed(record.instance_id);
+        return response_worker_supervisor_error(id, error);
+    }
+
+    match context.workers.restart_instance(&record).await {
+        Ok(worker) => {
+            context.metrics.increment_worker_restarts();
+            context.metrics.increment_worker_auto_restarts();
+            mark_auto_recovered_instance(id, record, worker, context).await
         }
+        Err(restart_error) => {
+            let _ = context.instances.mark_worker_failed(record.instance_id);
+            response_worker_supervisor_error(id, restart_error)
+        }
+    }
+}
+
+async fn mark_auto_recovered_instance(
+    id: Value,
+    record: crate::instance_registry::InstanceRecord,
+    worker: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let runtime = WorkerRuntimeInfo::from_worker_result(&worker);
+    if let Err(error) = context
+        .instances
+        .mark_worker_ready_with_runtime(record.instance_id, runtime)
+    {
+        return response_instance_error(id, error);
+    }
+
+    if record.state == InstanceState::Processing {
+        return match context.workers.start_processing(record.instance_id).await {
+            Ok(worker) => match context.instances.mark_processing(record.instance_id) {
+                Ok(instance) => response_result(
+                    id,
+                    json!({ "instance": instance, "worker": worker, "recovered": true }),
+                ),
+                Err(error) => response_instance_error(id, error),
+            },
+            Err(error) => {
+                let _ = context.instances.mark_worker_failed(record.instance_id);
+                response_worker_supervisor_error(id, error)
+            }
+        };
+    }
+
+    match context.instances.get(record.instance_id) {
+        Ok(instance) => response_result(
+            id,
+            json!({ "instance": instance, "worker": worker, "recovered": true }),
+        ),
+        Err(error) => response_instance_error(id, error),
     }
 }
 

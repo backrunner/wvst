@@ -231,6 +231,7 @@ export interface InstanceWorkerMetrics {
 export interface InstanceStatusResult {
   instance: InstanceDescriptor;
   worker: InstanceWorkerMetrics;
+  recovered?: boolean;
 }
 
 export interface InstanceRestartOptions {

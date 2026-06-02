@@ -18,6 +18,7 @@ export interface BridgeMetrics {
   helloRequests: number;
   workerFailures: number;
   workerRestarts: number;
+  workerAutoRestarts: number;
 }
 
 interface RpcResponse {

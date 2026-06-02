@@ -15,6 +15,7 @@ pub struct BridgeMetrics {
     hello_requests: AtomicU64,
     worker_failures: AtomicU64,
     worker_restarts: AtomicU64,
+    worker_auto_restarts: AtomicU64,
 }
 
 impl BridgeMetrics {
@@ -30,6 +31,7 @@ impl BridgeMetrics {
             hello_requests: AtomicU64::new(0),
             worker_failures: AtomicU64::new(0),
             worker_restarts: AtomicU64::new(0),
+            worker_auto_restarts: AtomicU64::new(0),
         }
     }
 
@@ -70,6 +72,10 @@ impl BridgeMetrics {
         self.worker_restarts.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn increment_worker_auto_restarts(&self) {
+        self.worker_auto_restarts.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> BridgeMetricsSnapshot {
         BridgeMetricsSnapshot {
             uptime_ms: self.started_at.elapsed().as_millis() as u64,
@@ -82,6 +88,7 @@ impl BridgeMetrics {
             hello_requests: self.hello_requests.load(Ordering::Relaxed),
             worker_failures: self.worker_failures.load(Ordering::Relaxed),
             worker_restarts: self.worker_restarts.load(Ordering::Relaxed),
+            worker_auto_restarts: self.worker_auto_restarts.load(Ordering::Relaxed),
         }
     }
 }
@@ -105,4 +112,5 @@ pub struct BridgeMetricsSnapshot {
     pub hello_requests: u64,
     pub worker_failures: u64,
     pub worker_restarts: u64,
+    pub worker_auto_restarts: u64,
 }

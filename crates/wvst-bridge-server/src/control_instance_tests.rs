@@ -208,7 +208,8 @@ async fn creates_lists_and_destroys_instance() {
 #[cfg(unix)]
 #[tokio::test]
 async fn marks_instance_failed_when_heartbeat_worker_exits() {
-    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
+        .with_worker_auto_restart(false);
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
     let metrics = BridgeMetrics::new();
@@ -232,14 +233,8 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         .as_u64()
         .expect("instance id");
 
-    let status_request = serde_json::json!({
-        "id": 2,
-        "method": "instance.status",
-        "params": { "instanceId": instance_id }
-    })
-    .to_string();
     let status_value = request_json(
-        &status_request,
+        &instance_request(2, "instance.status", instance_id),
         &config,
         &host_worker,
         &instances,
@@ -261,8 +256,96 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn restarts_failed_instance_with_same_stream() {
+async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
+    let metrics = BridgeMetrics::new();
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let worker_path = serve_worker_exits_on_metrics_script();
+    let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+
+    let create_value = request_json(
+        &instance_create_request(1, &plugin_id),
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    let instance_id = create_value["result"]["instanceId"]
+        .as_u64()
+        .expect("instance id");
+
+    let start_value = request_json(
+        &instance_request(2, "instance.start", instance_id),
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    assert_eq!(start_value["result"]["instance"]["state"], "processing");
+
+    let status_value = request_json(
+        &instance_request(3, "instance.status", instance_id),
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    assert_eq!(status_value["result"]["recovered"], true);
+    assert_eq!(status_value["result"]["instance"]["state"], "processing");
+    assert_eq!(
+        status_value["result"]["instance"]["workerState"],
+        "processing"
+    );
+    assert_eq!(
+        status_value["result"]["worker"]["workerState"],
+        "processing"
+    );
+
+    let metrics_value = request_json(
+        r#"{"id":4,"method":"bridge.metrics","params":{}}"#,
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+    assert_eq!(metrics_value["result"]["workerFailures"], 1);
+    assert_eq!(metrics_value["result"]["workerRestarts"], 1);
+    assert_eq!(metrics_value["result"]["workerAutoRestarts"], 1);
+
+    let _ = request_json(
+        &instance_request(5, "instance.destroy", instance_id),
+        &config,
+        &host_worker,
+        &instances,
+        &metrics,
+        &plugins,
+        &workers,
+    )
+    .await;
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn restarts_failed_instance_with_same_stream() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
+        .with_worker_auto_restart(false);
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
     let metrics = BridgeMetrics::new();
@@ -288,14 +371,8 @@ async fn restarts_failed_instance_with_same_stream() {
         .as_u64()
         .expect("stream id");
 
-    let failing_status_request = serde_json::json!({
-        "id": 2,
-        "method": "instance.status",
-        "params": { "instanceId": instance_id }
-    })
-    .to_string();
     let failing_status_value = request_json(
-        &failing_status_request,
+        &instance_request(2, "instance.status", instance_id),
         &config,
         &host_worker,
         &instances,
@@ -306,14 +383,8 @@ async fn restarts_failed_instance_with_same_stream() {
     .await;
     assert_eq!(failing_status_value["error"]["code"], 5037);
 
-    let restart_request = serde_json::json!({
-        "id": 3,
-        "method": "instance.restart",
-        "params": { "instanceId": instance_id }
-    })
-    .to_string();
     let restart_value = request_json(
-        &restart_request,
+        &instance_request(3, "instance.restart", instance_id),
         &config,
         &host_worker,
         &instances,
@@ -349,14 +420,8 @@ async fn restarts_failed_instance_with_same_stream() {
     assert_eq!(metrics_value["result"]["workerFailures"], 1);
     assert_eq!(metrics_value["result"]["workerRestarts"], 1);
 
-    let destroy_request = serde_json::json!({
-        "id": 5,
-        "method": "instance.destroy",
-        "params": { "instanceId": instance_id }
-    })
-    .to_string();
     let _ = request_json(
-        &destroy_request,
+        &instance_request(5, "instance.destroy", instance_id),
         &config,
         &host_worker,
         &instances,
@@ -433,6 +498,15 @@ fn instance_create_request(id: u64, plugin_id: &str) -> String {
             "inputChannels": 2,
             "outputChannels": 2
         }
+    })
+    .to_string()
+}
+
+fn instance_request(id: u64, method: &str, instance_id: u64) -> String {
+    serde_json::json!({
+        "id": id,
+        "method": method,
+        "params": { "instanceId": instance_id }
     })
     .to_string()
 }

@@ -17,6 +17,7 @@
 - Bridge worker supervisor 已加入 stderr 摘要、启动失败计数和基础 quarantine，避免同一故障插件无限重启。
 - Bridge/Web SDK 已提供 `instance.status` heartbeat API，能通过 worker `worker.metrics` 检查实例 worker 存活，并在 worker 退出或 IPC 断开时把实例标记为 `failed`。
 - Bridge/Web SDK 已提供 `instance.restart` 手动恢复 API，能在保留 `instanceId` / `streamId` 的情况下杀掉旧 worker 并重新拉起同一实例；Bridge metrics 已暴露 `workerFailures` 和 `workerRestarts`。
+- Bridge `instance.status` 已加入可配置的 worker 自动恢复策略：heartbeat 失败后默认尝试重启同一实例并保留 `instanceId` / `streamId`，如果实例原先处于 `processing` 会重新进入 processing；Bridge metrics 已暴露 `workerAutoRestarts`。
 - Bridge/Web SDK 已提供 `instance.start` / `instance.stop` 处理生命周期控制，实例状态可从 `ready` 切到 `processing` / `stopped`。
 - Bridge 音频路由现在要求实例处于 `processing` 状态；未 start、已 stop 或处理失败都会返回带 `silence` / `process-error` 的诊断静音帧，而不是继续把音频送进 worker。
 - Instance heartbeat 已避免把正在 `processing` 的实例误降回 `ready`，降低控制面状态刷新对数据面的干扰。
@@ -66,7 +67,7 @@
 仍缺少：
 
 - `ready` 之后的 `processing` / `stopped` 生命周期已有首版控制 API；仍缺少 `starting`、`stopping`、自动恢复中等瞬态状态和事件推送。
-- 每个实例的独立 worker 进程已具备原型，并支持手动 restart；仍缺少自动 restart 状态机、崩溃事件推送和策略化资源回收。
+- 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；仍缺少崩溃事件推送和策略化资源回收。
 - 同一插件 N 个实例的 worker 池化、调度和资源上限策略；当前更接近一实例一 worker 的保守隔离原型。
 
 ### 2. 持久 worker IPC
@@ -75,7 +76,7 @@
 
 仍缺少：
 
-- 更完整的 Bridge worker supervisor 生命周期管理，包括自动 restart policy、主动 crash event 推送和 quarantine 解除策略。
+- 更完整的 Bridge worker supervisor 生命周期管理，包括主动 crash event 推送、恢复中状态广播和 quarantine 解除策略。
 - 正式 framed control IPC，替换当前 JSON-line 控制面原型。
 - 超时后的全链路 kill/wait 审计、restart 指标和 crash quarantine 解除策略。
 - 更完整的 worker capability negotiation，包括按数据面、MIDI、参数自动化和诊断能力分层协商。
@@ -125,6 +126,6 @@
 1. 用真实 macOS VST3 effect/instrument fixture 验证 2-in/2-out process、parameter automation、MIDI mapping 和 zero-input instrument timing。
 2. 补齐 VST3 host context message/attribute extension，并用真实第三方插件验证 controller/automation/unit-info/program-data 兼容性。
 3. 给 worker runtime backend 增加兼容失败诊断和更细粒度 runtime capability。
-4. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
+4. 给 Bridge worker supervisor 增加恢复中状态/事件回传、quarantine 解除策略和 worker crash 事件回传。
 5. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
 6. 为 audio IPC 增加 backpressure/late-frame 指标和 p50/p95/p99 延迟统计。
