@@ -182,6 +182,11 @@ impl BridgeRuntimeBuilder {
         self
     }
 
+    pub fn worker_memory_limit_bytes(mut self, bytes: u64) -> Self {
+        self.options.config = self.options.config.with_worker_memory_limit_bytes(bytes);
+        self
+    }
+
     pub fn subscribe_events(&self) -> broadcast::Receiver<BridgeEvent> {
         self.events.subscribe()
     }
@@ -275,6 +280,7 @@ mod tests {
             .worker_executable("/tmp/wvst-host-worker")
             .worker_timeout(Duration::from_millis(250))
             .max_worker_instances(2)
+            .worker_memory_limit_bytes(64 * 1024 * 1024)
             .build();
 
         assert_eq!(
@@ -283,5 +289,9 @@ mod tests {
         );
         assert_eq!(runtime.worker_timeout, Duration::from_millis(250));
         assert_eq!(runtime.config.max_worker_instances(), 2);
+        assert_eq!(
+            runtime.config.worker_memory_limit_bytes(),
+            Some(64 * 1024 * 1024)
+        );
     }
 }

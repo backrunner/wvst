@@ -77,6 +77,7 @@
 - Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址、主动 shutdown、runtime event subscription、最近事件快照、外部 worker executable 注入和 worker timeout 配置。
 - `wvst-embed` 的 `BridgeHandle` 已提供只读 metrics snapshot 和 runtime diagnostics 聚合，嵌入式宿主可直接读取本地地址、指标和 recent events 做健康检查/日志集成。
 - Workspace 已新增 `wvst-process-supervision` crate，将 worker 进程树终止的 Unix process group 与 Windows Job Object 平台 FFI 收敛到独立安全 API；`wvst-bridge-server` 继续保持 `unsafe_code = deny`，并已通过 macOS host、Linux GNU 和 Windows MSVC 编译检查。
+- Bridge worker supervisor 已接入可选 worker address-space memory cap：`WVST_WORKER_MEMORY_LIMIT_BYTES` / `BridgeConfig::with_worker_memory_limit_bytes()` 会通过 `wvst-process-supervision::WorkerResourceLimits` 传给 worker spawn；Unix/macOS/Linux 在 child `exec` 前设置 `RLIMIT_AS`，Bridge Server 自身仍不含 unsafe。
 
 ## 距离完整能力的主要差距
 
@@ -85,7 +86,7 @@
 仍缺少：
 
 - `ready` 之后的 `processing` / `stopped` 生命周期已有控制 API，`starting`、`stopping`、自动恢复中等瞬态状态和事件推送已有首版；WebSocket server-push notification 已能把 Bridge event 主动发给授权 Web 客户端，且 start/stop/destroy 已补充更细粒度的 `worker-processing-starting`、`worker-processing-stopping`、`worker-destroying` 和 `worker-destroyed` 事件；仍缺少更完整的应用级生命周期策略事件。
-- 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；崩溃/恢复/quarantine 事件和 worker 实例数量上限已有首版，仍缺少更完整的策略化资源回收、CPU/内存级资源限制和池化调度策略。
+- 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；崩溃/恢复/quarantine 事件、worker 实例数量上限和 Unix `RLIMIT_AS` 内存上限已有首版，仍缺少更完整的策略化资源回收、CPU 限制、Linux cgroup 配额和池化调度策略。
 - 同一插件 N 个实例的 worker 池化、调度和资源上限策略；当前更接近一实例一 worker 的保守隔离原型。
 
 ### 2. 持久 worker IPC
@@ -94,7 +95,7 @@
 
 仍缺少：
 
-- 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略、worker kill/wait 审计指标、Unix/macOS 进程组终止、Windows Job Object 终止和 framed control IPC 首版；仍缺少 Windows 真实运行验证、Linux cgroup/rlimit 资源限制集成和更多失败分类。
+- 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略、worker kill/wait 审计指标、Unix/macOS 进程组终止、Windows Job Object 终止、Unix `RLIMIT_AS` worker 内存上限和 framed control IPC 首版；仍缺少 Windows 真实运行验证、Linux cgroup 资源限制集成和更多失败分类。
 - framed control IPC 已替换生产路径 JSON-line 控制面，并已有首版 schema version 校验、header-level error classification、sequence/status 校验和 body size cap；仍缺少 framed control IPC 的批处理/多路复用和更细粒度 capability negotiation。
 - 超时后的全链路 kill/wait 审计已有首版 counters，且 Unix/macOS 已覆盖进程树维度；仍缺少细粒度 restart 诊断和 crash quarantine 策略调优。
 - worker hello 已有基础 capability negotiation 和 framed control IPC schema version 校验，实例级 `runtimeCapabilities` 已能按数据面、MIDI、参数自动化和诊断能力暴露首版，且包含 schema version 与 passthrough fallback 原因；worker rejection 已能透传 VST3 runtime init、control 和 `process()` 阶段化失败 data，framed IPC 已能在 header 层标记 worker rejection；仍缺少 framed IPC 下更完整的 capability negotiation 和更完整的非 VST3 runtime/control/process 失败分类。
@@ -137,7 +138,7 @@
 
 - `wvst-embed` 已有 runtime builder、事件订阅、事件快照、只读 metrics diagnostics、外部 worker executable 注入和 timeout 配置；仍缺少应用生命周期集成示例、日志管线示例和打包脚本。
 - macOS 安装、启动、授权、日志和诊断命令。
-- Windows 真实运行验证、Linux 资源限制 backend 和发布打包脚本。
+- Windows 真实运行验证、Linux cgroup 资源限制 backend 和发布打包脚本。
 
 ## 建议下一阶段
 

@@ -12,6 +12,7 @@ use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use wvst_core::ChannelCount;
+use wvst_process_supervision::WorkerResourceLimits;
 use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameFlags, AudioFrameHeader};
 
 use crate::audio_stream_tracker::AudioStreamTracker;
@@ -66,10 +67,12 @@ impl BridgeServer {
 
         events.emit(BridgeEventKind::ServerStarting);
         let metrics = Arc::new(BridgeMetrics::new());
+        let resource_limits = worker_resource_limits(&config);
         let workers = WorkerSupervisor::with_options(
             WorkerSupervisorOptions::new(host_worker.executable_path().to_path_buf())
                 .with_timeout(host_worker.timeout())
                 .with_max_instances(config.max_worker_instances())
+                .with_resource_limits(resource_limits)
                 .with_metrics(Arc::clone(&metrics)),
         );
         if let Ok(local_addr) = listener.local_addr() {
@@ -139,6 +142,13 @@ impl BridgeServer {
             }
         }
     }
+}
+
+fn worker_resource_limits(config: &BridgeConfig) -> WorkerResourceLimits {
+    config
+        .worker_memory_limit_bytes()
+        .map(|bytes| WorkerResourceLimits::none().with_address_space_bytes(bytes))
+        .unwrap_or_else(WorkerResourceLimits::none)
 }
 
 #[allow(clippy::result_large_err)]

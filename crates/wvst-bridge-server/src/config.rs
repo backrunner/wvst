@@ -18,6 +18,7 @@ pub struct BridgeConfig {
     worker_auto_restart: bool,
     max_worker_instances: usize,
     max_control_message_bytes: usize,
+    worker_memory_limit_bytes: Option<u64>,
 }
 
 impl BridgeConfig {
@@ -55,6 +56,10 @@ impl BridgeConfig {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_MAX_CONTROL_MESSAGE_BYTES);
+        let worker_memory_limit_bytes = std::env::var("WVST_WORKER_MEMORY_LIMIT_BYTES")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0);
 
         Ok(Self {
             bind_addr,
@@ -64,6 +69,7 @@ impl BridgeConfig {
             worker_auto_restart,
             max_worker_instances,
             max_control_message_bytes,
+            worker_memory_limit_bytes,
         })
     }
 
@@ -76,6 +82,7 @@ impl BridgeConfig {
             worker_auto_restart: true,
             max_worker_instances: DEFAULT_MAX_WORKER_INSTANCES,
             max_control_message_bytes: DEFAULT_MAX_CONTROL_MESSAGE_BYTES,
+            worker_memory_limit_bytes: None,
         }
     }
 
@@ -91,6 +98,16 @@ impl BridgeConfig {
 
     pub fn with_max_control_message_bytes(mut self, max_bytes: usize) -> Self {
         self.max_control_message_bytes = max_bytes.max(1);
+        self
+    }
+
+    pub fn with_worker_memory_limit_bytes(mut self, bytes: u64) -> Self {
+        self.worker_memory_limit_bytes = Some(bytes.max(1));
+        self
+    }
+
+    pub fn without_worker_memory_limit(mut self) -> Self {
+        self.worker_memory_limit_bytes = None;
         self
     }
 
@@ -135,6 +152,10 @@ impl BridgeConfig {
 
     pub fn max_control_message_bytes(&self) -> usize {
         self.max_control_message_bytes
+    }
+
+    pub fn worker_memory_limit_bytes(&self) -> Option<u64> {
+        self.worker_memory_limit_bytes
     }
 }
 
@@ -214,6 +235,27 @@ mod tests {
                 .with_max_control_message_bytes(1024)
                 .max_control_message_bytes(),
             1024
+        );
+    }
+
+    #[test]
+    fn configures_optional_worker_memory_limit() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+
+        assert_eq!(config.worker_memory_limit_bytes(), None);
+        assert_eq!(
+            config
+                .clone()
+                .with_worker_memory_limit_bytes(128 * 1024 * 1024)
+                .worker_memory_limit_bytes(),
+            Some(128 * 1024 * 1024)
+        );
+        assert_eq!(
+            config
+                .with_worker_memory_limit_bytes(128 * 1024 * 1024)
+                .without_worker_memory_limit()
+                .worker_memory_limit_bytes(),
+            None
         );
     }
 }

@@ -10,7 +10,7 @@ use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-use wvst_process_supervision::WorkerTerminationTarget;
+use wvst_process_supervision::{WorkerResourceLimits, WorkerTerminationTarget};
 
 use crate::instance_registry::InstanceRecord;
 use crate::metrics::{BridgeMetrics, WorkerShutdownAudit};
@@ -44,6 +44,7 @@ pub struct WorkerSupervisor {
     use_audio_ipc: bool,
     use_framed_control_ipc: bool,
     max_instances: usize,
+    resource_limits: WorkerResourceLimits,
     metrics: Option<Arc<BridgeMetrics>>,
     failures: Mutex<BTreeMap<String, u32>>,
     processes: Mutex<BTreeMap<u64, Arc<Mutex<WorkerProcess>>>>,
@@ -59,6 +60,7 @@ pub struct WorkerSupervisorOptions {
     use_audio_ipc: bool,
     use_framed_control_ipc: bool,
     max_instances: usize,
+    resource_limits: WorkerResourceLimits,
     metrics: Option<Arc<BridgeMetrics>>,
 }
 
@@ -161,6 +163,7 @@ impl WorkerSupervisor {
             use_audio_ipc: options.use_audio_ipc,
             use_framed_control_ipc: options.use_framed_control_ipc,
             max_instances: options.max_instances,
+            resource_limits: options.resource_limits,
             metrics: options.metrics,
             failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
@@ -278,6 +281,7 @@ impl WorkerSupervisorOptions {
             use_audio_ipc: true,
             use_framed_control_ipc: true,
             max_instances: DEFAULT_MAX_WORKER_INSTANCES,
+            resource_limits: WorkerResourceLimits::none(),
             metrics: None,
         }
     }
@@ -307,6 +311,11 @@ impl WorkerSupervisorOptions {
         self
     }
 
+    pub fn with_resource_limits(mut self, limits: WorkerResourceLimits) -> Self {
+        self.resource_limits = limits;
+        self
+    }
+
     pub fn with_metrics(mut self, metrics: Arc<BridgeMetrics>) -> Self {
         self.metrics = Some(metrics);
         self
@@ -319,6 +328,7 @@ impl WorkerProcess {
         timeout_duration: Duration,
         use_audio_ipc: bool,
         use_framed_control_ipc: bool,
+        resource_limits: WorkerResourceLimits,
         metrics: Option<Arc<BridgeMetrics>>,
     ) -> Result<Self, WorkerSupervisorError> {
         let audio_listener = if use_audio_ipc {
@@ -337,7 +347,7 @@ impl WorkerProcess {
         } else {
             "serve"
         });
-        WorkerTerminationTarget::configure_command(&mut command);
+        WorkerTerminationTarget::configure_command(&mut command, resource_limits);
         if let Some(listener) = audio_listener.as_ref() {
             let address = listener
                 .local_addr()
@@ -598,6 +608,7 @@ impl WorkerSupervisor {
             self.timeout,
             self.use_audio_ipc,
             self.use_framed_control_ipc,
+            self.resource_limits,
             self.metrics.clone(),
         )
         .await?;

@@ -1,5 +1,31 @@
 use tokio::process::{Child, Command};
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub struct WorkerResourceLimits {
+    address_space_bytes: Option<u64>,
+}
+
+impl WorkerResourceLimits {
+    pub const fn none() -> Self {
+        Self {
+            address_space_bytes: None,
+        }
+    }
+
+    pub const fn with_address_space_bytes(mut self, bytes: u64) -> Self {
+        self.address_space_bytes = Some(bytes);
+        self
+    }
+
+    pub const fn address_space_bytes(&self) -> Option<u64> {
+        self.address_space_bytes
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.address_space_bytes.is_none()
+    }
+}
+
 #[derive(Debug)]
 pub struct WorkerTerminationTarget {
     #[cfg(unix)]
@@ -10,8 +36,9 @@ pub struct WorkerTerminationTarget {
 
 #[cfg(unix)]
 impl WorkerTerminationTarget {
-    pub fn configure_command(command: &mut Command) {
+    pub fn configure_command(command: &mut Command, limits: WorkerResourceLimits) {
         command.process_group(0);
+        configure_unix_resource_limits(command, limits);
     }
 
     pub fn from_child(child: &Child) -> Self {
@@ -40,9 +67,40 @@ impl WorkerTerminationTarget {
     }
 }
 
+#[cfg(unix)]
+fn configure_unix_resource_limits(command: &mut Command, limits: WorkerResourceLimits) {
+    if limits.is_empty() {
+        return;
+    }
+
+    unsafe {
+        // SAFETY: `pre_exec` runs in the child process after fork and before
+        // exec. The closure only calls async-signal-safe `setrlimit` through
+        // rustix with Copy data captured from the parent; it does not touch
+        // shared Rust state, allocate, lock, or perform I/O.
+        command.pre_exec(move || apply_unix_resource_limits(limits));
+    }
+}
+
+#[cfg(unix)]
+fn apply_unix_resource_limits(limits: WorkerResourceLimits) -> std::io::Result<()> {
+    if let Some(bytes) = limits.address_space_bytes {
+        rustix::process::setrlimit(
+            rustix::process::Resource::As,
+            rustix::process::Rlimit {
+                current: Some(bytes),
+                maximum: Some(bytes),
+            },
+        )
+        .map_err(std::io::Error::from)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(windows)]
 impl WorkerTerminationTarget {
-    pub fn configure_command(_command: &mut Command) {}
+    pub fn configure_command(_command: &mut Command, _limits: WorkerResourceLimits) {}
 
     pub fn from_child(child: &Child) -> Self {
         Self {
@@ -65,7 +123,7 @@ impl WorkerTerminationTarget {
 
 #[cfg(not(any(unix, windows)))]
 impl WorkerTerminationTarget {
-    pub fn configure_command(_command: &mut Command) {}
+    pub fn configure_command(_command: &mut Command, _limits: WorkerResourceLimits) {}
 
     pub fn from_child(_child: &Child) -> Self {
         Self {}
@@ -77,6 +135,27 @@ impl WorkerTerminationTarget {
 
     pub fn kill_tree(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_limits_default_to_empty() {
+        let limits = WorkerResourceLimits::none();
+
+        assert!(limits.is_empty());
+        assert_eq!(limits.address_space_bytes(), None);
+    }
+
+    #[test]
+    fn resource_limits_store_address_space_limit() {
+        let limits = WorkerResourceLimits::none().with_address_space_bytes(64 * 1024 * 1024);
+
+        assert!(!limits.is_empty());
+        assert_eq!(limits.address_space_bytes(), Some(64 * 1024 * 1024));
     }
 }
 
