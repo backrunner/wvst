@@ -24,6 +24,9 @@ pub const VST3_I_EDIT_CONTROLLER_IID: &str = "DCD7BBE37742448DA874AACC979C759E";
 pub const VST3_I_MIDI_MAPPING_IID: &str = "DF0FF9F749B74669B63AB7327ADBF5E5";
 pub const VST3_I_PARAM_VALUE_QUEUE_IID: &str = "01263A18ED074F6F98C9D3564686F9BA";
 pub const VST3_I_PARAMETER_CHANGES_IID: &str = "A47796630BB64A56B44384A8466FEB9D";
+pub const VST3_I_UNIT_INFO_IID: &str = "3D4BD6B5913A4FD2A886E768A5EB92C1";
+pub const VST3_I_PROGRAM_LIST_DATA_IID: &str = "8683B01F7B354F70A2651DEC353AF4FF";
+pub const VST3_I_UNIT_DATA_IID: &str = "6C389611D391455DB870B83394A0EFDD";
 pub const VST3_I_COMPONENT_HANDLER_IID: &str = "93A0BEA30BD045DB8E890B0CC1E46AC6";
 pub const VST3_I_HOST_APPLICATION_IID: &str = "58E595CCDB2D49698B6AAF8C36A664E5";
 pub const VST3_IBSTREAM_IID: &str = "C3BF6EA2309947529B6BF9901EE33E9B";
@@ -38,6 +41,7 @@ pub const VST3_PARAMETER_IS_PROGRAM_CHANGE: i32 = 1 << 15;
 pub const VST3_PARAMETER_IS_BYPASS: i32 = 1 << 16;
 pub const VST3_MIDI_CONTROLLER_AFTERTOUCH: CtrlNumber = 128;
 pub const VST3_MIDI_CONTROLLER_PITCH_BEND: CtrlNumber = 129;
+pub const VST3_NO_PROGRAM_LIST_ID: ProgramListId = -1;
 pub const VST3_STREAM_SEEK_SET: i32 = 0;
 pub const VST3_STREAM_SEEK_CUR: i32 = 1;
 pub const VST3_STREAM_SEEK_END: i32 = 2;
@@ -59,6 +63,7 @@ pub type ParamId = u32;
 pub type ParamValue = f64;
 pub type CtrlNumber = i16;
 pub type UnitId = i32;
+pub type ProgramListId = i32;
 pub type SampleRate = f64;
 pub type SpeakerArrangement = u64;
 pub type String128 = [u16; 128];
@@ -343,6 +348,174 @@ pub struct IParameterChangesVTable {
         id: *const ParamId,
         index: *mut i32,
     ) -> *mut IParamValueQueue,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct UnitInfo {
+    pub id: UnitId,
+    pub parent_unit_id: UnitId,
+    pub name: String128,
+    pub program_list_id: ProgramListId,
+}
+
+impl Default for UnitInfo {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            parent_unit_id: -1,
+            name: [0; 128],
+            program_list_id: VST3_NO_PROGRAM_LIST_ID,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ProgramListInfo {
+    pub id: ProgramListId,
+    pub name: String128,
+    pub program_count: i32,
+}
+
+impl Default for ProgramListInfo {
+    fn default() -> Self {
+        Self {
+            id: VST3_NO_PROGRAM_LIST_ID,
+            name: [0; 128],
+            program_count: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IUnitInfo {
+    pub vtable: *const IUnitInfoVTable,
+}
+
+#[repr(C)]
+pub struct IUnitInfoVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IUnitInfo) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IUnitInfo) -> u32,
+    pub get_unit_count: unsafe extern "system" fn(this: *mut IUnitInfo) -> i32,
+    pub get_unit_info: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        unit_index: i32,
+        info: *mut UnitInfo,
+    ) -> i32,
+    pub get_program_list_count: unsafe extern "system" fn(this: *mut IUnitInfo) -> i32,
+    pub get_program_list_info: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        list_index: i32,
+        info: *mut ProgramListInfo,
+    ) -> i32,
+    pub get_program_name: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        list_id: ProgramListId,
+        program_index: i32,
+        name: *mut String128,
+    ) -> i32,
+    pub get_program_info: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        list_id: ProgramListId,
+        program_index: i32,
+        attribute_id: *const c_char,
+        attribute_value: *mut String128,
+    ) -> i32,
+    pub has_program_pitch_names: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        list_id: ProgramListId,
+        program_index: i32,
+    ) -> i32,
+    pub get_program_pitch_name: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        list_id: ProgramListId,
+        program_index: i32,
+        midi_pitch: i16,
+        name: *mut String128,
+    ) -> i32,
+    pub get_selected_unit: unsafe extern "system" fn(this: *mut IUnitInfo) -> UnitId,
+    pub select_unit: unsafe extern "system" fn(this: *mut IUnitInfo, unit_id: UnitId) -> i32,
+    pub get_unit_by_bus: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        media_type: i32,
+        direction: i32,
+        bus_index: i32,
+        channel: i32,
+        unit_id: *mut UnitId,
+    ) -> i32,
+    pub set_unit_program_data: unsafe extern "system" fn(
+        this: *mut IUnitInfo,
+        list_or_unit_id: i32,
+        program_index: i32,
+        data: *mut IBStream,
+    ) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IProgramListData {
+    pub vtable: *const IProgramListDataVTable,
+}
+
+#[repr(C)]
+pub struct IProgramListDataVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IProgramListData,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IProgramListData) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IProgramListData) -> u32,
+    pub program_data_supported:
+        unsafe extern "system" fn(this: *mut IProgramListData, list_id: ProgramListId) -> i32,
+    pub get_program_data: unsafe extern "system" fn(
+        this: *mut IProgramListData,
+        list_id: ProgramListId,
+        program_index: i32,
+        data: *mut IBStream,
+    ) -> i32,
+    pub set_program_data: unsafe extern "system" fn(
+        this: *mut IProgramListData,
+        list_id: ProgramListId,
+        program_index: i32,
+        data: *mut IBStream,
+    ) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IUnitData {
+    pub vtable: *const IUnitDataVTable,
+}
+
+#[repr(C)]
+pub struct IUnitDataVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IUnitData,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IUnitData) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IUnitData) -> u32,
+    pub unit_data_supported:
+        unsafe extern "system" fn(this: *mut IUnitData, unit_id: UnitId) -> i32,
+    pub get_unit_data: unsafe extern "system" fn(
+        this: *mut IUnitData,
+        unit_id: UnitId,
+        data: *mut IBStream,
+    ) -> i32,
+    pub set_unit_data: unsafe extern "system" fn(
+        this: *mut IUnitData,
+        unit_id: UnitId,
+        data: *mut IBStream,
+    ) -> i32,
 }
 
 #[repr(C)]

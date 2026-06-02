@@ -232,6 +232,31 @@ pub async fn handle_instance_parameters(
     }
 }
 
+pub async fn handle_instance_units(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceStatusParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid instance units params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.workers.units(params.instance_id).await {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
 pub async fn handle_instance_parameter_get(
     id: Value,
     params: Value,
@@ -327,7 +352,12 @@ pub async fn handle_instance_set_state(
 
     match context
         .workers
-        .set_state(params.instance_id, params.state_base64)
+        .set_state(
+            params.instance_id,
+            params.state_base64,
+            params.component_state_base64,
+            params.controller_state_base64,
+        )
         .await
     {
         Ok(result) => response_result(id, result),

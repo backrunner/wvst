@@ -2,8 +2,9 @@ use serde::Serialize;
 use wvst_scanner::PluginDescriptor;
 use wvst_vst3_host::{
     HeadlessPluginInstance, HostError, VST3_MIDI_CONTROLLER_AFTERTOUCH,
-    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3InputEvent, Vst3LifecycleState, Vst3LoadedComponent,
-    Vst3ParameterChange, Vst3ParameterInfo, Vst3ProcessingConfig, create_vst3_component_instance,
+    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3BusDirection, Vst3InputEvent, Vst3LifecycleState,
+    Vst3LoadedComponent, Vst3ParameterChange, Vst3ParameterInfo, Vst3ProcessingConfig,
+    Vst3UnitMetadata, create_vst3_component_instance,
 };
 
 use super::InstanceCreateParams;
@@ -115,6 +116,23 @@ impl WorkerBackend {
         }
     }
 
+    pub(super) fn unit_metadata(&self) -> Result<Option<Vst3UnitMetadata>, String> {
+        match self {
+            Self::Passthrough(_) => Ok(None),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .controller()
+                .map(|controller| {
+                    controller.unit_info().and_then(|unit_info| {
+                        unit_info.map(|unit_info| unit_info.metadata()).transpose()
+                    })
+                })
+                .transpose()
+                .map(|value| value.flatten())
+                .map_err(error_message),
+        }
+    }
+
     pub(super) fn get_param_normalized(&self, id: u32) -> Option<f64> {
         match self {
             Self::Passthrough(_) => None,
@@ -168,6 +186,133 @@ impl WorkerBackend {
                 .controller()
                 .ok_or_else(|| "edit controller not available".to_string())
                 .and_then(|controller| controller.set_state(state).map_err(error_message)),
+        }
+    }
+
+    pub(super) fn set_component_state(&mut self, state: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("component state not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .set_component_state(state)
+                .map_err(error_message),
+        }
+    }
+
+    pub(super) fn select_unit(&self, unit_id: i32) -> Result<i32, String> {
+        match self {
+            Self::Passthrough(_) => Err("unit info not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .select_unit(unit_id)
+                .map_err(error_message)?
+                .ok_or_else(|| "unit info not available".to_string()),
+        }
+    }
+
+    pub(super) fn unit_by_audio_bus(
+        &self,
+        direction: Vst3BusDirection,
+        bus_index: i32,
+        channel: i32,
+    ) -> Result<Option<i32>, String> {
+        match self {
+            Self::Passthrough(_) => Ok(None),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .unit_by_audio_bus(direction, bus_index, channel)
+                .map_err(error_message),
+        }
+    }
+
+    pub(super) fn set_unit_program_data(
+        &self,
+        list_or_unit_id: i32,
+        program_index: i32,
+        data: &[u8],
+    ) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("unit info not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .set_unit_program_data(list_or_unit_id, program_index, data)
+                .map_err(error_message)?
+                .ok_or_else(|| "unit info not available".to_string()),
+        }
+    }
+
+    pub(super) fn program_data_supported(&self, list_id: i32) -> Result<bool, String> {
+        match self {
+            Self::Passthrough(_) => Ok(false),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .program_data_supported(list_id)
+                .map(|supported| supported.unwrap_or(false))
+                .map_err(error_message),
+        }
+    }
+
+    pub(super) fn get_program_data(
+        &self,
+        list_id: i32,
+        program_index: i32,
+    ) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Passthrough(_) => Err("program list data not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .get_program_data(list_id, program_index)
+                .map_err(error_message)?
+                .ok_or_else(|| "program list data not available".to_string()),
+        }
+    }
+
+    pub(super) fn set_program_data(
+        &self,
+        list_id: i32,
+        program_index: i32,
+        data: &[u8],
+    ) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("program list data not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .set_program_data(list_id, program_index, data)
+                .map_err(error_message)?
+                .ok_or_else(|| "program list data not available".to_string()),
+        }
+    }
+
+    pub(super) fn unit_data_supported(&self, unit_id: i32) -> Result<bool, String> {
+        match self {
+            Self::Passthrough(_) => Ok(false),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .unit_data_supported(unit_id)
+                .map(|supported| supported.unwrap_or(false))
+                .map_err(error_message),
+        }
+    }
+
+    pub(super) fn get_unit_data(&self, unit_id: i32) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Passthrough(_) => Err("unit data not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .get_unit_data(unit_id)
+                .map_err(error_message)?
+                .ok_or_else(|| "unit data not available".to_string()),
+        }
+    }
+
+    pub(super) fn set_unit_data(&self, unit_id: i32, data: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Passthrough(_) => Err("unit data not available".to_string()),
+            Self::Vst3Runtime(runtime) => runtime
+                .component
+                .set_unit_data(unit_id, data)
+                .map_err(error_message)?
+                .ok_or_else(|| "unit data not available".to_string()),
         }
     }
 

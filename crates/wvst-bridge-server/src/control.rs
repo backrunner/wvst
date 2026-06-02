@@ -170,6 +170,91 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
                 .await,
             session_authorized,
         ),
+        "instance.units" => ControlResponse::new(
+            control_instances::handle_instance_units(request.id, request.params, context).await,
+            session_authorized,
+        ),
+        "instance.selectUnit" => ControlResponse::new(
+            control_instance_units::handle_instance_select_unit(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.unitByBus" => ControlResponse::new(
+            control_instance_units::handle_instance_unit_by_bus(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.setUnitProgramData" => ControlResponse::new(
+            control_instance_units::handle_instance_set_unit_program_data(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.programData.supported" => ControlResponse::new(
+            control_instance_units::handle_instance_program_data_supported(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.programData.get" => ControlResponse::new(
+            control_instance_units::handle_instance_get_program_data(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.programData.set" => ControlResponse::new(
+            control_instance_units::handle_instance_set_program_data(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.unitData.supported" => ControlResponse::new(
+            control_instance_units::handle_instance_unit_data_supported(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.unitData.get" => ControlResponse::new(
+            control_instance_units::handle_instance_get_unit_data(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.unitData.set" => ControlResponse::new(
+            control_instance_units::handle_instance_set_unit_data(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.parameter.get" => ControlResponse::new(
             control_instances::handle_instance_parameter_get(request.id, request.params, context)
                 .await,
@@ -406,3 +491,6 @@ mod instance_tests;
 
 #[path = "control_instances.rs"]
 mod control_instances;
+
+#[path = "control_instance_units.rs"]
+mod control_instance_units;

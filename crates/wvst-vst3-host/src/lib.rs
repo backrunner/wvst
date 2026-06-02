@@ -15,6 +15,8 @@ pub mod parameter_changes;
 pub mod process_buffers;
 pub mod processor;
 pub mod state_stream;
+pub mod unit_data;
+pub mod unit_info;
 mod vst3_abi;
 mod vst3_bus_abi;
 mod vst3_event_abi;
@@ -41,4 +43,8 @@ pub use parameter_changes::{
 };
 pub use process_buffers::Vst3ProcessBuffers;
 pub use processor::{HeadlessPluginInstance, ProcessStats};
+pub use unit_data::{Vst3ProgramListData, Vst3UnitData};
+pub use unit_info::{
+    Vst3ProgramInfo, Vst3ProgramList, Vst3UnitInfo, Vst3UnitInfoEntry, Vst3UnitMetadata,
+};
 pub use vst3_abi::{VST3_MIDI_CONTROLLER_AFTERTOUCH, VST3_MIDI_CONTROLLER_PITCH_BEND};

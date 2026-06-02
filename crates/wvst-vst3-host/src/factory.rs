@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    HostResult, Vst3ComponentInstance, Vst3EditController, Vst3ParameterInfo, Vst3ProcessingConfig,
+    HostResult, Vst3BusDirection, Vst3ComponentInstance, Vst3EditController, Vst3ParameterInfo,
+    Vst3ProcessingConfig,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -96,6 +97,114 @@ impl Vst3LoadedComponent {
         self.controller
             .as_ref()
             .map(|controller| controller.get_state())
+            .transpose()
+    }
+
+    pub fn set_component_state(&mut self, state: &[u8]) -> HostResult<()> {
+        self.instance.set_state(state)?;
+        if let Some(controller) = self.controller.as_ref() {
+            controller.set_component_state(state)?;
+        }
+        Ok(())
+    }
+
+    pub fn set_controller_state(&mut self, state: &[u8]) -> HostResult<()> {
+        if let Some(controller) = self.controller.as_ref() {
+            controller.set_state(state)?;
+        }
+        Ok(())
+    }
+
+    pub fn select_unit(&self, unit_id: i32) -> HostResult<Option<i32>> {
+        let Some(controller) = self.controller.as_ref() else {
+            return Ok(None);
+        };
+        let Some(unit_info) = controller.unit_info()? else {
+            return Ok(None);
+        };
+        unit_info.select_unit(unit_id)?;
+        Ok(Some(unit_info.selected_unit()))
+    }
+
+    pub fn unit_by_audio_bus(
+        &self,
+        direction: Vst3BusDirection,
+        bus_index: i32,
+        channel: i32,
+    ) -> HostResult<Option<i32>> {
+        let Some(controller) = self.controller.as_ref() else {
+            return Ok(None);
+        };
+        let Some(unit_info) = controller.unit_info()? else {
+            return Ok(None);
+        };
+        unit_info.unit_by_audio_bus(direction, bus_index, channel)
+    }
+
+    pub fn set_unit_program_data(
+        &self,
+        list_or_unit_id: i32,
+        program_index: i32,
+        data: &[u8],
+    ) -> HostResult<Option<()>> {
+        let Some(controller) = self.controller.as_ref() else {
+            return Ok(None);
+        };
+        let Some(unit_info) = controller.unit_info()? else {
+            return Ok(None);
+        };
+        unit_info.set_unit_program_data(list_or_unit_id, program_index, data)?;
+        Ok(Some(()))
+    }
+
+    pub fn program_data_supported(&self, list_id: i32) -> HostResult<Option<bool>> {
+        self.instance
+            .program_list_data()?
+            .map(|data| data.program_data_supported(list_id))
+            .transpose()
+    }
+
+    pub fn get_program_data(
+        &self,
+        list_id: i32,
+        program_index: i32,
+    ) -> HostResult<Option<Vec<u8>>> {
+        self.instance
+            .program_list_data()?
+            .map(|data| data.get_program_data(list_id, program_index))
+            .transpose()
+    }
+
+    pub fn set_program_data(
+        &self,
+        list_id: i32,
+        program_index: i32,
+        data: &[u8],
+    ) -> HostResult<Option<()>> {
+        self.instance
+            .program_list_data()?
+            .map(|program_data| program_data.set_program_data(list_id, program_index, data))
+            .transpose()
+    }
+
+    pub fn unit_data_supported(&self, unit_id: i32) -> HostResult<Option<bool>> {
+        self.instance
+            .unit_data()?
+            .map(|data| data.unit_data_supported(unit_id))
+            .transpose()
+    }
+
+    pub fn get_unit_data(&self, unit_id: i32) -> HostResult<Option<Vec<u8>>> {
+        self.instance
+            .unit_data()?
+            .map(|data| data.get_unit_data(unit_id))
+            .transpose()
+    }
+
+    pub fn set_unit_data(&self, unit_id: i32, data: &[u8]) -> HostResult<Option<()>> {
+        self.instance
+            .unit_data()?
+            .map(|unit_data| unit_data.set_unit_data(unit_id, data))
             .transpose()
     }
 }

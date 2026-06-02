@@ -5,12 +5,40 @@ import type {
   InstanceDescriptor,
   InstanceDestroyOptions,
   InstanceDestroyResult,
+  InstanceGetStateOptions,
+  InstanceGetStateResult,
+  InstanceParameterGetOptions,
+  InstanceParameterGetResult,
+  InstanceParameterSetOptions,
+  InstanceParameterSetResult,
+  InstanceParametersOptions,
+  InstanceParametersResult,
+  InstanceProgramDataOptions,
+  InstanceProgramDataResult,
+  InstanceProgramDataSupportedResult,
   InstanceProcessingOptions,
   InstanceProcessingResult,
   InstanceRestartOptions,
   InstanceRestartResult,
+  InstanceSelectUnitOptions,
+  InstanceSelectUnitResult,
+  InstanceSetProgramDataOptions,
+  InstanceSetProgramDataResult,
+  InstanceSetStateOptions,
+  InstanceSetStateResult,
+  InstanceSetUnitDataOptions,
+  InstanceSetUnitDataResult,
+  InstanceSetUnitProgramDataOptions,
+  InstanceSetUnitProgramDataResult,
   InstanceStatusOptions,
   InstanceStatusResult,
+  InstanceUnitByBusOptions,
+  InstanceUnitByBusResult,
+  InstanceUnitDataOptions,
+  InstanceUnitDataResult,
+  InstanceUnitDataSupportedResult,
+  InstanceUnitsOptions,
+  InstanceUnitsResult,
   StreamLifecycleOptions,
 } from "./instances.js";
 import type {
@@ -105,6 +133,36 @@ export class WVSTClient {
         this.request<InstanceProcessingResult>("instance.start", options),
       stop: (options: InstanceProcessingOptions) =>
         this.request<InstanceProcessingResult>("instance.stop", options),
+      parameters: (options: InstanceParametersOptions) =>
+        this.request<InstanceParametersResult>("instance.parameters", options),
+      parameterGet: (options: InstanceParameterGetOptions) =>
+        this.request<InstanceParameterGetResult>("instance.parameter.get", options),
+      parameterSet: (options: InstanceParameterSetOptions) =>
+        this.request<InstanceParameterSetResult>("instance.parameter.set", options),
+      units: (options: InstanceUnitsOptions) =>
+        this.request<InstanceUnitsResult>("instance.units", options),
+      selectUnit: (options: InstanceSelectUnitOptions) =>
+        this.request<InstanceSelectUnitResult>("instance.selectUnit", options),
+      unitByBus: (options: InstanceUnitByBusOptions) =>
+        this.request<InstanceUnitByBusResult>("instance.unitByBus", options),
+      setUnitProgramData: (options: InstanceSetUnitProgramDataOptions) =>
+        this.request<InstanceSetUnitProgramDataResult>("instance.setUnitProgramData", options),
+      programDataSupported: (options: InstanceProgramDataOptions) =>
+        this.request<InstanceProgramDataSupportedResult>("instance.programData.supported", options),
+      getProgramData: (options: InstanceProgramDataOptions) =>
+        this.request<InstanceProgramDataResult>("instance.programData.get", options),
+      setProgramData: (options: InstanceSetProgramDataOptions) =>
+        this.request<InstanceSetProgramDataResult>("instance.programData.set", options),
+      unitDataSupported: (options: InstanceUnitDataOptions) =>
+        this.request<InstanceUnitDataSupportedResult>("instance.unitData.supported", options),
+      getUnitData: (options: InstanceUnitDataOptions) =>
+        this.request<InstanceUnitDataResult>("instance.unitData.get", options),
+      setUnitData: (options: InstanceSetUnitDataOptions) =>
+        this.request<InstanceSetUnitDataResult>("instance.unitData.set", options),
+      getState: (options: InstanceGetStateOptions) =>
+        this.request<InstanceGetStateResult>("instance.getState", options),
+      setState: (options: InstanceSetStateOptions) =>
+        this.request<InstanceSetStateResult>("instance.setState", options),
       destroy: (options: InstanceDestroyOptions) =>
         this.request<InstanceDestroyResult>("instance.destroy", options),
       openStream: (options: StreamLifecycleOptions) =>

@@ -30,7 +30,12 @@ struct InstanceStateParams {
 #[serde(rename_all = "camelCase")]
 struct InstanceSetStateParams {
     instance_id: u64,
-    state_base64: String,
+    #[serde(default)]
+    state_base64: Option<String>,
+    #[serde(default)]
+    component_state_base64: Option<String>,
+    #[serde(default)]
+    controller_state_base64: Option<String>,
 }
 
 pub(super) fn handle_instance_parameters(
@@ -58,6 +63,41 @@ pub(super) fn handle_instance_parameters(
             json!({
                 "instanceId": params.instance_id,
                 "parameters": parameters,
+            }),
+        ),
+        Err(error) => response_error(id, 4220, error),
+    }
+}
+
+pub(super) fn handle_instance_units(
+    id: Value,
+    params: Value,
+    state: &mut WorkerIpcState,
+) -> String {
+    let params = match serde_json::from_value::<InstanceStateParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid instance units params: {error}"),
+            );
+        }
+    };
+    let Some(instance) = state.instances.get(&params.instance_id) else {
+        return response_error(
+            id,
+            4040,
+            format!("instance not found: {}", params.instance_id),
+        );
+    };
+
+    match instance.backend.unit_metadata() {
+        Ok(unit_info) => response_result(
+            id,
+            json!({
+                "instanceId": params.instance_id,
+                "unitInfo": unit_info,
             }),
         ),
         Err(error) => response_error(id, 4220, error),
@@ -187,11 +227,32 @@ pub(super) fn handle_instance_set_state(
             return response_error(id, -32602, format!("invalid set state params: {error}"));
         }
     };
-    let state_bytes = match BASE64.decode(params.state_base64.as_bytes()) {
+    let component_state = match decode_optional_base64(
+        "componentStateBase64",
+        params.component_state_base64.as_deref(),
+    ) {
         Ok(bytes) => bytes,
-        Err(error) => return response_error(id, 4220, format!("invalid stateBase64: {error}")),
+        Err(error) => return response_error(id, 4220, error),
     };
-    let Some(instance) = state.instances.get(&params.instance_id) else {
+    let controller_state = match decode_optional_base64(
+        "controllerStateBase64",
+        params
+            .controller_state_base64
+            .as_deref()
+            .or(params.state_base64.as_deref()),
+    ) {
+        Ok(bytes) => bytes,
+        Err(error) => return response_error(id, 4220, error),
+    };
+    if component_state.is_none() && controller_state.is_none() {
+        return response_error(
+            id,
+            -32602,
+            "set state requires componentStateBase64, controllerStateBase64, or stateBase64",
+        );
+    }
+
+    let Some(instance) = state.instances.get_mut(&params.instance_id) else {
         return response_error(
             id,
             4040,
@@ -199,14 +260,37 @@ pub(super) fn handle_instance_set_state(
         );
     };
 
-    match instance.backend.set_controller_state(&state_bytes) {
-        Ok(()) => response_result(
-            id,
-            json!({
-                "instanceId": params.instance_id,
-                "stateBytes": state_bytes.len(),
-            }),
-        ),
-        Err(error) => response_error(id, 4220, error),
+    if let Some(state_bytes) = component_state.as_deref()
+        && let Err(error) = instance.backend.set_component_state(state_bytes)
+    {
+        return response_error(id, 4220, error);
     }
+    if let Some(state_bytes) = controller_state.as_deref()
+        && let Err(error) = instance.backend.set_controller_state(state_bytes)
+    {
+        return response_error(id, 4220, error);
+    }
+
+    response_result(
+        id,
+        json!({
+            "instanceId": params.instance_id,
+            "componentStateBytes": component_state.as_ref().map(Vec::len),
+            "controllerStateBytes": controller_state.as_ref().map(Vec::len),
+            "stateBytes": controller_state.as_ref().map(Vec::len),
+        }),
+    )
+}
+
+fn decode_optional_base64(
+    label: &'static str,
+    value: Option<&str>,
+) -> Result<Option<Vec<u8>>, String> {
+    value.map(|value| decode_base64(label, value)).transpose()
+}
+
+fn decode_base64(label: &'static str, value: &str) -> Result<Vec<u8>, String> {
+    BASE64
+        .decode(value.as_bytes())
+        .map_err(|error| format!("invalid {label}: {error}"))
 }

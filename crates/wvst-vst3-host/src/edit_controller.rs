@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use crate::component_handler::Vst3ComponentHandler;
 use crate::midi_mapping::Vst3MidiMapping;
 use crate::state_stream::Vst3StateStream;
+use crate::unit_info::Vst3UnitInfo;
 use crate::vst3_abi::{
     IEditController, IEditControllerVTable, K_RESULT_FALSE, K_RESULT_OK, ParamId, ParamValue,
-    ParameterInfo as RawParameterInfo, String128, VST3_I_MIDI_MAPPING_IID,
+    ParameterInfo as RawParameterInfo, String128, VST3_I_MIDI_MAPPING_IID, VST3_I_UNIT_INFO_IID,
     VST3_PARAMETER_CAN_AUTOMATE, VST3_PARAMETER_IS_BYPASS, VST3_PARAMETER_IS_HIDDEN,
     VST3_PARAMETER_IS_LIST, VST3_PARAMETER_IS_PROGRAM_CHANGE, VST3_PARAMETER_IS_READ_ONLY,
     VST3_PARAMETER_IS_WRAP_AROUND, parse_tuid_hex,
@@ -221,36 +222,19 @@ impl Vst3EditController {
     }
 
     pub fn midi_mapping(&self) -> HostResult<Option<Vst3MidiMapping>> {
-        let interface_tuid = parse_tuid_hex(VST3_I_MIDI_MAPPING_IID)
-            .ok_or_else(|| HostError::InvalidInterfaceId(VST3_I_MIDI_MAPPING_IID.to_string()))?;
-        let mut object: *mut c_void = std::ptr::null_mut();
-        let result = unsafe {
-            // SAFETY: controller/vtable were validated by from_raw. object is
-            // writable stack storage for the optional queried interface.
-            (self.vtable().query_interface)(
-                self.controller.as_ptr(),
-                interface_tuid.as_ptr().cast(),
-                &mut object,
-            )
-        };
-
-        if result == K_RESULT_FALSE {
+        let Some(object) = self.query_optional_interface(VST3_I_MIDI_MAPPING_IID)? else {
             return Ok(None);
-        }
-        if result != K_RESULT_OK {
-            return Err(HostError::InterfaceQueryFailed {
-                interface_id: VST3_I_MIDI_MAPPING_IID.to_string(),
-                result,
-            });
-        }
-        if object.is_null() {
-            return Err(HostError::InterfaceReturnedNull {
-                interface_id: VST3_I_MIDI_MAPPING_IID.to_string(),
-            });
-        }
-
+        };
         // SAFETY: queryInterface returned a referenced IMidiMapping pointer.
         unsafe { Vst3MidiMapping::from_raw(object.cast()) }.map(Some)
+    }
+
+    pub fn unit_info(&self) -> HostResult<Option<Vst3UnitInfo>> {
+        let Some(object) = self.query_optional_interface(VST3_I_UNIT_INFO_IID)? else {
+            return Ok(None);
+        };
+        // SAFETY: queryInterface returned a referenced IUnitInfo pointer.
+        unsafe { Vst3UnitInfo::from_raw(object.cast()) }.map(Some)
     }
 
     fn set_component_handler(&mut self) -> HostResult<()> {
@@ -278,6 +262,38 @@ impl Vst3EditController {
     fn vtable(&self) -> &IEditControllerVTable {
         // SAFETY: from_raw validated both the object pointer and vtable pointer.
         unsafe { &*self.controller.as_ref().vtable }
+    }
+
+    fn query_optional_interface(&self, interface_id: &str) -> HostResult<Option<*mut c_void>> {
+        let interface_tuid = parse_tuid_hex(interface_id)
+            .ok_or_else(|| HostError::InvalidInterfaceId(interface_id.to_string()))?;
+        let mut object: *mut c_void = std::ptr::null_mut();
+        let result = unsafe {
+            // SAFETY: controller/vtable were validated by from_raw. object is
+            // writable stack storage for the optional queried interface.
+            (self.vtable().query_interface)(
+                self.controller.as_ptr(),
+                interface_tuid.as_ptr().cast(),
+                &mut object,
+            )
+        };
+
+        if result == K_RESULT_FALSE {
+            return Ok(None);
+        }
+        if result != K_RESULT_OK {
+            return Err(HostError::InterfaceQueryFailed {
+                interface_id: interface_id.to_string(),
+                result,
+            });
+        }
+        if object.is_null() {
+            return Err(HostError::InterfaceReturnedNull {
+                interface_id: interface_id.to_string(),
+            });
+        }
+
+        Ok(Some(object))
     }
 }
 
@@ -333,7 +349,7 @@ fn string128(value: &str) -> String128 {
     output
 }
 
-fn string128_to_string(value: &String128) -> Option<String> {
+pub(crate) fn string128_to_string(value: &String128) -> Option<String> {
     let len = value
         .iter()
         .position(|unit| *unit == 0)

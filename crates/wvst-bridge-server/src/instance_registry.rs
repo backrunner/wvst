@@ -70,7 +70,69 @@ pub struct InstanceParameterSetParams {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceSetStateParams {
     pub instance_id: u64,
-    pub state_base64: String,
+    #[serde(default)]
+    pub state_base64: Option<String>,
+    #[serde(default)]
+    pub component_state_base64: Option<String>,
+    #[serde(default)]
+    pub controller_state_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceSelectUnitParams {
+    pub instance_id: u64,
+    pub unit_id: i32,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceUnitByBusParams {
+    pub instance_id: u64,
+    pub direction: String,
+    pub bus_index: i32,
+    pub channel: i32,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceUnitProgramDataParams {
+    pub instance_id: u64,
+    pub list_or_unit_id: i32,
+    pub program_index: i32,
+    pub data_base64: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceProgramDataParams {
+    pub instance_id: u64,
+    pub list_id: i32,
+    pub program_index: i32,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceSetProgramDataParams {
+    pub instance_id: u64,
+    pub list_id: i32,
+    pub program_index: i32,
+    pub data_base64: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceUnitDataParams {
+    pub instance_id: u64,
+    pub unit_id: i32,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceSetUnitDataParams {
+    pub instance_id: u64,
+    pub unit_id: i32,
+    pub data_base64: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]

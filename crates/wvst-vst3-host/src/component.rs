@@ -2,13 +2,15 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
-    BusInfo, FUnknown, IComponent, IComponentVTable, K_RESULT_OK, TUid, VST3_MEDIA_TYPE_AUDIO,
+    BusInfo, FUnknown, IComponent, IComponentVTable, K_RESULT_FALSE, K_RESULT_OK, TUid,
+    VST3_I_PROGRAM_LIST_DATA_IID, VST3_I_UNIT_DATA_IID, VST3_MEDIA_TYPE_AUDIO, parse_tuid_hex,
     tuid_hex,
 };
 use crate::{
     HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor, Vst3BusDirection, Vst3BusType,
     Vst3HostContext, Vst3InputEvent, Vst3Lifecycle, Vst3LifecycleState, Vst3ParameterChange,
-    Vst3ProcessBuffers, Vst3ProcessingConfig, state_stream::Vst3StateStream,
+    Vst3ProcessBuffers, Vst3ProcessingConfig, Vst3ProgramListData, Vst3UnitData,
+    state_stream::Vst3StateStream,
 };
 
 #[derive(Debug)]
@@ -106,6 +108,32 @@ impl Vst3ComponentInstance {
             ],
         )?;
         self.component.set_state(state)
+    }
+
+    pub fn program_list_data(&self) -> HostResult<Option<Vst3ProgramListData>> {
+        self.require_state(
+            "program-list-data",
+            &[
+                Vst3LifecycleState::Initialized,
+                Vst3LifecycleState::SetupDone,
+                Vst3LifecycleState::Activated,
+                Vst3LifecycleState::Stopped,
+            ],
+        )?;
+        self.component.program_list_data()
+    }
+
+    pub fn unit_data(&self) -> HostResult<Option<Vst3UnitData>> {
+        self.require_state(
+            "unit-data",
+            &[
+                Vst3LifecycleState::Initialized,
+                Vst3LifecycleState::SetupDone,
+                Vst3LifecycleState::Activated,
+                Vst3LifecycleState::Stopped,
+            ],
+        )?;
+        self.component.unit_data()
     }
 
     pub fn initialize(&mut self) -> HostResult<()> {
@@ -346,6 +374,22 @@ impl Vst3ComponentHandle {
         })
     }
 
+    fn program_list_data(&self) -> HostResult<Option<Vst3ProgramListData>> {
+        let Some(object) = self.query_optional_interface(VST3_I_PROGRAM_LIST_DATA_IID)? else {
+            return Ok(None);
+        };
+        // SAFETY: queryInterface returned a referenced IProgramListData pointer.
+        unsafe { Vst3ProgramListData::from_raw(object.cast()) }.map(Some)
+    }
+
+    fn unit_data(&self) -> HostResult<Option<Vst3UnitData>> {
+        let Some(object) = self.query_optional_interface(VST3_I_UNIT_DATA_IID)? else {
+            return Ok(None);
+        };
+        // SAFETY: queryInterface returned a referenced IUnitData pointer.
+        unsafe { Vst3UnitData::from_raw(object.cast()) }.map(Some)
+    }
+
     fn audio_buses(&mut self, direction: Vst3BusDirection) -> HostResult<Vec<Vst3AudioBusInfo>> {
         let direction_abi = direction.as_abi();
         let count = self.call_count("getBusCount", |component, vtable| unsafe {
@@ -403,6 +447,38 @@ impl Vst3ComponentHandle {
         } else {
             Err(HostError::ComponentCallFailed { method, result })
         }
+    }
+
+    fn query_optional_interface(&self, interface_id: &str) -> HostResult<Option<*mut c_void>> {
+        let interface_tuid = parse_tuid_hex(interface_id)
+            .ok_or_else(|| HostError::InvalidInterfaceId(interface_id.to_string()))?;
+        let mut object: *mut c_void = std::ptr::null_mut();
+        let result = unsafe {
+            // SAFETY: component/vtable were validated by from_raw. object is
+            // writable stack storage for the optional queried interface.
+            (self.vtable().query_interface)(
+                self.component.as_ptr(),
+                interface_tuid.as_ptr().cast(),
+                &mut object,
+            )
+        };
+
+        if result == K_RESULT_FALSE {
+            return Ok(None);
+        }
+        if result != K_RESULT_OK {
+            return Err(HostError::InterfaceQueryFailed {
+                interface_id: interface_id.to_string(),
+                result,
+            });
+        }
+        if object.is_null() {
+            return Err(HostError::InterfaceReturnedNull {
+                interface_id: interface_id.to_string(),
+            });
+        }
+
+        Ok(Some(object))
     }
 
     fn vtable(&self) -> &IComponentVTable {

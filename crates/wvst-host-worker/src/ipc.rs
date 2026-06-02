@@ -22,6 +22,10 @@ mod ipc_midi;
 mod ipc_parameter_events;
 #[path = "ipc_parameters.rs"]
 mod ipc_parameters;
+#[path = "ipc_unit_data.rs"]
+mod ipc_unit_data;
+#[path = "ipc_units.rs"]
+mod ipc_units;
 
 use ipc_backend::{WorkerBackend, WorkerBackendKind};
 use ipc_buffers::AudioScratchBuffers;
@@ -167,6 +171,36 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
         }
         "instance.parameters" => {
             ipc_parameters::handle_instance_parameters(request.id, request.params, state)
+        }
+        "instance.units" => {
+            ipc_parameters::handle_instance_units(request.id, request.params, state)
+        }
+        "instance.selectUnit" => {
+            ipc_units::handle_instance_select_unit(request.id, request.params, state)
+        }
+        "instance.unitByBus" => {
+            ipc_units::handle_instance_unit_by_bus(request.id, request.params, state)
+        }
+        "instance.setUnitProgramData" => {
+            ipc_units::handle_instance_set_unit_program_data(request.id, request.params, state)
+        }
+        "instance.programData.supported" => {
+            ipc_unit_data::handle_instance_program_data_supported(request.id, request.params, state)
+        }
+        "instance.programData.get" => {
+            ipc_unit_data::handle_instance_get_program_data(request.id, request.params, state)
+        }
+        "instance.programData.set" => {
+            ipc_unit_data::handle_instance_set_program_data(request.id, request.params, state)
+        }
+        "instance.unitData.supported" => {
+            ipc_unit_data::handle_instance_unit_data_supported(request.id, request.params, state)
+        }
+        "instance.unitData.get" => {
+            ipc_unit_data::handle_instance_get_unit_data(request.id, request.params, state)
+        }
+        "instance.unitData.set" => {
+            ipc_unit_data::handle_instance_set_unit_data(request.id, request.params, state)
         }
         "instance.parameter.get" => {
             ipc_parameters::handle_instance_parameter_get(request.id, request.params, state)
@@ -352,6 +386,10 @@ fn worker_hello() -> Value {
             "vst3RuntimeInstance": true,
             "vst3Parameters": true,
             "vst3ParameterAutomation": true,
+            "vst3UnitInfo": true,
+            "vst3UnitProgramData": true,
+            "vst3ProgramListData": true,
+            "vst3UnitData": true,
             "vst3ControllerState": true,
             "preallocatedAudioBuffers": true,
             "sampleRateValidation": true
@@ -456,6 +494,9 @@ mod tests {
         assert_eq!(value["result"]["ipcVersion"], WORKER_IPC_VERSION);
         assert_eq!(value["result"]["capabilities"]["instanceLifecycle"], true);
         assert_eq!(value["result"]["capabilities"]["vst3Parameters"], true);
+        assert_eq!(value["result"]["capabilities"]["vst3UnitProgramData"], true);
+        assert_eq!(value["result"]["capabilities"]["vst3ProgramListData"], true);
+        assert_eq!(value["result"]["capabilities"]["vst3UnitData"], true);
         assert_eq!(value["result"]["capabilities"]["vst3ControllerState"], true);
     }
 
@@ -487,6 +528,45 @@ mod tests {
         );
         let parameters_value: Value = serde_json::from_str(&parameters).expect("params json");
         assert_eq!(parameters_value["result"]["parameters"], json!([]));
+
+        let units = handle_ipc_line(
+            r#"{"id":11,"method":"instance.units","params":{"instanceId":7}}"#,
+            &mut state,
+        );
+        let units_value: Value = serde_json::from_str(&units).expect("units json");
+        assert_eq!(units_value["result"]["unitInfo"], Value::Null);
+
+        let select_unit = handle_ipc_line(
+            r#"{"id":12,"method":"instance.selectUnit","params":{"instanceId":7,"unitId":1}}"#,
+            &mut state,
+        );
+        let select_unit_value: Value =
+            serde_json::from_str(&select_unit).expect("select unit json");
+        assert_eq!(select_unit_value["error"]["code"], 4220);
+
+        let program_supported = handle_ipc_line(
+            r#"{"id":13,"method":"instance.programData.supported","params":{"instanceId":7,"listId":1,"programIndex":0}}"#,
+            &mut state,
+        );
+        let program_supported_value: Value =
+            serde_json::from_str(&program_supported).expect("program supported json");
+        assert_eq!(program_supported_value["result"]["supported"], false);
+
+        let unit_supported = handle_ipc_line(
+            r#"{"id":14,"method":"instance.unitData.supported","params":{"instanceId":7,"unitId":1}}"#,
+            &mut state,
+        );
+        let unit_supported_value: Value =
+            serde_json::from_str(&unit_supported).expect("unit supported json");
+        assert_eq!(unit_supported_value["result"]["supported"], false);
+
+        let set_state_missing = handle_ipc_line(
+            r#"{"id":15,"method":"instance.setState","params":{"instanceId":7}}"#,
+            &mut state,
+        );
+        let set_state_missing_value: Value =
+            serde_json::from_str(&set_state_missing).expect("set state missing json");
+        assert_eq!(set_state_missing_value["error"]["code"], -32602);
 
         let parameter_get = handle_ipc_line(
             r#"{"id":10,"method":"instance.parameter.get","params":{"instanceId":7,"parameterId":1}}"#,

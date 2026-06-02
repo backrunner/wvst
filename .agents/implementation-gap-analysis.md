@@ -53,8 +53,9 @@
 - `Vst3ComponentInstance::initialize()` 已传入 WVST `IHostApplication` host context，插件可通过 `queryInterface(IHostApplication)` 读取宿主名称；host-side `createInstance()` 仍暂不提供 message/attribute 对象。
 - `wvst-host-worker serve` 已接入首版 runtime backend：instance create 可持久保存 `Vst3LoadedComponent`，`instance.start/stop/destroy` 会驱动真实 VST3 lifecycle，worker audio IPC 可调用真实 `process()`；invalid class id 或非 bundle 路径仍回退 passthrough 以保持测试和开发路径可用。
 - worker create response、worker metrics、Bridge instance record 和 Web SDK `InstanceDescriptor` 已暴露 backend、`latencySamples`、`tailSamples`，Web 侧可以在挂载后读取插件处理延迟和 tail 信息。
-- VST3 controller 基础链路已接入：component 可查询 controller class id，macOS factory runtime 会创建可选 `IEditController`，worker 初始化 controller 并注册 no-op `IComponentHandler`，Bridge/worker 控制面已暴露参数列表、normalized 参数读写和 controller state base64 get/set。
+- VST3 controller 基础链路已接入：component 可查询 controller class id，macOS factory runtime 会创建可选 `IEditController`，worker 初始化 controller 并注册 no-op `IComponentHandler`，Bridge/worker/Web 控制面已暴露参数列表、unit/program metadata、normalized 参数读写、component/controller state base64 get/set 聚合、unit selection、unit-by-bus 查询、`setUnitProgramData`、`IProgramListData` 和 `IUnitData` 数据读写。
 - `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler` host callback 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入和生命周期释放。
+- `wvst-vst3-host` 已提供可选 `IUnitInfo` facade，能读取 units、program lists、program names 和 selected unit；`wvst-host-worker` / Bridge / Web SDK 已提供 `instance.units` / `client.instances.units()` 查询 API。
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
 - Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址并主动 shutdown。
 
@@ -86,7 +87,7 @@
 仍缺少：
 
 - 更完整的 host context extension、多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、audio bus 查询、selected-bus activation，并支持单个主 bus 的 mono/stereo/常见 3.0 到 7.1 speaker arrangement。
-- `IEditController`、参数列表、normalized 参数读写、controller state、component/controller state get 聚合以及 parameter-change queue/sample-accurate automation 已有首版；仍缺少完整 set 聚合、program list、unit metadata 和真实第三方 controller/automation 兼容验证。
+- `IEditController`、参数列表、unit/program metadata、normalized 参数读写、component/controller state get/set 聚合、unit selection、unit-by-bus、program/unit data 读写以及 parameter-change queue/sample-accurate automation 已有首版；仍缺少真实第三方 controller/automation/unit-info/program-data 兼容验证。
 - 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
 
 ### 4. 低延迟音频数据面
@@ -122,7 +123,7 @@
 ## 建议下一阶段
 
 1. 用真实 macOS VST3 effect/instrument fixture 验证 2-in/2-out process、parameter automation、MIDI mapping 和 zero-input instrument timing。
-2. 补齐 VST3 program list、unit metadata、component/controller state set 聚合，以及 host context message/attribute extension。
+2. 补齐 VST3 host context message/attribute extension，并用真实第三方插件验证 controller/automation/unit-info/program-data 兼容性。
 3. 给 worker runtime backend 增加兼容失败诊断和更细粒度 runtime capability。
 4. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
 5. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。
