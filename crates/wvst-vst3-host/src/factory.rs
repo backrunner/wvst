@@ -53,6 +53,15 @@ impl Vst3LoadedComponent {
     }
 }
 
+// SAFETY: `Vst3LoadedComponent` is an owning runtime holder. Its raw plugin
+// pointers are released exactly once by their wrappers, and process-buffer ABI
+// pointers target heap allocations owned by the same holder. Moving the holder
+// to another thread does not invalidate those allocations. The type is not
+// `Sync`; callers still need exclusive mutable access for lifecycle and process
+// calls, and WVST workers additionally serialize access with their instance
+// mutex.
+unsafe impl Send for Vst3LoadedComponent {}
+
 pub fn load_vst3_factory_info(
     bundle_path: impl AsRef<std::path::Path>,
 ) -> HostResult<Vst3FactoryInfo> {

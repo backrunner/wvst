@@ -5,13 +5,15 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
-use wvst_vst3_host::{HeadlessPluginInstance, create_vst3_component_probe};
 
 #[path = "ipc_audio.rs"]
 mod ipc_audio;
+#[path = "ipc_backend.rs"]
+mod ipc_backend;
 #[path = "ipc_buffers.rs"]
 mod ipc_buffers;
 
+use ipc_backend::{WorkerBackend, WorkerBackendKind};
 use ipc_buffers::AudioScratchBuffers;
 
 const WORKER_IPC_VERSION: u16 = 1;
@@ -30,7 +32,6 @@ struct WorkerInstance {
     processing: bool,
     backend: WorkerBackend,
     buffers: AudioScratchBuffers,
-    plugin: HeadlessPluginInstance,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,53 +88,6 @@ enum WorkerState {
     Processing,
     Stopped,
     Destroyed,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub(super) enum WorkerBackendKind {
-    Passthrough,
-    Vst3ComponentProbe,
-}
-
-#[derive(Debug)]
-pub(super) struct WorkerBackend {
-    kind: WorkerBackendKind,
-}
-
-impl WorkerBackend {
-    fn passthrough() -> Self {
-        Self {
-            kind: WorkerBackendKind::Passthrough,
-        }
-    }
-
-    fn from_create_params(params: &InstanceCreateParams) -> Result<Self, String> {
-        let Some(class_id) = params.class_id.as_deref() else {
-            return Ok(Self::passthrough());
-        };
-
-        if !std::path::Path::new(&params.plugin_path).is_dir() {
-            return Ok(Self::passthrough());
-        }
-
-        match create_vst3_component_probe(&params.plugin_path, class_id) {
-            Ok(probe) if probe.audio_processor => Ok(Self {
-                kind: WorkerBackendKind::Vst3ComponentProbe,
-            }),
-            Ok(_) => Err("VST3 component does not expose IAudioProcessor".to_string()),
-            Err(wvst_vst3_host::HostError::InvalidClassId(_)) => Ok(Self::passthrough()),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    pub(super) fn kind(&self) -> WorkerBackendKind {
-        self.kind
-    }
-
-    pub(super) fn supports_binary_audio_process(&self) -> bool {
-        self.kind == WorkerBackendKind::Passthrough
-    }
 }
 
 pub fn serve_stdio(audio_connect: Option<String>) -> Result<(), String> {
@@ -227,17 +181,9 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
     }
 
     let descriptor = descriptor_from_params(&params);
-    let backend = match WorkerBackend::from_create_params(&params) {
+    let backend = match WorkerBackend::from_create_params(&params, &descriptor) {
         Ok(backend) => backend,
         Err(error) => return response_error(id, 4220, error),
-    };
-    let plugin = match HeadlessPluginInstance::new(
-        &descriptor,
-        params.input_channels,
-        params.output_channels,
-    ) {
-        Ok(plugin) => plugin,
-        Err(error) => return response_error(id, 4220, error.to_string()),
     };
     let buffers = match AudioScratchBuffers::new(
         params.max_block_frames,
@@ -265,7 +211,6 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
             processing: false,
             backend,
             buffers,
-            plugin,
         },
     );
 
@@ -284,19 +229,24 @@ fn handle_instance_destroy(id: Value, params: Value, state: &mut WorkerIpcState)
         }
     };
 
-    let Some(instance) = state.instances.remove(&params.instance_id) else {
+    let Some(instance) = state.instances.get_mut(&params.instance_id) else {
         return response_error(
             id,
             4040,
             format!("instance not found: {}", params.instance_id),
         );
     };
+    if let Err(error) = instance.backend.terminate(instance.processing) {
+        return response_error(id, 4220, error);
+    }
+    let stream_id = instance.stream_id;
+    state.instances.remove(&params.instance_id);
 
     response_result(
         id,
         json!({
             "instanceId": params.instance_id,
-            "streamId": instance.stream_id,
+            "streamId": stream_id,
             "workerState": WorkerState::Destroyed,
         }),
     )
@@ -327,6 +277,15 @@ fn handle_instance_processing(
         );
     };
 
+    let backend_result = if processing {
+        instance.backend.start_processing()
+    } else {
+        instance.backend.stop_processing()
+    };
+    if let Err(error) = backend_result {
+        return response_error(id, 4220, error);
+    }
+
     instance.processing = processing;
     response_result(
         id,
@@ -354,6 +313,7 @@ fn worker_hello() -> Value {
             "binaryAudioProcess": true,
             "vst3CreateInstance": true,
             "vst3AudioProcessorProbe": true,
+            "vst3RuntimeInstance": true,
             "preallocatedAudioBuffers": true,
             "sampleRateValidation": true
         }
@@ -373,6 +333,11 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
             .instances
             .values()
             .filter(|instance| instance.backend.kind() == WorkerBackendKind::Passthrough)
+            .count(),
+        "vst3RuntimeInstances": state
+            .instances
+            .values()
+            .filter(|instance| instance.backend.kind() == WorkerBackendKind::Vst3Runtime)
             .count(),
     })
 }

@@ -2,6 +2,13 @@ use super::*;
 use crate::HostError;
 
 #[test]
+fn loaded_component_can_move_between_worker_threads() {
+    fn assert_send<T: Send>() {}
+
+    assert_send::<Vst3LoadedComponent>();
+}
+
+#[test]
 fn rejects_invalid_component_class_id_before_loading_bundle() {
     let error =
         create_vst3_component_probe("/tmp/Missing.vst3", "class-a").expect_err("invalid class id");

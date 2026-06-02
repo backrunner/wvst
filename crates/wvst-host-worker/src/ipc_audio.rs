@@ -156,14 +156,14 @@ fn process_message_into(
 
     let frames = usize::from(input_header.frames.get());
     let output_channels = instance.output_channels;
-    let plugin = &instance.plugin;
     let (input, output) = instance
         .buffers
         .prepare_process(frames, &message_body[AUDIO_FRAME_HEADER_LEN..])
         .map_err(AudioProcessError::invalid)?;
-    plugin
+    instance
+        .backend
         .process_interleaved_f32(frames, input, output)
-        .map_err(|error| AudioProcessError::invalid(error.to_string()))?;
+        .map_err(AudioProcessError::invalid)?;
 
     encode_output_frame_into(input_header, output_channels, output, output_body)
 }
