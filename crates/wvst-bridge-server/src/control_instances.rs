@@ -6,7 +6,7 @@ use super::{
     ControlContext, response_error, response_instance_error, response_result,
     response_worker_supervisor_error,
 };
-use crate::events::BridgeEventKind;
+use crate::events::{BridgeEventKind, WorkerRecoveryMode};
 use crate::instance_registry::{
     InstanceConnectionNotifyParams, InstanceCreateParams, InstanceDestroyParams, InstanceError,
     InstanceParameterInfoParams, InstanceParameterNormalizedByPlainParams, InstanceParameterParams,
@@ -171,6 +171,9 @@ pub async fn handle_instance_restart(
     context.events.emit(BridgeEventKind::WorkerRecovering {
         instance_id: record.instance_id,
         plugin_id: record.plugin_id.clone(),
+        mode: WorkerRecoveryMode::ManualRestart,
+        reason: "manual-restart".to_string(),
+        error_data: None,
     });
 
     match context.workers.restart_instance(&record).await {
@@ -332,6 +335,9 @@ async fn handle_status_worker_failure(
     context.events.emit(BridgeEventKind::WorkerRecovering {
         instance_id: record.instance_id,
         plugin_id: record.plugin_id.clone(),
+        mode: WorkerRecoveryMode::AutoHeartbeat,
+        reason: "heartbeat-failed".to_string(),
+        error_data: Some(error.rpc_data()),
     });
 
     match context.workers.restart_instance(&record).await {
@@ -376,6 +382,7 @@ async fn mark_restarted_instance(
                         instance_id: record.instance_id,
                         plugin_id: record.plugin_id,
                         processing_restored: true,
+                        mode: WorkerRecoveryMode::ManualRestart,
                     });
                     response_result(
                         id,
@@ -398,6 +405,7 @@ async fn mark_restarted_instance(
                 instance_id: record.instance_id,
                 plugin_id: record.plugin_id,
                 processing_restored: false,
+                mode: WorkerRecoveryMode::ManualRestart,
             });
             response_result(
                 id,
@@ -430,6 +438,7 @@ async fn mark_auto_recovered_instance(
                         instance_id: record.instance_id,
                         plugin_id: record.plugin_id,
                         processing_restored: true,
+                        mode: WorkerRecoveryMode::AutoHeartbeat,
                     });
                     response_result(
                         id,
@@ -452,6 +461,7 @@ async fn mark_auto_recovered_instance(
                 instance_id: record.instance_id,
                 plugin_id: record.plugin_id,
                 processing_restored: false,
+                mode: WorkerRecoveryMode::AutoHeartbeat,
             });
             response_result(
                 id,

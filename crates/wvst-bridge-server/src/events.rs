@@ -101,11 +101,16 @@ pub enum BridgeEventKind {
     WorkerRecovering {
         instance_id: u64,
         plugin_id: String,
+        mode: WorkerRecoveryMode,
+        reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_data: Option<Value>,
     },
     WorkerRecovered {
         instance_id: u64,
         plugin_id: String,
         processing_restored: bool,
+        mode: WorkerRecoveryMode,
     },
     WorkerQuarantined {
         plugin_id: String,
@@ -178,6 +183,13 @@ pub enum Vst3MetadataRefreshPolicy {
     RefreshMetadata,
     RebuildAudioGraph,
     ReloadComponent,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkerRecoveryMode {
+    ManualRestart,
+    AutoHeartbeat,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
@@ -279,5 +291,30 @@ mod tests {
         assert_eq!(value["pluginId"], "vst3:test");
         assert_eq!(value["failures"], 3);
         assert_eq!(value["releaseAfterMs"], 1_500);
+    }
+
+    #[test]
+    fn serializes_worker_recovery_diagnostics() {
+        let recovering = json!(BridgeEventKind::WorkerRecovering {
+            instance_id: 7,
+            plugin_id: "vst3:test".to_string(),
+            mode: WorkerRecoveryMode::AutoHeartbeat,
+            reason: "heartbeat-failed".to_string(),
+            error_data: Some(json!({ "kind": "timeout" })),
+        });
+        let recovered = json!(BridgeEventKind::WorkerRecovered {
+            instance_id: 7,
+            plugin_id: "vst3:test".to_string(),
+            processing_restored: true,
+            mode: WorkerRecoveryMode::ManualRestart,
+        });
+
+        assert_eq!(recovering["type"], "worker-recovering");
+        assert_eq!(recovering["mode"], "auto-heartbeat");
+        assert_eq!(recovering["reason"], "heartbeat-failed");
+        assert_eq!(recovering["errorData"]["kind"], "timeout");
+        assert_eq!(recovered["type"], "worker-recovered");
+        assert_eq!(recovered["mode"], "manual-restart");
+        assert_eq!(recovered["processingRestored"], true);
     }
 }

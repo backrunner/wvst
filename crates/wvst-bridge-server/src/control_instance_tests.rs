@@ -627,6 +627,23 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
         .collect::<Vec<_>>();
     assert!(event_types.contains(&"worker-recovering"));
     assert!(event_types.contains(&"worker-recovered"));
+    let recovering = events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find(|event| event["kind"]["type"] == "worker-recovering")
+        .expect("recovering event");
+    assert_eq!(recovering["kind"]["mode"], "auto-heartbeat");
+    assert_eq!(recovering["kind"]["reason"], "heartbeat-failed");
+    assert!(recovering["kind"]["errorData"].is_object());
+    let recovered = events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find(|event| event["kind"]["type"] == "worker-recovered")
+        .expect("recovered event");
+    assert_eq!(recovered["kind"]["mode"], "auto-heartbeat");
+    assert_eq!(recovered["kind"]["processingRestored"], true);
 
     let _ = request_json(
         &instance_request(5, "instance.destroy", instance_id),
@@ -705,6 +722,26 @@ async fn restarts_failed_instance_with_same_stream() {
         request_json(r#"{"id":4,"method":"bridge.metrics","params":{}}"#, context).await;
     assert_eq!(metrics_value["result"]["workerFailures"], 1);
     assert_eq!(metrics_value["result"]["workerRestarts"], 1);
+
+    let events_value =
+        request_json(r#"{"id":41,"method":"bridge.events","params":{}}"#, context).await;
+    let recovering = events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find(|event| event["kind"]["type"] == "worker-recovering")
+        .expect("recovering event");
+    assert_eq!(recovering["kind"]["mode"], "manual-restart");
+    assert_eq!(recovering["kind"]["reason"], "manual-restart");
+    assert!(recovering["kind"].get("errorData").is_none());
+    let recovered = events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find(|event| event["kind"]["type"] == "worker-recovered")
+        .expect("recovered event");
+    assert_eq!(recovered["kind"]["mode"], "manual-restart");
+    assert_eq!(recovered["kind"]["processingRestored"], false);
 
     let _ = request_json(
         &instance_request(5, "instance.destroy", instance_id),
