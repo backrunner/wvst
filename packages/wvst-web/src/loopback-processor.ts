@@ -17,6 +17,8 @@ interface ConfigureMessage {
   type: "configure";
   frames: number;
   channels: number;
+  inputChannels?: number;
+  outputChannels?: number;
   capacityQuanta: number;
   inputBuffer: SharedArrayBuffer;
   outputBuffer: SharedArrayBuffer;
@@ -33,9 +35,11 @@ const OUTPUT_CONSUMED_SEQUENCE = 7;
 
 class WVSTLoopbackProcessor extends AudioWorkletProcessor {
   private frames = 0;
-  private channels = 0;
+  private inputChannels = 0;
+  private outputChannels = 0;
   private capacityQuanta = 1;
-  private samplesPerQuantum = 0;
+  private inputSamplesPerQuantum = 0;
+  private outputSamplesPerQuantum = 0;
   private inputSamples?: Float32Array;
   private outputSamples?: Float32Array;
   private counters?: Int32Array;
@@ -78,9 +82,9 @@ class WVSTLoopbackProcessor extends AudioWorkletProcessor {
     writeInterleavedInput(
       input,
       inputSamples,
-      slotOffset(nextInputSequence, this.capacityQuanta, this.samplesPerQuantum),
+      slotOffset(nextInputSequence, this.capacityQuanta, this.inputSamplesPerQuantum),
       this.frames,
-      this.channels,
+      this.inputChannels,
     );
     Atomics.add(counters, INPUT_FRAMES, this.frames);
     Atomics.store(counters, INPUT_SEQUENCE, nextInputSequence);
@@ -97,9 +101,9 @@ class WVSTLoopbackProcessor extends AudioWorkletProcessor {
     readInterleavedOutput(
       output,
       outputSamples,
-      slotOffset(readSequence, this.capacityQuanta, this.samplesPerQuantum),
+      slotOffset(readSequence, this.capacityQuanta, this.outputSamplesPerQuantum),
       this.frames,
-      this.channels,
+      this.outputChannels,
     );
     Atomics.store(counters, OUTPUT_CONSUMED_SEQUENCE, readSequence);
     return true;
@@ -107,9 +111,11 @@ class WVSTLoopbackProcessor extends AudioWorkletProcessor {
 
   private configure(message: ConfigureMessage): void {
     this.frames = message.frames;
-    this.channels = message.channels;
+    this.inputChannels = message.inputChannels ?? message.channels;
+    this.outputChannels = message.outputChannels ?? message.channels;
     this.capacityQuanta = message.capacityQuanta;
-    this.samplesPerQuantum = message.frames * message.channels;
+    this.inputSamplesPerQuantum = message.frames * this.inputChannels;
+    this.outputSamplesPerQuantum = message.frames * this.outputChannels;
     this.inputSamples = new Float32Array(message.inputBuffer);
     this.outputSamples = new Float32Array(message.outputBuffer);
     this.counters = new Int32Array(message.countersBuffer);

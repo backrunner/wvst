@@ -85,3 +85,8 @@ export {
   type AudioFrameHeader,
   type DecodedAudioFrame,
 } from "./protocol.js";
+export {
+  createWVSTAudioDeviceSession,
+  type WVSTAudioDeviceSession,
+  type WVSTAudioDeviceSessionOptions,
+} from "./session.js";

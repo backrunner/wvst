@@ -30,6 +30,7 @@
 - Web `bridge-worker` 已具备从 SAB input ring 读取 quantum、编码 WVST binary audio frame、发送 Bridge 并写回 output ring 的基础 audio pump；AudioWorklet processor 已支持通过 SAB ring 和计数器交换音频块。
 - Web SDK 已提供 `WVSTBridgeWorkerClient`，封装 bridge worker 的 connect/request/sendBinary/startAudioStream/stopAudioStream 命令，避免应用侧手写 worker message protocol。
 - Web SDK 已提供音频设备选择 helper：可枚举 `audioinput`/`audiooutput`，按 `deviceId` 请求输入 `MediaStream`，创建 `MediaStreamAudioSourceNode`，并通过 `AudioContext.setSinkId()` 或 `MediaStreamAudioDestinationNode + HTMLMediaElement.setSinkId()` 指定输出设备。
+- Web SDK 已提供 `createWVSTAudioDeviceSession()` 高层 session graph helper，可按 Web 指定的输入/输出设备把 `MediaStreamAudioSourceNode`、WVST AudioWorklet/SAB、Bridge worker audio pump 和 media-element output route 串起来，并支持 0-input 音源 VST 的 Web 数据面启动。
 - `wvst-vst3-host` 已增加 VST3 FUID 规范化、`IPluginFactory::createInstance` ABI skeleton 和 macOS `create_vst3_component_probe()` safe facade；`wvst-host-worker component-probe <plugin.vst3> <class-id>` 可在隔离 worker 内验证 component 创建并释放。
 - VST3 ABI 边界已补入 `IPluginBase`、`IComponent`、`IAudioProcessor`、`ProcessSetup`、`AudioBusBuffers` 和 `ProcessData` 的 Rust repr(C) skeleton，后续真实 process path 可以继续在 `wvst-vst3-host` 内收敛 unsafe。
 - `create_vst3_component_probe()` 现在会通过 `queryInterface` 验证 component 是否暴露 `IAudioProcessor`；`wvst-host-worker component-probe` 可继续作为隔离探测命令使用。
@@ -81,7 +82,7 @@
 
 - stream open/close 已有首版控制 API；仍缺少 end-of-stream 帧语义、close 后 drain 策略和 WebAudio 端自动重开策略。
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
-- Web 设备选择已有底层 helper；仍缺少把输入设备、WVST worklet、Bridge worker pump、输出设备 route 串起来的高层 session graph helper。
+- Web 设备选择已有底层 helper 和高层 session graph helper；仍缺少浏览器输出能力探测 API、设备变更监听、sample-rate change 处理和 WebAudio 端自动 stream restart 策略。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，仍缺少共享内存/预分配 buffer 和背压语义。
 - worker 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；runtime backend 已接入真实 VST `process()`，但当前仍经 worker instance mutex 串行处理，并保留 interleaved/planar scratch copy。
 - late/drop/underflow/overflow 策略和 p50/p95/p99 指标；当前只有 route/fallback/failure 计数，还没有时延分位数。
@@ -92,7 +93,7 @@
 
 - MIDI/note event schema。
 - sample offset 保留。
-- instrument 无输入生成音频路径。
+- 音源 VST 的 zero-input audio buffer/session plumbing 已有首版；仍缺少 MIDI/note event 与 transport timing，无法完整驱动第三方音源插件发声。
 - Web MIDI adapter 和虚拟键盘示例。
 
 ### 6. 嵌入式 runtime 与打包

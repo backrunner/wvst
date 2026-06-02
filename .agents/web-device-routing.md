@@ -41,8 +41,34 @@ SDK 暴露：
 - `setWVSTAudioContextOutputDevice(audioContext, { deviceId })`
 - `setWVSTMediaElementOutputDevice(audioElement, { deviceId })`
 - `createWVSTMediaElementOutputRoute(audioContext, { outputDeviceId })`
+- `createWVSTAudioDeviceSession(options)`
 
 如果输出选择 API 不可用，SDK 返回 `false` 或抛出明确错误，应用不应静默假装设备已切换。
+
+## 高层 session graph
+
+Web SDK 的 `createWVSTAudioDeviceSession()` 将以下组件串起来：
+
+```text
+input device -> MediaStreamAudioSourceNode -> WVST AudioWorklet/SAB
+WVST AudioWorklet/SAB -> Bridge worker audio pump -> host worker/VST
+WVST AudioWorklet/SAB -> MediaStreamAudioDestinationNode -> selected output device
+```
+
+它负责：
+
+- 按 instance 的 `inputChannels` / `outputChannels` 创建 SAB buffers。
+- 创建并配置 `wvst-loopback` AudioWorkletNode。
+- 当 instance `inputChannels > 0` 时按 `inputDeviceId` 打开输入设备；0-input 音源 VST 不打开麦克风。
+- 按 `outputDeviceId` 创建 media-element 输出 route。
+- 启动 `WVSTBridgeWorkerClient.startAudioStream()`。
+- 失败或停止时释放 media tracks、断开 graph、停止 bridge audio pump。
+
+它不负责：
+
+- 创建 VST instance。
+- 调用 `instance.start` / `instance.stop`。
+- 参数自动化、MIDI、stream restart。
 
 ## 与 VST 输入输出的关系
 
@@ -57,6 +83,5 @@ Web 指定的是物理音频设备；VST instance create 指定的是插件处�
 
 ## 后续缺口
 
-- Web SDK 还需要更高层的 graph helper，把 input source、WVST worklet、bridge worker pump 和 output route 串成一个可管理的 session。
 - 输出设备选择在不同浏览器中能力不一致，需要 capability API 和示例说明。
 - 真实端到端设备切换需要测量 device change、sample rate change、stream restart 和 underflow/overflow 行为。
