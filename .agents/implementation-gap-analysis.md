@@ -34,6 +34,7 @@
 - Bridge metrics 已区分二进制帧总量、成功路由音频帧、fallback echo 和音频路由失败，便于后续接入 drop/late/underflow/overflow 统计。
 - Bridge metrics 已加入二进制音频路由耗时直方图和 `audioRouteLatency` p50/p95/p99 微秒级快照，Web SDK metrics 类型已同步。
 - Bridge 已加入按 stream 的音频序号诊断 tracker，能统计 sequence gap 事件/缺失帧估算、重复帧、乱序帧、late flag 和 interarrival jitter 分位数；stream close/open/destroy 会重置 tracker，避免 Web 端重开流后的误报。
+- Bridge 音频路由已加入每 stream in-flight limiter：同一 stream 的上一块音频仍在 worker 处理时，新 block 会被判定为 backpressure drop，并返回带 `silence` / `late` flag 的诊断静音帧；Bridge/Web metrics 已暴露 `audioBackpressureDrops`。
 - Bridge/Web SDK 已提供 `stream.open` / `stream.close` 控制 API，实例记录包含 `streamState`，Bridge 只将 open stream 的音频帧路由到 worker。
 - 对于已知 stream 的关闭或处理失败场景，Bridge 会返回带 `silence` / `end-of-stream` / `process-error` flag 的诊断静音音频帧，避免把异常伪装成正常 echo。
 - Web `bridge-worker` 已具备从 SAB input ring 读取 quantum、编码 WVST binary audio frame、发送 Bridge 并写回 output ring 的基础 audio pump；AudioWorklet processor 已支持通过 SAB ring 和计数器交换音频块。
@@ -73,6 +74,7 @@
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
 - VST3 runtime process path 已将插件写回的 output note on/off、poly pressure 和 output parameter changes 规范化为 WVST 协议事件，并由 worker audio IPC 在响应 frame 中编码为 audio + MIDI event section + parameter automation section；未知或越界 VST3 output event 会被过滤，避免污染 Web 数据面。
 - Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址、主动 shutdown、runtime event subscription、最近事件快照、外部 worker executable 注入和 worker timeout 配置。
+- Workspace 已新增 `wvst-process-supervision` crate，将 worker 进程树终止的 Unix process group 与 Windows Job Object 平台 FFI 收敛到独立安全 API；`wvst-bridge-server` 继续保持 `unsafe_code = deny`，并已通过 macOS host、Linux GNU 和 Windows MSVC 编译检查。
 
 ## 距离完整能力的主要差距
 
@@ -90,7 +92,7 @@
 
 仍缺少：
 
-- 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略、worker kill/wait 审计指标、Unix/macOS 进程树级 kill/wait 和 framed control IPC 首版；仍缺少 Windows/Linux 专用 supervisor backend、资源限制集成和更多失败分类。
+- 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略、worker kill/wait 审计指标、Unix/macOS 进程组终止、Windows Job Object 终止和 framed control IPC 首版；仍缺少 Windows 真实运行验证、Linux cgroup/rlimit 资源限制集成和更多失败分类。
 - framed control IPC 已替换生产路径 JSON-line 控制面，并已有首版 schema version 校验、header-level error classification、sequence/status 校验和 body size cap；仍缺少 framed control IPC 的批处理/多路复用和更细粒度 capability negotiation。
 - 超时后的全链路 kill/wait 审计已有首版 counters，且 Unix/macOS 已覆盖进程树维度；仍缺少细粒度 restart 诊断和 crash quarantine 策略调优。
 - worker hello 已有基础 capability negotiation 和 framed control IPC schema version 校验，实例级 `runtimeCapabilities` 已能按数据面、MIDI、参数自动化和诊断能力暴露首版，且包含 schema version 与 passthrough fallback 原因；worker rejection 已能透传 VST3 runtime init 和 `process()` 阶段化失败 data，framed IPC 已能在 header 层标记 worker rejection；仍缺少 framed IPC 下更完整的 capability negotiation 和更完整的非 VST3 runtime/process 失败分类。
@@ -114,16 +116,16 @@
 - stream open/close 已有首版控制 API；仍缺少 end-of-stream 帧语义、close 后 drain 策略和 WebAudio 端自动重开策略。
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
 - Web 设备选择已有底层 helper、高层 session graph helper、capability API、device watcher、sample-rate guard、手动 stream restart 和基础 loopback metrics；仍缺少 sample-rate change 后的自动重建策略和真实端到端设备切换测量。
-- Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，仍缺少共享内存/预分配 buffer 和背压语义。
+- Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，每 stream backpressure drop 会返回 `silence` / `late` 诊断帧并计数；仍缺少共享内存/预分配 buffer、Web worker 侧主动 drop 策略和端到端背压协调。
 - worker 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；runtime backend 已接入真实 VST `process()`，且 VST3 host 已捕获插件写回的 output events/parameter changes 并编码回 Web 响应帧；当前仍经 worker instance mutex 串行处理、保留 interleaved/planar scratch copy，且未知 VST3 output event type 仍只做过滤不做 Web 侧扩展表达。
-- late/drop/jitter 首版 Bridge 诊断指标已完成；仍缺少 WebAudio 端 underflow/overflow 与 Bridge 序号指标的统一策略、端到端 WebAudio 往返延迟测量和共享内存/背压语义。
+- late/drop/jitter/backpressure 首版 Bridge 诊断指标已完成；仍缺少 WebAudio 端 underflow/overflow 与 Bridge 序号指标的统一策略、端到端 WebAudio 往返延迟测量和共享内存数据面。
 
 ### 5. MIDI 与音源 VST
 
 仍缺少：
 
 - MIDI/note event schema、Web/Bridge/worker 数据面传输、VST3 `IEventList` note/poly pressure 转换，以及 CC、pitch bend、channel aftertouch 经 `IMidiMapping` 到 VST3 parameter-change path 的映射已有首版。
-- 更完整的按 block sequence + sample offset 事件排序、背压和 late-event 策略。
+- 更完整的按 block sequence + sample offset 事件排序、Web worker 侧背压和 late-event 策略。
 - 音源 VST 的 zero-input audio buffer/session/passthrough worker plumbing 已有首版；note on/off 已能随 block 进入真实 VST3 `process()`，仍缺少真实第三方 instrument 兼容测试和 timing 诊断。
 - Web MIDI adapter 和虚拟键盘示例。
 
@@ -133,7 +135,7 @@
 
 - `wvst-embed` 已有 runtime builder、事件订阅、事件快照、外部 worker executable 注入和 timeout 配置；仍缺少应用生命周期集成示例、日志/诊断集成和打包脚本。
 - macOS 安装、启动、授权、日志和诊断命令。
-- Windows/Linux worker supervision backend。
+- Windows 真实运行验证、Linux 资源限制 backend 和发布打包脚本。
 
 ## 建议下一阶段
 

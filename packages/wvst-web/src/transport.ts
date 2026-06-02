@@ -31,6 +31,7 @@ export interface BridgeMetrics {
   audioFramesDuplicate: number;
   audioFramesOutOfOrder: number;
   audioFramesLate: number;
+  audioBackpressureDrops: number;
   audioRouteLatency: BridgeLatencyMetrics;
   audioInterarrivalJitter: BridgeLatencyMetrics;
 }

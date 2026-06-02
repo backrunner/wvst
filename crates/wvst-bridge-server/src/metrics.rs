@@ -30,6 +30,7 @@ pub struct BridgeMetrics {
     audio_frames_duplicate: AtomicU64,
     audio_frames_out_of_order: AtomicU64,
     audio_frames_late: AtomicU64,
+    audio_backpressure_drops: AtomicU64,
     audio_route_latency: LatencyHistogram,
     audio_interarrival_jitter: LatencyHistogram,
 }
@@ -75,6 +76,7 @@ impl BridgeMetrics {
             audio_frames_duplicate: AtomicU64::new(0),
             audio_frames_out_of_order: AtomicU64::new(0),
             audio_frames_late: AtomicU64::new(0),
+            audio_backpressure_drops: AtomicU64::new(0),
             audio_route_latency: LatencyHistogram::new(),
             audio_interarrival_jitter: LatencyHistogram::new(),
         }
@@ -146,6 +148,11 @@ impl BridgeMetrics {
         self.audio_route_latency.record(value);
     }
 
+    pub fn increment_audio_backpressure_drops(&self) {
+        self.audio_backpressure_drops
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn record_audio_stream_observation(&self, observation: AudioStreamObservation) {
         if observation.sequence_gap > 0 {
             self.audio_sequence_gap_events
@@ -192,6 +199,7 @@ impl BridgeMetrics {
             audio_frames_duplicate: self.audio_frames_duplicate.load(Ordering::Relaxed),
             audio_frames_out_of_order: self.audio_frames_out_of_order.load(Ordering::Relaxed),
             audio_frames_late: self.audio_frames_late.load(Ordering::Relaxed),
+            audio_backpressure_drops: self.audio_backpressure_drops.load(Ordering::Relaxed),
             audio_route_latency: self.audio_route_latency.snapshot(),
             audio_interarrival_jitter: self.audio_interarrival_jitter.snapshot(),
         }
@@ -238,6 +246,7 @@ pub struct BridgeMetricsSnapshot {
     pub audio_frames_duplicate: u64,
     pub audio_frames_out_of_order: u64,
     pub audio_frames_late: u64,
+    pub audio_backpressure_drops: u64,
     pub audio_route_latency: LatencySnapshot,
     pub audio_interarrival_jitter: LatencySnapshot,
 }
@@ -366,6 +375,9 @@ mod tests {
         assert_eq!(snapshot.audio_frames_late, 1);
         assert_eq!(snapshot.audio_interarrival_jitter.count, 1);
         assert_eq!(snapshot.audio_interarrival_jitter.p50_us, Some(2_000));
+
+        metrics.increment_audio_backpressure_drops();
+        assert_eq!(metrics.snapshot().audio_backpressure_drops, 1);
     }
 
     #[test]

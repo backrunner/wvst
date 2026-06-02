@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -35,6 +36,7 @@ struct BridgeState {
     metrics: Arc<BridgeMetrics>,
     plugins: Arc<PluginRegistry>,
     stream_tracker: Arc<AudioStreamTracker>,
+    audio_in_flight: Arc<AudioInFlightLimiter>,
     workers: Arc<WorkerSupervisor>,
 }
 
@@ -85,6 +87,7 @@ impl BridgeServer {
                 metrics,
                 plugins: Arc::new(PluginRegistry::new()),
                 stream_tracker: Arc::new(AudioStreamTracker::new()),
+                audio_in_flight: Arc::new(AudioInFlightLimiter::new()),
                 workers: Arc::new(workers),
             },
         })
@@ -320,6 +323,14 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteRes
     state
         .metrics
         .record_audio_stream_observation(state.stream_tracker.observe(header));
+    let Some(_in_flight) = state.audio_in_flight.try_acquire(header.stream_id.get()) else {
+        state.metrics.increment_audio_backpressure_drops();
+        return diagnostic_silence_frame(
+            header,
+            &instance,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::LATE,
+        );
+    };
 
     let processed = match state
         .workers
@@ -405,6 +416,45 @@ fn encode_silence_frame(
         .map_err(|error| error.to_string())?;
 
     Ok(frame)
+}
+
+#[derive(Debug, Default)]
+struct AudioInFlightLimiter {
+    streams: Mutex<BTreeSet<u64>>,
+}
+
+impl AudioInFlightLimiter {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn try_acquire(&self, stream_id: u64) -> Option<AudioInFlightGuard<'_>> {
+        let mut streams = self.streams.lock().ok()?;
+        if !streams.insert(stream_id) {
+            return None;
+        }
+        Some(AudioInFlightGuard {
+            limiter: self,
+            stream_id,
+        })
+    }
+
+    fn release(&self, stream_id: u64) {
+        if let Ok(mut streams) = self.streams.lock() {
+            streams.remove(&stream_id);
+        }
+    }
+}
+
+struct AudioInFlightGuard<'a> {
+    limiter: &'a AudioInFlightLimiter,
+    stream_id: u64,
+}
+
+impl Drop for AudioInFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.limiter.release(self.stream_id);
+    }
 }
 
 enum AudioRouteResult {

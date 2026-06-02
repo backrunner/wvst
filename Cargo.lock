@@ -738,6 +738,7 @@ dependencies = [
  "tokio-tungstenite",
  "url",
  "wvst-core",
+ "wvst-process-supervision",
  "wvst-protocol",
  "wvst-scanner",
 ]
@@ -765,6 +766,15 @@ dependencies = [
  "wvst-protocol",
  "wvst-scanner",
  "wvst-vst3-host",
+]
+
+[[package]]
+name = "wvst-process-supervision"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "tokio",
+ "windows-sys",
 ]
 
 [[package]]

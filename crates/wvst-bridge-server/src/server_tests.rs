@@ -179,6 +179,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
         metrics: Arc::new(BridgeMetrics::new()),
         plugins: Arc::new(plugins),
         stream_tracker: Arc::new(AudioStreamTracker::new()),
+        audio_in_flight: Arc::new(AudioInFlightLimiter::new()),
         workers: Arc::new(WorkerSupervisor::new_for_test_with_audio(
             worker_path.clone(),
             Duration::from_secs(5),
@@ -282,6 +283,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
     assert_eq!(metrics.audio_sequence_gap_frames, 1);
     assert_eq!(metrics.audio_frames_duplicate, 1);
     assert_eq!(metrics.audio_frames_late, 1);
+    assert_eq!(metrics.audio_backpressure_drops, 0);
     assert_eq!(metrics.audio_interarrival_jitter.count, 2);
 
     state
@@ -315,6 +317,139 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
 
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn drops_overlapping_audio_frame_for_same_stream() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let worker_path = passthrough_worker_script();
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let state = BridgeState {
+        config: Arc::new(config),
+        host_worker: Arc::new(HostWorkerClient::new_for_test(
+            PathBuf::from("missing-wvst-host-worker"),
+            Duration::from_secs(5),
+        )),
+        instances: Arc::new(InstanceRegistry::new()),
+        component_handler_events: Arc::new(
+            crate::component_handler_events::ComponentHandlerEventPublisher::new(),
+        ),
+        events: BridgeEventBus::new(),
+        metrics: Arc::new(BridgeMetrics::new()),
+        plugins: Arc::new(plugins),
+        stream_tracker: Arc::new(AudioStreamTracker::new()),
+        audio_in_flight: Arc::new(AudioInFlightLimiter::new()),
+        workers: Arc::new(WorkerSupervisor::new_for_test_with_audio(
+            worker_path.clone(),
+            Duration::from_secs(5),
+        )),
+    };
+    let (instance_id, stream_id) = create_started_instance(&state, &plugin_id).await;
+    let guard = state
+        .audio_in_flight
+        .try_acquire(stream_id)
+        .expect("manual in-flight guard");
+
+    let response = process_binary_payload(audio_frame(stream_id), &state).await;
+    let header = AudioFrameHeader::decode(&response).expect("backpressure header");
+
+    assert!(
+        header
+            .flags
+            .contains(wvst_protocol::AudioFrameFlags::SILENCE)
+    );
+    assert!(header.flags.contains(wvst_protocol::AudioFrameFlags::LATE));
+    assert_eq!(
+        read_f32_payload(&response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
+        vec![0.0, 0.0, 0.0, 0.0]
+    );
+    let metrics = state.metrics.snapshot();
+    assert_eq!(metrics.audio_backpressure_drops, 1);
+    assert_eq!(metrics.audio_frame_route_failures, 1);
+    drop(guard);
+
+    let processed = process_binary_payload(audio_frame_with_sequence(stream_id, 11), &state).await;
+    assert_eq!(
+        read_f32_payload(&processed[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
+        vec![0.25, 0.5, -0.25, -0.5]
+    );
+
+    let _ = state
+        .instances
+        .close_stream(StreamLifecycleParams { instance_id });
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
+async fn create_started_instance(state: &BridgeState, plugin_id: &str) -> (u64, u64) {
+    let create_request = serde_json::json!({
+        "id": 1,
+        "method": "instance.create",
+        "params": {
+            "pluginId": plugin_id,
+            "classId": "class-a",
+            "sampleRate": 48000,
+            "maxBlockFrames": 128,
+            "inputChannels": 2,
+            "outputChannels": 2
+        }
+    })
+    .to_string();
+    let create = handle_control_text(
+        &create_request,
+        ControlContext {
+            config: &state.config,
+            host_worker: &state.host_worker,
+            instances: &state.instances,
+            component_handler_events: &state.component_handler_events,
+            events: &state.events,
+            metrics: &state.metrics,
+            plugins: &state.plugins,
+            stream_tracker: &state.stream_tracker,
+            origin: None,
+            session_authorized: true,
+            workers: &state.workers,
+        },
+    )
+    .await;
+    let create_value: serde_json::Value =
+        serde_json::from_str(&create.text).expect("valid create json");
+    let stream_id = create_value["result"]["streamId"]
+        .as_u64()
+        .expect("stream id");
+    let instance_id = create_value["result"]["instanceId"]
+        .as_u64()
+        .expect("instance id");
+
+    let start_request = serde_json::json!({
+        "id": 2,
+        "method": "instance.start",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let start = handle_control_text(
+        &start_request,
+        ControlContext {
+            config: &state.config,
+            host_worker: &state.host_worker,
+            instances: &state.instances,
+            component_handler_events: &state.component_handler_events,
+            events: &state.events,
+            metrics: &state.metrics,
+            plugins: &state.plugins,
+            stream_tracker: &state.stream_tracker,
+            origin: None,
+            session_authorized: true,
+            workers: &state.workers,
+        },
+    )
+    .await;
+    let start_value: serde_json::Value =
+        serde_json::from_str(&start.text).expect("valid start json");
+    assert_eq!(start_value["result"]["instance"]["state"], "processing");
+
+    (instance_id, stream_id)
 }
 
 fn read_f32_payload(payload: &[u8]) -> Option<Vec<f32>> {

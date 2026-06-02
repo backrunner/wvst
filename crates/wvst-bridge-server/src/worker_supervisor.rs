@@ -10,10 +10,10 @@ use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
+use wvst_process_supervision::WorkerTerminationTarget;
 
 use crate::instance_registry::InstanceRecord;
 use crate::metrics::{BridgeMetrics, WorkerShutdownAudit};
-use crate::worker_process_tree::WorkerTerminationTarget;
 use wvst_protocol::{
     WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAX_BODY_LEN, WorkerControlIpcHeader,
     WorkerControlIpcMessage, WorkerControlMessageKind,

@@ -4,6 +4,7 @@ members = [
     "crates/wvst-core",
     "crates/wvst-embed",
     "crates/wvst-host-worker",
+    "crates/wvst-process-supervision",
     "crates/wvst-protocol",
     "crates/wvst-ringbuf",
     "crates/wvst-scanner",

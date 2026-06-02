@@ -16,6 +16,7 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-
 tokio-tungstenite = "0.28"
 url = "2"
 wvst-core = { path = "../wvst-core" }
+wvst-process-supervision = { path = "../wvst-process-supervision" }
 wvst-protocol = { path = "../wvst-protocol" }
 wvst-scanner = { path = "../wvst-scanner" }
 
