@@ -151,6 +151,25 @@ async fn rejects_incompatible_worker_ipc_version() {
     let _ = std::fs::remove_dir_all(worker.parent().expect("worker parent"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn preserves_worker_rejection_data() {
+    let worker = reject_create_worker_script();
+    let supervisor = WorkerSupervisor::new_for_test(worker.clone(), Duration::from_secs(5));
+
+    let error = supervisor
+        .start_instance(&record())
+        .await
+        .expect_err("worker rejected create");
+    let data = error.rpc_data();
+
+    assert_eq!(data["kind"], "worker-rejected");
+    assert_eq!(data["workerData"]["kind"], "vst3-runtime-init");
+    assert_eq!(data["workerData"]["stage"], "controller.initialize");
+
+    let _ = std::fs::remove_dir_all(worker.parent().expect("worker parent"));
+}
+
 fn record() -> InstanceRecord {
     InstanceRecord {
         instance_id: 1,
@@ -172,6 +191,33 @@ fn record() -> InstanceRecord {
         latency_samples: 0,
         tail_samples: 0,
     }
+}
+
+#[cfg(unix)]
+fn reject_create_worker_script() -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = unique_temp_dir();
+    std::fs::create_dir_all(&directory).expect("temp dir");
+    let worker = directory.join("reject-create-worker.sh");
+    std::fs::write(
+        &worker,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"reject-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
+    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":4220,"message":"controller init failed","data":{"kind":"vst3-runtime-init","stage":"controller.initialize","hostError":"edit-controller-call-failed","message":"controller init failed"}}}\n' "$id" ;;
+    *) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    )
+    .expect("script");
+    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&worker, permissions).expect("permissions");
+    worker
 }
 
 #[cfg(unix)]

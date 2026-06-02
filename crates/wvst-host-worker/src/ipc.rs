@@ -271,7 +271,12 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
     let descriptor = descriptor_from_params(&params);
     let backend = match WorkerBackend::from_create_params(&params, &descriptor) {
         Ok(backend) => backend,
-        Err(error) => return response_error(id, 4220, error),
+        Err(error) => {
+            return match error.data() {
+                Some(data) => response_error_data(id, 4220, error.message(), data.clone()),
+                None => response_error(id, 4220, error.message()),
+            };
+        }
     };
     let buffers = match AudioScratchBuffers::new(
         params.max_block_frames,
@@ -505,6 +510,18 @@ fn response_error(id: Value, code: i64, message: impl Into<String>) -> String {
     }))
 }
 
+fn response_error_data(id: Value, code: i64, message: impl Into<String>, data: Value) -> String {
+    serialize_json(json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": code,
+            "message": message.into(),
+            "data": data
+        }
+    }))
+}
+
 fn serialize_json(value: Value) -> String {
     serde_json::to_string(&value).unwrap_or_else(|_| {
         "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"internal error\"}}"
@@ -710,6 +727,58 @@ mod tests {
     }
 
     #[test]
+    fn serializes_structured_error_data() {
+        let response = response_error_data(
+            json!(1),
+            4220,
+            "controller init failed",
+            json!({
+                "kind": "vst3-runtime-init",
+                "stage": "controller.initialize",
+            }),
+        );
+        let value: Value = serde_json::from_str(&response).expect("error json");
+
+        assert_eq!(value["error"]["code"], 4220);
+        assert_eq!(value["error"]["data"]["kind"], "vst3-runtime-init");
+        assert_eq!(value["error"]["data"]["stage"], "controller.initialize");
+    }
+
+    #[test]
+    fn classifies_runtime_component_create_failure() {
+        let bundle_path = unique_temp_dir();
+        std::fs::create_dir_all(&bundle_path).expect("bundle dir");
+
+        let request = json!({
+            "id": 19,
+            "method": "instance.create",
+            "params": {
+                "instanceId": 19,
+                "streamId": 20,
+                "pluginId": "vst3:broken",
+                "pluginPath": bundle_path,
+                "classId": "{e831ff31-f2d5-4301-928e-bbee25697802}",
+                "className": "Broken",
+                "sampleRate": 48_000,
+                "maxBlockFrames": 128,
+                "inputChannels": 2,
+                "outputChannels": 2
+            }
+        });
+        let mut state = WorkerIpcState::default();
+        let response = handle_ipc_line(&request.to_string(), &mut state);
+        let value: Value = serde_json::from_str(&response).expect("create error json");
+
+        assert_eq!(value["error"]["code"], 4220);
+        assert_eq!(value["error"]["data"]["kind"], "vst3-runtime-init");
+        assert_eq!(value["error"]["data"]["stage"], "component.create");
+        assert!(value["error"]["data"]["hostError"].is_string());
+        assert_eq!(state.instances.len(), 0);
+
+        let _ = std::fs::remove_dir_all(bundle_path);
+    }
+
+    #[test]
     fn serve_writes_one_response_per_line() {
         let input = br#"{"id":1,"method":"worker.hello"}
 {"id":2,"method":"worker.metrics"}
@@ -720,5 +789,13 @@ mod tests {
 
         let text = String::from_utf8(output).expect("utf8");
         assert_eq!(text.lines().count(), 2);
+    }
+
+    fn unique_temp_dir() -> std::path::PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("wvst-host-worker-ipc-test-{suffix}"))
     }
 }

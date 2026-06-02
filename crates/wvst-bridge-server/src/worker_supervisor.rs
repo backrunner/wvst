@@ -89,6 +89,8 @@ struct WorkerResponse {
 struct WorkerResponseError {
     code: i64,
     message: String,
+    #[serde(default)]
+    data: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -129,6 +131,7 @@ pub enum WorkerSupervisorError {
     WorkerRejected {
         code: i64,
         message: String,
+        data: Option<Value>,
         stderr: String,
     },
     ResourceLimitExceeded {
@@ -428,6 +431,7 @@ impl WorkerProcess {
             return Err(WorkerSupervisorError::WorkerRejected {
                 code: error.code,
                 message: error.message,
+                data: error.data,
                 stderr: self.stderr.snapshot().await,
             });
         }

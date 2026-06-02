@@ -110,6 +110,7 @@ impl WorkerAudioConnection {
             WorkerAudioMessageKind::ProcessError => Err(WorkerSupervisorError::WorkerRejected {
                 code: i64::from(response.header.status_code),
                 message: String::from_utf8_lossy(&response.body).into_owned(),
+                data: None,
                 stderr: String::new(),
             }),
             WorkerAudioMessageKind::ProcessRequest => Err(WorkerSupervisorError::Protocol {

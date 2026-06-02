@@ -1,4 +1,5 @@
 use serde::Serialize;
+use serde_json::{Value, json};
 use wvst_scanner::PluginDescriptor;
 use wvst_vst3_host::{
     HeadlessPluginInstance, HostError, VST3_MIDI_CONTROLLER_AFTERTOUCH,
@@ -72,7 +73,7 @@ impl WorkerBackend {
     pub(super) fn from_create_params(
         params: &InstanceCreateParams,
         descriptor: &PluginDescriptor,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, WorkerBackendError> {
         let Some(class_id) = params.class_id.as_deref() else {
             return Self::passthrough(
                 descriptor,
@@ -89,14 +90,15 @@ impl WorkerBackend {
             );
         }
 
-        let config = processing_config(params)?;
+        let config = processing_config(params).map_err(WorkerBackendError::plain)?;
         match create_vst3_component_instance(&params.plugin_path, class_id, config) {
             Ok(mut component) => {
-                component
-                    .instance_mut()
-                    .initialize()
-                    .map_err(error_message)?;
-                component.initialize_controller().map_err(error_message)?;
+                component.instance_mut().initialize().map_err(|error| {
+                    WorkerBackendError::vst3_init("component.initialize", error)
+                })?;
+                component.initialize_controller().map_err(|error| {
+                    WorkerBackendError::vst3_init("controller.initialize", error)
+                })?;
                 let midi_mapping = Vst3MidiMappingCache::from_component(&component);
                 let capabilities = WorkerRuntimeCapabilities::from_vst3_component(
                     &component,
@@ -105,8 +107,13 @@ impl WorkerBackend {
                 component
                     .instance_mut()
                     .setup_processing()
-                    .map_err(error_message)?;
-                component.instance_mut().activate().map_err(error_message)?;
+                    .map_err(|error| {
+                        WorkerBackendError::vst3_init("component.setup-processing", error)
+                    })?;
+                component
+                    .instance_mut()
+                    .activate()
+                    .map_err(|error| WorkerBackendError::vst3_init("component.activate", error))?;
                 Ok(Self::Vst3Runtime(Box::new(Vst3RuntimeBackend {
                     component,
                     midi_mapping,
@@ -118,7 +125,7 @@ impl WorkerBackend {
                 params,
                 PassthroughFallbackReason::invalid_class_id(class_id),
             ),
-            Err(error) => Err(error.to_string()),
+            Err(error) => Err(WorkerBackendError::vst3_init("component.create", error)),
         }
     }
 
@@ -536,10 +543,10 @@ impl WorkerBackend {
         descriptor: &PluginDescriptor,
         params: &InstanceCreateParams,
         reason: PassthroughFallbackReason,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, WorkerBackendError> {
         HeadlessPluginInstance::new(descriptor, params.input_channels, params.output_channels)
             .map(|plugin| Self::Passthrough(PassthroughBackend { plugin, reason }))
-            .map_err(error_message)
+            .map_err(WorkerBackendError::plain)
     }
 
     fn passthrough_reason(&self) -> Option<PassthroughFallbackReason> {
@@ -547,6 +554,42 @@ impl WorkerBackend {
             Self::Passthrough(passthrough) => Some(passthrough.reason.clone()),
             Self::Vst3Runtime(_) => None,
         }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct WorkerBackendError {
+    message: String,
+    data: Option<Value>,
+}
+
+impl WorkerBackendError {
+    fn plain(error: impl std::fmt::Display) -> Self {
+        Self {
+            message: error.to_string(),
+            data: None,
+        }
+    }
+
+    fn vst3_init(stage: &'static str, error: HostError) -> Self {
+        let message = error.to_string();
+        Self {
+            message: message.clone(),
+            data: Some(json!({
+                "kind": "vst3-runtime-init",
+                "stage": stage,
+                "hostError": host_error_kind(&error),
+                "message": message,
+            })),
+        }
+    }
+
+    pub(super) fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub(super) fn data(&self) -> Option<&Value> {
+        self.data.as_ref()
     }
 }
 
@@ -650,4 +693,44 @@ fn processing_config(params: &InstanceCreateParams) -> Result<Vst3ProcessingConf
 
 fn error_message(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn host_error_kind(error: &HostError) -> &'static str {
+    match error {
+        HostError::AudioProcessorCallFailed { .. } => "audio-processor-call-failed",
+        HostError::AudioProcessorReturnedNull => "audio-processor-returned-null",
+        HostError::AudioProcessorVTableMissing => "audio-processor-vtable-missing",
+        HostError::BundleExecutableNotFound(_) => "bundle-executable-not-found",
+        HostError::ComponentCallFailed { .. } => "component-call-failed",
+        HostError::ComponentReturnedNull => "component-returned-null",
+        HostError::ComponentVTableMissing => "component-vtable-missing",
+        HostError::ConnectionPointCallFailed { .. } => "connection-point-call-failed",
+        HostError::ConnectionPointReturnedNull => "connection-point-returned-null",
+        HostError::ConnectionPointVTableMissing => "connection-point-vtable-missing",
+        HostError::EditControllerCallFailed { .. } => "edit-controller-call-failed",
+        HostError::EditControllerReturnedNull => "edit-controller-returned-null",
+        HostError::EditControllerVTableMissing => "edit-controller-vtable-missing",
+        HostError::FactoryCallFailed { .. } => "factory-call-failed",
+        HostError::FactoryReturnedNull => "factory-returned-null",
+        HostError::InstanceCreationFailed { .. } => "instance-creation-failed",
+        HostError::InstanceReturnedNull { .. } => "instance-returned-null",
+        HostError::InvalidClassId(_) => "invalid-class-id",
+        HostError::InvalidLifecycleTransition { .. } => "invalid-lifecycle-transition",
+        HostError::InterfaceQueryFailed { .. } => "interface-query-failed",
+        HostError::InterfaceReturnedNull { .. } => "interface-returned-null",
+        HostError::InvalidInterfaceId(_) => "invalid-interface-id",
+        HostError::InvalidMaxBlockFrames(_) => "invalid-max-block-frames",
+        HostError::InvalidSampleRate(_) => "invalid-sample-rate",
+        HostError::UnsupportedSpeakerArrangement(_) => "unsupported-speaker-arrangement",
+        HostError::MissingSymbol(_) => "missing-symbol",
+        HostError::ModuleLoadFailed(_) => "module-load-failed",
+        HostError::UnsupportedPlatform(_) => "unsupported-platform",
+        HostError::InvalidChannelCount { .. } => "invalid-channel-count",
+        HostError::InvalidBufferLength { .. } => "invalid-buffer-length",
+        HostError::InvalidStateStreamSeek { .. } => "invalid-state-stream-seek",
+        HostError::InvalidEventCount { .. } => "invalid-event-count",
+        HostError::InvalidEventSampleOffset { .. } => "invalid-event-sample-offset",
+        HostError::InvalidParameterChangeCount { .. } => "invalid-parameter-change-count",
+        HostError::InvalidParameterChangeValue { .. } => "invalid-parameter-change-value",
+    }
 }

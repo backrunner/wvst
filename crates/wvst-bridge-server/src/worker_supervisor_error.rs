@@ -107,9 +107,10 @@ impl WorkerSupervisorError {
             Self::WorkerRejected {
                 code,
                 message,
+                data,
                 stderr,
             } => {
-                json!({ "kind": "worker-rejected", "code": code, "message": message, "stderr": stderr })
+                json!({ "kind": "worker-rejected", "code": code, "message": message, "workerData": data, "stderr": stderr })
             }
             Self::ResourceLimitExceeded { limit, active } => {
                 json!({ "kind": "resource-limit-exceeded", "resource": "worker-instances", "limit": limit, "active": active })
