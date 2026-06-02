@@ -6,16 +6,14 @@ use std::thread;
 use serde_json::{Value, json};
 use wvst_core::ChannelCount;
 use wvst_protocol::{
-    AUDIO_FRAME_HEADER_LEN, AudioFrameHeader, WORKER_AUDIO_IPC_HEADER_LEN, WorkerAudioIpcHeader,
+    AUDIO_FRAME_HEADER_LEN, AudioFrameHeader, WORKER_AUDIO_IPC_HEADER_LEN,
+    WORKER_AUDIO_IPC_MAX_BODY_LEN, WorkerAudioIpcHeader, WorkerAudioIpcMessage,
     WorkerAudioMessageKind,
 };
 
 use super::WorkerIpcState;
 use super::ipc_midi::{decode_midi_events_into, encode_midi_events_into};
 use super::ipc_parameter_events::{decode_parameter_events_into, encode_parameter_events_into};
-
-#[cfg(test)]
-use wvst_protocol::WorkerAudioIpcMessage;
 
 const AUDIO_ERROR_INVALID_REQUEST: u16 = 4220;
 const AUDIO_ERROR_NOT_FOUND: u16 = 4040;
@@ -320,6 +318,12 @@ fn read_message_into(
     }
 
     let header = WorkerAudioIpcHeader::decode(&header_bytes).map_err(|error| error.to_string())?;
+    if header.body_len > WORKER_AUDIO_IPC_MAX_BODY_LEN {
+        return Err(format!(
+            "worker audio body too large: max {}, got {}",
+            WORKER_AUDIO_IPC_MAX_BODY_LEN, header.body_len
+        ));
+    }
     body.resize(header.body_len as usize, 0);
     stream.read_exact(body).map_err(|error| error.to_string())?;
 
@@ -334,7 +338,8 @@ fn write_ipc_message(
     body: &[u8],
 ) -> Result<(), String> {
     let body_len = u32::try_from(body.len()).map_err(|_| "worker audio body too large")?;
-    let header = WorkerAudioIpcHeader::new(kind, status_code, sequence, body_len);
+    let header = WorkerAudioIpcMessage::header(kind, status_code, sequence, body_len)
+        .map_err(|error| error.to_string())?;
     let mut header_bytes = [0; WORKER_AUDIO_IPC_HEADER_LEN];
     header
         .encode(&mut header_bytes)

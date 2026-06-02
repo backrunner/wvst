@@ -4,6 +4,7 @@ pub const WORKER_CONTROL_IPC_MAGIC: u32 = u32::from_le_bytes(*b"WVCI");
 pub const WORKER_CONTROL_IPC_VERSION: u16 = 1;
 pub const WORKER_CONTROL_IPC_HEADER_LEN: usize = 24;
 pub const WORKER_CONTROL_IPC_SCHEMA_VERSION: u16 = 1;
+pub const WORKER_CONTROL_IPC_MAX_BODY_LEN: u32 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u16)]
@@ -138,11 +139,28 @@ impl WorkerControlIpcMessage {
         body: Vec<u8>,
     ) -> Result<Self, ProtocolError> {
         let body_len = u32::try_from(body.len()).map_err(|_| ProtocolError::PayloadTooLarge)?;
+        let header = Self::header(kind, status_code, sequence, body_len)?;
 
-        Ok(Self {
-            header: WorkerControlIpcHeader::new(kind, status_code, sequence, body_len),
-            body,
-        })
+        Ok(Self { header, body })
+    }
+
+    pub fn header(
+        kind: WorkerControlMessageKind,
+        status_code: u16,
+        sequence: u64,
+        body_len: u32,
+    ) -> Result<WorkerControlIpcHeader, ProtocolError> {
+        validate_status_code(kind, status_code)?;
+        if body_len > WORKER_CONTROL_IPC_MAX_BODY_LEN {
+            return Err(ProtocolError::PayloadTooLarge);
+        }
+
+        Ok(WorkerControlIpcHeader::new(
+            kind,
+            status_code,
+            sequence,
+            body_len,
+        ))
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, ProtocolError> {
@@ -151,6 +169,29 @@ impl WorkerControlIpcMessage {
             .encode(&mut frame[..WORKER_CONTROL_IPC_HEADER_LEN])?;
         frame[WORKER_CONTROL_IPC_HEADER_LEN..].copy_from_slice(&self.body);
         Ok(frame)
+    }
+}
+
+fn validate_status_code(
+    kind: WorkerControlMessageKind,
+    status_code: u16,
+) -> Result<(), ProtocolError> {
+    match kind {
+        WorkerControlMessageKind::Request | WorkerControlMessageKind::Response
+            if status_code != 0 =>
+        {
+            Err(ProtocolError::InvalidWorkerControlIpcStatusCode {
+                kind: kind.into(),
+                status_code,
+            })
+        }
+        WorkerControlMessageKind::ErrorResponse if status_code == 0 => {
+            Err(ProtocolError::InvalidWorkerControlIpcStatusCode {
+                kind: kind.into(),
+                status_code,
+            })
+        }
+        _ => Ok(()),
     }
 }
 
@@ -206,6 +247,24 @@ mod tests {
     }
 
     #[test]
+    fn worker_control_ipc_error_message_round_trips() {
+        let message =
+            WorkerControlIpcMessage::error(43, 4220, br#"{"error":{"code":4220}}"#.to_vec())
+                .expect("message");
+        let bytes = message.encode().expect("encoded");
+        let header = WorkerControlIpcHeader::decode(&bytes).expect("header");
+
+        assert_eq!(header.kind, WorkerControlMessageKind::ErrorResponse);
+        assert_eq!(header.status_code, 4220);
+        assert_eq!(header.sequence, 43);
+        assert_eq!(header.body_len, 23);
+        assert_eq!(
+            &bytes[WORKER_CONTROL_IPC_HEADER_LEN..],
+            br#"{"error":{"code":4220}}"#
+        );
+    }
+
+    #[test]
     fn rejects_invalid_control_message_kind() {
         let message = WorkerControlIpcMessage::response(1, Vec::new()).expect("message");
         let mut bytes = message.encode().expect("encoded");
@@ -214,6 +273,42 @@ mod tests {
         assert!(matches!(
             WorkerControlIpcHeader::decode(&bytes),
             Err(ProtocolError::InvalidWorkerControlMessageKind(99))
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_control_status_codes() {
+        assert!(matches!(
+            WorkerControlIpcMessage::new(WorkerControlMessageKind::Request, 1, 1, Vec::new()),
+            Err(ProtocolError::InvalidWorkerControlIpcStatusCode {
+                kind: 1,
+                status_code: 1,
+            })
+        ));
+        assert!(matches!(
+            WorkerControlIpcMessage::new(WorkerControlMessageKind::Response, 1, 1, Vec::new()),
+            Err(ProtocolError::InvalidWorkerControlIpcStatusCode {
+                kind: 2,
+                status_code: 1,
+            })
+        ));
+        assert!(matches!(
+            WorkerControlIpcMessage::error(1, 0, Vec::new()),
+            Err(ProtocolError::InvalidWorkerControlIpcStatusCode {
+                kind: 3,
+                status_code: 0,
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_oversized_control_body() {
+        assert!(matches!(
+            WorkerControlIpcMessage::request(
+                1,
+                vec![0; WORKER_CONTROL_IPC_MAX_BODY_LEN as usize + 1]
+            ),
+            Err(ProtocolError::PayloadTooLarge)
         ));
     }
 }

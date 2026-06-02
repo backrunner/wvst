@@ -88,6 +88,94 @@ async fn starts_real_worker_with_framed_control_ipc() {
     );
 }
 
+#[tokio::test]
+async fn framed_control_ipc_preserves_worker_rejections() {
+    let Some(worker) = option_env!("CARGO_BIN_EXE_wvst-host-worker") else {
+        return;
+    };
+    let supervisor = WorkerSupervisor::with_options(
+        WorkerSupervisorOptions::new(PathBuf::from(worker))
+            .with_timeout(Duration::from_secs(5))
+            .with_audio_ipc(false),
+    );
+    let record = InstanceRecord {
+        sample_rate: 0,
+        ..record()
+    };
+
+    let error = supervisor
+        .start_instance(&record)
+        .await
+        .expect_err("worker rejects invalid sample rate");
+
+    assert!(matches!(
+        error,
+        WorkerSupervisorError::WorkerRejected { code: 4220, .. }
+    ));
+    assert_eq!(error.rpc_data()["kind"], "worker-rejected");
+}
+
+#[test]
+fn validates_framed_control_response_headers() {
+    assert!(
+        validate_framed_response_header(
+            &WorkerControlIpcHeader::new(WorkerControlMessageKind::Response, 0, 7, 0),
+            7,
+            "worker.metrics",
+        )
+        .is_ok()
+    );
+    assert!(
+        validate_framed_response_header(
+            &WorkerControlIpcHeader::new(WorkerControlMessageKind::ErrorResponse, 4220, 7, 0),
+            7,
+            "worker.metrics",
+        )
+        .is_ok()
+    );
+    assert!(
+        validate_framed_response_header(
+            &WorkerControlIpcHeader::new(WorkerControlMessageKind::Response, 4220, 7, 0),
+            7,
+            "worker.metrics",
+        )
+        .expect_err("nonzero response status")
+        .contains("nonzero status")
+    );
+    assert!(
+        validate_framed_response_header(
+            &WorkerControlIpcHeader::new(WorkerControlMessageKind::ErrorResponse, 0, 7, 0),
+            7,
+            "worker.metrics",
+        )
+        .expect_err("zero error status")
+        .contains("zero status")
+    );
+    assert!(
+        validate_framed_response_header(
+            &WorkerControlIpcHeader::new(WorkerControlMessageKind::Request, 0, 7, 0),
+            7,
+            "worker.metrics",
+        )
+        .expect_err("request while responding")
+        .contains("request frame")
+    );
+    assert!(
+        validate_framed_response_header(
+            &WorkerControlIpcHeader::new(WorkerControlMessageKind::Response, 0, 8, 0),
+            7,
+            "worker.metrics",
+        )
+        .expect_err("sequence mismatch")
+        .contains("sequence mismatch")
+    );
+    assert!(
+        validate_framed_response_body_len(WORKER_CONTROL_IPC_MAX_BODY_LEN + 1)
+            .expect_err("oversized body")
+            .contains("body too large")
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn rejects_start_when_instance_limit_is_reached() {

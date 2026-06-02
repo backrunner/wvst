@@ -15,7 +15,8 @@ use crate::instance_registry::InstanceRecord;
 use crate::metrics::{BridgeMetrics, WorkerShutdownAudit};
 use crate::worker_process_tree::WorkerTerminationTarget;
 use wvst_protocol::{
-    WORKER_CONTROL_IPC_HEADER_LEN, WorkerControlIpcHeader, WorkerControlIpcMessage,
+    WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAX_BODY_LEN, WorkerControlIpcHeader,
+    WorkerControlIpcMessage, WorkerControlMessageKind,
 };
 
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
@@ -510,11 +511,10 @@ impl WorkerProcess {
         }
         let header = WorkerControlIpcHeader::decode(&header_bytes)
             .map_err(|error| self.protocol_error(error.to_string()))?;
-        if header.sequence != id {
-            return Err(
-                self.protocol_error(format!("framed response sequence mismatch for {method}"))
-            );
-        }
+        validate_framed_response_header(&header, id, method)
+            .map_err(|message| self.protocol_error(message))?;
+        validate_framed_response_body_len(header.body_len)
+            .map_err(|message| self.protocol_error(message))?;
         let body_len = usize::try_from(header.body_len)
             .map_err(|_| self.protocol_error("framed response body too large".to_string()))?;
         let mut body = vec![0; body_len];
@@ -766,6 +766,52 @@ fn instance_create_params(record: &InstanceRecord) -> Value {
         "inputChannels": record.input_channels,
         "outputChannels": record.output_channels,
     })
+}
+
+fn validate_framed_response_header(
+    header: &WorkerControlIpcHeader,
+    id: u64,
+    method: &'static str,
+) -> Result<(), String> {
+    if header.sequence != id {
+        return Err(format!("framed response sequence mismatch for {method}"));
+    }
+
+    match header.kind {
+        WorkerControlMessageKind::Response => {
+            if header.status_code == 0 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "framed response for {method} used nonzero status {}",
+                    header.status_code
+                ))
+            }
+        }
+        WorkerControlMessageKind::ErrorResponse => {
+            if header.status_code == 0 {
+                Err(format!(
+                    "framed error response for {method} used zero status"
+                ))
+            } else {
+                Ok(())
+            }
+        }
+        WorkerControlMessageKind::Request => Err(format!(
+            "worker sent request frame while responding to {method}"
+        )),
+    }
+}
+
+fn validate_framed_response_body_len(body_len: u32) -> Result<(), String> {
+    if body_len > WORKER_CONTROL_IPC_MAX_BODY_LEN {
+        return Err(format!(
+            "framed response body too large: max {}, got {}",
+            WORKER_CONTROL_IPC_MAX_BODY_LEN, body_len
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

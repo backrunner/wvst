@@ -4,8 +4,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use wvst_protocol::{
-    AudioFrameHeader, WORKER_AUDIO_IPC_HEADER_LEN, WorkerAudioIpcHeader, WorkerAudioIpcMessage,
-    WorkerAudioMessageKind,
+    AudioFrameHeader, WORKER_AUDIO_IPC_HEADER_LEN, WORKER_AUDIO_IPC_MAX_BODY_LEN,
+    WorkerAudioIpcHeader, WorkerAudioIpcMessage, WorkerAudioMessageKind,
 };
 
 use super::{WorkerSupervisor, WorkerSupervisorError};
@@ -145,6 +145,7 @@ impl WorkerAudioConnection {
                 stderr: String::new(),
             }
         })?;
+        validate_audio_response_body_len(header.body_len)?;
         let mut body = vec![0; header.body_len as usize];
         timeout(timeout_duration, self.stream.read_exact(&mut body))
             .await
@@ -157,6 +158,20 @@ impl WorkerAudioConnection {
 
         Ok(WorkerAudioIpcMessage { header, body })
     }
+}
+
+fn validate_audio_response_body_len(body_len: u32) -> Result<(), WorkerSupervisorError> {
+    if body_len > WORKER_AUDIO_IPC_MAX_BODY_LEN {
+        return Err(WorkerSupervisorError::Protocol {
+            message: format!(
+                "audio response body too large: max {}, got {}",
+                WORKER_AUDIO_IPC_MAX_BODY_LEN, body_len
+            ),
+            stderr: String::new(),
+        });
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,5 +232,14 @@ mod tests {
 
         assert_eq!(error.message, "legacy process error");
         assert_eq!(error.data, None);
+    }
+
+    #[test]
+    fn rejects_oversized_audio_response_bodies_before_allocation() {
+        let error = validate_audio_response_body_len(WORKER_AUDIO_IPC_MAX_BODY_LEN + 1)
+            .expect_err("oversized body");
+
+        assert!(matches!(error, WorkerSupervisorError::Protocol { .. }));
+        assert!(error.rpc_message().contains("body too large"));
     }
 }

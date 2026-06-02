@@ -15,11 +15,11 @@ pub use error::ProtocolError;
 pub use midi_event::{MIDI_EVENT_LEN, MidiEvent, MidiEventKind};
 pub use parameter_event::{PARAMETER_AUTOMATION_EVENT_LEN, ParameterAutomationEvent};
 pub use worker_audio_ipc::{
-    WORKER_AUDIO_IPC_HEADER_LEN, WORKER_AUDIO_IPC_MAGIC, WORKER_AUDIO_IPC_VERSION,
-    WorkerAudioIpcHeader, WorkerAudioIpcMessage, WorkerAudioMessageKind,
+    WORKER_AUDIO_IPC_HEADER_LEN, WORKER_AUDIO_IPC_MAGIC, WORKER_AUDIO_IPC_MAX_BODY_LEN,
+    WORKER_AUDIO_IPC_VERSION, WorkerAudioIpcHeader, WorkerAudioIpcMessage, WorkerAudioMessageKind,
 };
 pub use worker_control_ipc::{
-    WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAGIC, WORKER_CONTROL_IPC_SCHEMA_VERSION,
-    WORKER_CONTROL_IPC_VERSION, WorkerControlIpcHeader, WorkerControlIpcMessage,
-    WorkerControlMessageKind,
+    WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAGIC, WORKER_CONTROL_IPC_MAX_BODY_LEN,
+    WORKER_CONTROL_IPC_SCHEMA_VERSION, WORKER_CONTROL_IPC_VERSION, WorkerControlIpcHeader,
+    WorkerControlIpcMessage, WorkerControlMessageKind,
 };

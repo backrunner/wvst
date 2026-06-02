@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_protocol::{
-    WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_SCHEMA_VERSION, WorkerControlIpcHeader,
-    WorkerControlIpcMessage,
+    WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAX_BODY_LEN,
+    WORKER_CONTROL_IPC_SCHEMA_VERSION, WorkerControlIpcHeader, WorkerControlIpcMessage,
+    WorkerControlMessageKind,
 };
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
 use wvst_vst3_host::{
@@ -205,6 +206,24 @@ fn read_control_request(reader: &mut impl Read) -> Result<Option<(u64, String)>,
     }
     let header =
         WorkerControlIpcHeader::decode(&header_bytes).map_err(|error| error.to_string())?;
+    if header.kind != WorkerControlMessageKind::Request {
+        return Err(format!(
+            "invalid control request frame kind: {:?}",
+            header.kind
+        ));
+    }
+    if header.status_code != 0 {
+        return Err(format!(
+            "invalid control request status code: {}",
+            header.status_code
+        ));
+    }
+    if header.body_len > WORKER_CONTROL_IPC_MAX_BODY_LEN {
+        return Err(format!(
+            "control request body too large: max {}, got {}",
+            WORKER_CONTROL_IPC_MAX_BODY_LEN, header.body_len
+        ));
+    }
     let body_len = usize::try_from(header.body_len).map_err(|_| "control body too large")?;
     let mut body = vec![0; body_len];
     reader
@@ -221,13 +240,31 @@ fn write_control_response(
     sequence: u64,
     response: String,
 ) -> Result<(), String> {
-    let message = WorkerControlIpcMessage::response(sequence, response.into_bytes())
-        .map_err(|error| error.to_string())?;
+    let status_code = control_response_status_code(&response);
+    let body = response.into_bytes();
+    let message = match status_code {
+        Some(status_code) => WorkerControlIpcMessage::error(sequence, status_code, body),
+        None => WorkerControlIpcMessage::response(sequence, body),
+    }
+    .map_err(|error| error.to_string())?;
     let frame = message.encode().map_err(|error| error.to_string())?;
     writer
         .write_all(&frame)
         .map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())
+}
+
+fn control_response_status_code(response: &str) -> Option<u16> {
+    let value = serde_json::from_str::<Value>(response).ok()?;
+    let code = value.get("error")?.get("code")?.as_i64()?;
+    Some(json_rpc_code_to_status_code(code))
+}
+
+fn json_rpc_code_to_status_code(code: i64) -> u16 {
+    u16::try_from(code)
+        .ok()
+        .filter(|code| *code != 0)
+        .unwrap_or(1)
 }
 
 pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
@@ -925,6 +962,70 @@ mod tests {
         assert_eq!(
             response["result"]["capabilities"]["framedControlIpcVersion"],
             WORKER_CONTROL_IPC_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn serve_framed_classifies_json_rpc_errors() {
+        let request =
+            WorkerControlIpcMessage::request(43, br#"{"id":2,"method":"missing.method"}"#.to_vec())
+                .expect("request")
+                .encode()
+                .expect("encoded request");
+        let mut output = Vec::new();
+
+        serve_framed(&request[..], &mut output).expect("served");
+
+        let header = WorkerControlIpcHeader::decode(&output).expect("header");
+        assert_eq!(header.kind, WorkerControlMessageKind::ErrorResponse);
+        assert_eq!(header.sequence, 43);
+        assert_eq!(header.status_code, 1);
+        let response: Value = serde_json::from_slice(&output[WORKER_CONTROL_IPC_HEADER_LEN..])
+            .expect("response json");
+        assert_eq!(response["id"], 2);
+        assert_eq!(response["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn serve_framed_rejects_non_request_frames() {
+        let request =
+            WorkerControlIpcMessage::response(44, br#"{"id":3,"method":"worker.hello"}"#.to_vec())
+                .expect("response frame")
+                .encode()
+                .expect("encoded response frame");
+        let mut output = Vec::new();
+
+        let error = serve_framed(&request[..], &mut output).expect_err("invalid request frame");
+
+        assert!(error.contains("invalid control request frame kind"));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn serve_framed_rejects_oversized_request_bodies() {
+        let header = WorkerControlIpcHeader::new(
+            WorkerControlMessageKind::Request,
+            0,
+            45,
+            WORKER_CONTROL_IPC_MAX_BODY_LEN + 1,
+        );
+        let mut request = [0; WORKER_CONTROL_IPC_HEADER_LEN];
+        header.encode(&mut request).expect("header");
+        let mut output = Vec::new();
+
+        let error = serve_framed(&request[..], &mut output).expect_err("oversized request");
+
+        assert!(error.contains("control request body too large"));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn positive_json_rpc_errors_keep_status_code() {
+        assert_eq!(
+            control_response_status_code(
+                r#"{"jsonrpc":"2.0","id":1,"error":{"code":4220,"message":"bad"}}"#
+            ),
+            Some(4220)
         );
     }
 

@@ -1,10 +1,12 @@
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId};
 use wvst_protocol::{
     AUDIO_FRAME_HEADER_LEN, AudioFrameChannelCount, AudioFrameFlags, AudioFrameHeader,
     MIDI_EVENT_LEN, MidiEvent, MidiEventKind, PARAMETER_AUTOMATION_EVENT_LEN,
-    ParameterAutomationEvent, WorkerAudioIpcMessage,
+    ParameterAutomationEvent, WORKER_AUDIO_IPC_HEADER_LEN, WORKER_AUDIO_IPC_MAX_BODY_LEN,
+    WorkerAudioIpcHeader, WorkerAudioIpcMessage, WorkerAudioMessageKind,
 };
 use wvst_vst3_host::{
     VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3InputEvent, Vst3NoteEvent, Vst3OutputEvent,
@@ -82,6 +84,34 @@ fn encodes_structured_process_error_body() {
     assert_eq!(body["message"], "VST3 process failed");
     assert_eq!(body["data"]["kind"], "vst3-runtime-process");
     assert_eq!(body["data"]["stage"], "component.process");
+}
+
+#[test]
+fn rejects_oversized_audio_ipc_request_bodies_before_allocation() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+    let address = listener.local_addr().expect("address");
+    let client = std::thread::spawn(move || {
+        let mut stream = std::net::TcpStream::connect(address).expect("connect");
+        let header = WorkerAudioIpcHeader::new(
+            WorkerAudioMessageKind::ProcessRequest,
+            0,
+            77,
+            WORKER_AUDIO_IPC_MAX_BODY_LEN + 1,
+        );
+        let mut header_bytes = [0; WORKER_AUDIO_IPC_HEADER_LEN];
+        header.encode(&mut header_bytes).expect("encode header");
+        stream
+            .write_all(&header_bytes)
+            .expect("write oversized header");
+    });
+    let (mut stream, _) = listener.accept().expect("accept");
+    let mut body = Vec::new();
+
+    let error = read_message_into(&mut stream, &mut body).expect_err("oversized body");
+
+    client.join().expect("client thread");
+    assert!(error.contains("worker audio body too large"));
+    assert!(body.is_empty());
 }
 
 #[test]

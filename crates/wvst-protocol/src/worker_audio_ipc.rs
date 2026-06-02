@@ -3,6 +3,7 @@ use crate::ProtocolError;
 pub const WORKER_AUDIO_IPC_MAGIC: u32 = u32::from_le_bytes(*b"WVAI");
 pub const WORKER_AUDIO_IPC_VERSION: u16 = 1;
 pub const WORKER_AUDIO_IPC_HEADER_LEN: usize = 24;
+pub const WORKER_AUDIO_IPC_MAX_BODY_LEN: u32 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u16)]
@@ -137,11 +138,28 @@ impl WorkerAudioIpcMessage {
         body: Vec<u8>,
     ) -> Result<Self, ProtocolError> {
         let body_len = u32::try_from(body.len()).map_err(|_| ProtocolError::PayloadTooLarge)?;
+        let header = Self::header(kind, status_code, sequence, body_len)?;
 
-        Ok(Self {
-            header: WorkerAudioIpcHeader::new(kind, status_code, sequence, body_len),
-            body,
-        })
+        Ok(Self { header, body })
+    }
+
+    pub fn header(
+        kind: WorkerAudioMessageKind,
+        status_code: u16,
+        sequence: u64,
+        body_len: u32,
+    ) -> Result<WorkerAudioIpcHeader, ProtocolError> {
+        validate_status_code(kind, status_code)?;
+        if body_len > WORKER_AUDIO_IPC_MAX_BODY_LEN {
+            return Err(ProtocolError::PayloadTooLarge);
+        }
+
+        Ok(WorkerAudioIpcHeader::new(
+            kind,
+            status_code,
+            sequence,
+            body_len,
+        ))
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, ProtocolError> {
@@ -150,6 +168,29 @@ impl WorkerAudioIpcMessage {
             .encode(&mut frame[..WORKER_AUDIO_IPC_HEADER_LEN])?;
         frame[WORKER_AUDIO_IPC_HEADER_LEN..].copy_from_slice(&self.body);
         Ok(frame)
+    }
+}
+
+fn validate_status_code(
+    kind: WorkerAudioMessageKind,
+    status_code: u16,
+) -> Result<(), ProtocolError> {
+    match kind {
+        WorkerAudioMessageKind::ProcessRequest | WorkerAudioMessageKind::ProcessResponse
+            if status_code != 0 =>
+        {
+            Err(ProtocolError::InvalidWorkerAudioIpcStatusCode {
+                kind: kind.into(),
+                status_code,
+            })
+        }
+        WorkerAudioMessageKind::ProcessError if status_code == 0 => {
+            Err(ProtocolError::InvalidWorkerAudioIpcStatusCode {
+                kind: kind.into(),
+                status_code,
+            })
+        }
+        _ => Ok(()),
     }
 }
 
@@ -209,6 +250,42 @@ mod tests {
         assert!(matches!(
             WorkerAudioIpcHeader::decode(&bytes),
             Err(ProtocolError::InvalidWorkerAudioMessageKind(99))
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_audio_status_codes() {
+        assert!(matches!(
+            WorkerAudioIpcMessage::new(WorkerAudioMessageKind::ProcessRequest, 1, 1, Vec::new()),
+            Err(ProtocolError::InvalidWorkerAudioIpcStatusCode {
+                kind: 1,
+                status_code: 1,
+            })
+        ));
+        assert!(matches!(
+            WorkerAudioIpcMessage::new(WorkerAudioMessageKind::ProcessResponse, 1, 1, Vec::new()),
+            Err(ProtocolError::InvalidWorkerAudioIpcStatusCode {
+                kind: 2,
+                status_code: 1,
+            })
+        ));
+        assert!(matches!(
+            WorkerAudioIpcMessage::error(1, 0, "bad".to_string()),
+            Err(ProtocolError::InvalidWorkerAudioIpcStatusCode {
+                kind: 3,
+                status_code: 0,
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_oversized_audio_body() {
+        assert!(matches!(
+            WorkerAudioIpcMessage::process_request(
+                1,
+                vec![0; WORKER_AUDIO_IPC_MAX_BODY_LEN as usize + 1]
+            ),
+            Err(ProtocolError::PayloadTooLarge)
         ));
     }
 }
