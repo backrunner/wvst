@@ -123,6 +123,7 @@ pub enum BridgeEventKind {
         stream_id: u64,
         handler_sequence: u64,
         reasons: Vec<Vst3MetadataInvalidationReason>,
+        refresh_policy: Vst3MetadataRefreshPolicy,
         restart_flags: Vst3RestartFlags,
     },
     Vst3ComponentHandlerEventsLost {
@@ -152,6 +153,14 @@ pub enum Vst3MetadataInvalidationReason {
     RoutingInfo,
     PrefetchableSupport,
     Keyswitches,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Vst3MetadataRefreshPolicy {
+    RefreshMetadata,
+    RebuildAudioGraph,
+    ReloadComponent,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]

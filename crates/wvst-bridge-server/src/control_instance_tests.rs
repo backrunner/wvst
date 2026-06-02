@@ -173,6 +173,10 @@ async fn creates_lists_and_destroys_instance() {
         metadata_events[0]["kind"]["reasons"],
         serde_json::json!(["parameter-info", "latency"])
     );
+    assert_eq!(
+        metadata_events[0]["kind"]["refreshPolicy"],
+        "refresh-metadata"
+    );
 
     let second_status_value = request_json(&status_request, context).await;
     assert_eq!(

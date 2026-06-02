@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::events::{
     BridgeEventBus, BridgeEventKind, Vst3ComponentHandlerEventKind, Vst3MetadataInvalidationReason,
-    Vst3RestartFlags,
+    Vst3MetadataRefreshPolicy, Vst3RestartFlags,
 };
 use crate::instance_registry::InstanceRecord;
 
@@ -97,12 +97,14 @@ impl ComponentHandlerEventPublisher {
             if let Some(restart_flags) = event.restart_flags {
                 let reasons = metadata_invalidation_reasons(restart_flags);
                 if !reasons.is_empty() {
+                    let refresh_policy = metadata_refresh_policy(restart_flags);
                     events.emit(BridgeEventKind::Vst3MetadataInvalidated {
                         instance_id: instance.instance_id,
                         plugin_id: instance.plugin_id.clone(),
                         stream_id: instance.stream_id,
                         handler_sequence: event.sequence,
                         reasons,
+                        refresh_policy,
                         restart_flags,
                     });
                 }
@@ -271,6 +273,21 @@ fn metadata_invalidation_reasons(
     reasons
 }
 
+fn metadata_refresh_policy(restart_flags: Vst3RestartFlags) -> Vst3MetadataRefreshPolicy {
+    if restart_flags.reload_component {
+        return Vst3MetadataRefreshPolicy::ReloadComponent;
+    }
+
+    if restart_flags.io_changed
+        || restart_flags.io_titles_changed
+        || restart_flags.routing_info_changed
+    {
+        return Vst3MetadataRefreshPolicy::RebuildAudioGraph;
+    }
+
+    Vst3MetadataRefreshPolicy::RefreshMetadata
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -388,6 +405,7 @@ mod tests {
         assert_eq!(restart_flags.raw, 24);
         let BridgeEventKind::Vst3MetadataInvalidated {
             reasons,
+            refresh_policy,
             restart_flags,
             handler_sequence,
             ..
@@ -403,7 +421,46 @@ mod tests {
                 Vst3MetadataInvalidationReason::Latency,
             ]
         );
+        assert_eq!(*refresh_policy, Vst3MetadataRefreshPolicy::RefreshMetadata);
         assert_eq!(restart_flags.raw, 24);
+    }
+
+    #[test]
+    fn classifies_metadata_refresh_policy() {
+        let mut flags = Vst3RestartFlags {
+            raw: 0,
+            reload_component: false,
+            io_changed: false,
+            param_values_changed: false,
+            latency_changed: false,
+            param_titles_changed: false,
+            midi_cc_assignment_changed: false,
+            note_expression_changed: false,
+            io_titles_changed: false,
+            prefetchable_support_changed: false,
+            routing_info_changed: false,
+            keyswitch_changed: false,
+            param_id_mapping_changed: false,
+            unknown_bits: 0,
+        };
+
+        flags.latency_changed = true;
+        assert_eq!(
+            metadata_refresh_policy(flags),
+            Vst3MetadataRefreshPolicy::RefreshMetadata
+        );
+
+        flags.io_changed = true;
+        assert_eq!(
+            metadata_refresh_policy(flags),
+            Vst3MetadataRefreshPolicy::RebuildAudioGraph
+        );
+
+        flags.reload_component = true;
+        assert_eq!(
+            metadata_refresh_policy(flags),
+            Vst3MetadataRefreshPolicy::ReloadComponent
+        );
     }
 
     fn instance_record() -> InstanceRecord {
