@@ -1,4 +1,5 @@
 pub mod audio_stream_tracker;
+pub mod component_handler_events;
 pub mod config;
 pub mod control;
 pub mod error;

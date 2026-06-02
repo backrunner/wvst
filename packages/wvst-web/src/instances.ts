@@ -1,4 +1,4 @@
-import type { JsonValue } from "./transport.js";
+import type { JsonValue, Vst3ComponentHandlerEventKind } from "./transport.js";
 
 export interface InstanceCreateOptions {
   pluginId: string;
@@ -307,15 +307,7 @@ export interface Vst3ComponentHandlerSnapshot {
 
 export interface Vst3ComponentHandlerEvent {
   sequence: number;
-  kind:
-    | "begin-edit"
-    | "perform-edit"
-    | "end-edit"
-    | "restart-component"
-    | "set-dirty"
-    | "request-open-editor"
-    | "start-group-edit"
-    | "finish-group-edit";
+  kind: Vst3ComponentHandlerEventKind;
   parameterId?: number;
   valueNormalized?: number;
   flags?: number;

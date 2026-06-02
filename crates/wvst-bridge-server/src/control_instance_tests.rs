@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::audio_stream_tracker::AudioStreamTracker;
+use crate::component_handler_events::ComponentHandlerEventPublisher;
 use crate::events::BridgeEventBus;
 use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::{InstanceRegistry, InstanceState, WorkerState};
@@ -18,6 +19,7 @@ struct RequestContext<'a> {
     config: &'a BridgeConfig,
     host_worker: &'a HostWorkerClient,
     instances: &'a InstanceRegistry,
+    component_handler_events: &'a ComponentHandlerEventPublisher,
     events: &'a BridgeEventBus,
     metrics: &'a BridgeMetrics,
     plugins: &'a PluginRegistry,
@@ -31,6 +33,7 @@ async fn creates_lists_and_destroys_instance() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
@@ -41,6 +44,7 @@ async fn creates_lists_and_destroys_instance() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -112,6 +116,39 @@ async fn creates_lists_and_destroys_instance() {
         status_value["result"]["worker"]["runtime"][0]["runtimeCapabilities"]["parameters"],
         true
     );
+    assert_eq!(
+        status_value["result"]["worker"]["runtime"][0]["diagnostics"]["componentHandler"]["totalEvents"],
+        2
+    );
+
+    let handler_events_value =
+        request_json(r#"{"id":72,"method":"bridge.events","params":{}}"#, context).await;
+    let handler_events = handler_events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["kind"]["type"] == "vst3-component-handler-event")
+        .collect::<Vec<_>>();
+    assert_eq!(handler_events.len(), 2);
+    assert_eq!(handler_events[0]["kind"]["handlerKind"], "begin-edit");
+    assert_eq!(handler_events[0]["kind"]["parameterId"], 42);
+    assert_eq!(handler_events[1]["kind"]["handlerKind"], "perform-edit");
+    assert_eq!(handler_events[1]["kind"]["valueNormalized"], 0.75);
+
+    let second_status_value = request_json(&status_request, context).await;
+    assert_eq!(
+        second_status_value["result"]["worker"]["runtime"][0]["diagnostics"]["componentHandler"]["totalEvents"],
+        2
+    );
+    let deduped_events_value =
+        request_json(r#"{"id":73,"method":"bridge.events","params":{}}"#, context).await;
+    let deduped_handler_events = deduped_events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["kind"]["type"] == "vst3-component-handler-event")
+        .count();
+    assert_eq!(deduped_handler_events, 2);
 
     let parameters_request = serde_json::json!({
         "id": 31,
@@ -239,6 +276,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         .with_worker_auto_restart(false);
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
@@ -249,6 +287,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -285,6 +324,7 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
@@ -300,6 +340,7 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -335,6 +376,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
@@ -345,6 +387,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -411,6 +454,7 @@ async fn restarts_failed_instance_with_same_stream() {
         .with_worker_auto_restart(false);
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
@@ -421,6 +465,7 @@ async fn restarts_failed_instance_with_same_stream() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -485,6 +530,7 @@ async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
             config: context.config,
             host_worker: context.host_worker,
             instances: context.instances,
+            component_handler_events: context.component_handler_events,
             events: context.events,
             metrics: context.metrics,
             plugins: context.plugins,
@@ -570,7 +616,7 @@ while IFS= read -r line; do
     *instance.parameter.normalizedByPlain*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.75,"valuePlain":75.0,"valueString":"75 dB"}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
-    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0}]}}\n' "$id" "$runtime_capabilities" ;;
+    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0,"diagnostics":{"componentHandler":{"totalEvents":2,"recentEvents":[{"sequence":1,"kind":"begin-edit","parameterId":42},{"sequence":2,"kind":"perform-edit","parameterId":42,"valueNormalized":0.75}]}}}]}}\n' "$id" "$runtime_capabilities" ;;
     *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
   esac

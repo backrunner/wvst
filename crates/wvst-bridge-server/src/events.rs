@@ -78,7 +78,36 @@ pub enum BridgeEventKind {
     WorkerQuarantineReleased {
         plugin_id: String,
     },
+    Vst3ComponentHandlerEvent {
+        instance_id: u64,
+        plugin_id: String,
+        stream_id: u64,
+        handler_sequence: u64,
+        handler_kind: Vst3ComponentHandlerEventKind,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parameter_id: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value_normalized: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        flags: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dirty: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        editor_name: Option<String>,
+    },
+    Vst3ComponentHandlerEventsLost {
+        instance_id: u64,
+        plugin_id: String,
+        stream_id: u64,
+        from_sequence: u64,
+        to_sequence: u64,
+        lost_count: u64,
+    },
 }
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct Vst3ComponentHandlerEventKind(pub String);
 
 #[derive(Debug, Clone)]
 pub struct BridgeEventBus {

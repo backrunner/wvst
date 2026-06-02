@@ -73,7 +73,39 @@ export type BridgeEventKind =
       processingRestored: boolean;
     }
   | { type: "worker-quarantined"; pluginId: string; failures: number }
-  | { type: "worker-quarantine-released"; pluginId: string };
+  | { type: "worker-quarantine-released"; pluginId: string }
+  | {
+      type: "vst3-component-handler-event";
+      instanceId: number;
+      pluginId: string;
+      streamId: number;
+      handlerSequence: number;
+      handlerKind: Vst3ComponentHandlerEventKind;
+      parameterId?: number;
+      valueNormalized?: number;
+      flags?: number;
+      dirty?: boolean;
+      editorName?: string;
+    }
+  | {
+      type: "vst3-component-handler-events-lost";
+      instanceId: number;
+      pluginId: string;
+      streamId: number;
+      fromSequence: number;
+      toSequence: number;
+      lostCount: number;
+    };
+
+export type Vst3ComponentHandlerEventKind =
+  | "begin-edit"
+  | "perform-edit"
+  | "end-edit"
+  | "restart-component"
+  | "set-dirty"
+  | "request-open-editor"
+  | "start-group-edit"
+  | "finish-group-edit";
 
 export interface BridgeLatencyMetrics {
   count: number;

@@ -18,6 +18,7 @@ export {
   type BridgeMetrics,
   type JsonValue,
   type RpcTransport,
+  type Vst3ComponentHandlerEventKind,
 } from "./transport.js";
 export {
   WVSTBridgeWorkerClient,

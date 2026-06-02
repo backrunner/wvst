@@ -51,6 +51,9 @@ pub async fn handle_instance_create(
         Ok(record) => record,
         Err(error) => return response_instance_error(id, error),
     };
+    context
+        .component_handler_events
+        .reset_instance(record.instance_id);
     let _ = context.instances.mark_worker_starting(record.instance_id);
     context.events.emit(BridgeEventKind::WorkerStarting {
         instance_id: record.instance_id,
@@ -110,6 +113,9 @@ pub async fn handle_instance_destroy(
         .get(params.instance_id)
         .ok()
         .map(|record| record.stream_id);
+    context
+        .component_handler_events
+        .reset_instance(params.instance_id);
     let _ = context.workers.destroy_instance(params.instance_id).await;
 
     match context.instances.destroy(params) {
@@ -145,6 +151,9 @@ pub async fn handle_instance_restart(
     };
     let was_processing = record.state == InstanceState::Processing;
     let _ = context.instances.mark_worker_recovering(record.instance_id);
+    context
+        .component_handler_events
+        .reset_instance(record.instance_id);
     context.events.emit(BridgeEventKind::WorkerRecovering {
         instance_id: record.instance_id,
         plugin_id: record.plugin_id.clone(),
@@ -261,7 +270,12 @@ pub async fn handle_instance_status(
 
     match context.workers.heartbeat_instance(params.instance_id).await {
         Ok(worker) => match context.instances.mark_worker_ready(params.instance_id) {
-            Ok(instance) => response_result(id, json!({ "instance": instance, "worker": worker })),
+            Ok(instance) => {
+                context
+                    .component_handler_events
+                    .publish_from_worker_metrics(context.events, &instance, &worker);
+                response_result(id, json!({ "instance": instance, "worker": worker }))
+            }
             Err(error) => response_instance_error(id, error),
         },
         Err(error) => handle_status_worker_failure(id, record, error, context).await,
@@ -282,6 +296,9 @@ async fn handle_status_worker_failure(
     }
 
     let _ = context.instances.mark_worker_recovering(record.instance_id);
+    context
+        .component_handler_events
+        .reset_instance(record.instance_id);
     context.events.emit(BridgeEventKind::WorkerRecovering {
         instance_id: record.instance_id,
         plugin_id: record.plugin_id.clone(),

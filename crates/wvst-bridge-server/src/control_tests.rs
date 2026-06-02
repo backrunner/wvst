@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::audio_stream_tracker::AudioStreamTracker;
+use crate::component_handler_events::ComponentHandlerEventPublisher;
 use crate::events::{BridgeEventBus, BridgeEventKind};
 use crate::instance_registry::InstanceRegistry;
 use crate::metrics::BridgeMetrics;
@@ -14,6 +15,7 @@ async fn responds_to_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
@@ -23,6 +25,7 @@ async fn responds_to_hello() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -49,6 +52,7 @@ async fn rejects_denied_origin() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
@@ -58,6 +62,7 @@ async fn rejects_denied_origin() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -83,6 +88,7 @@ async fn rejects_plugin_list_before_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
@@ -92,6 +98,7 @@ async fn rejects_plugin_list_before_hello() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -113,6 +120,7 @@ async fn lists_cached_plugins_after_hello() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
@@ -122,6 +130,7 @@ async fn lists_cached_plugins_after_hello() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -149,6 +158,7 @@ async fn returns_recent_bridge_events() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
@@ -160,6 +170,7 @@ async fn returns_recent_bridge_events() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
@@ -194,6 +205,7 @@ async fn routes_factory_info_to_host_worker() {
     let worker_path = factory_info_worker_script();
     let host_worker = HostWorkerClient::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
@@ -203,6 +215,7 @@ async fn routes_factory_info_to_host_worker() {
         config: &config,
         host_worker: &host_worker,
         instances: &instances,
+        component_handler_events: &component_handler_events,
         events: &events,
         metrics: &metrics,
         plugins: &plugins,

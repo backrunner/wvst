@@ -14,6 +14,7 @@ use wvst_core::ChannelCount;
 use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameFlags, AudioFrameHeader};
 
 use crate::audio_stream_tracker::AudioStreamTracker;
+use crate::component_handler_events::ComponentHandlerEventPublisher;
 use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
 use crate::error::BridgeResult;
@@ -29,6 +30,7 @@ struct BridgeState {
     config: Arc<BridgeConfig>,
     host_worker: Arc<HostWorkerClient>,
     instances: Arc<InstanceRegistry>,
+    component_handler_events: Arc<ComponentHandlerEventPublisher>,
     events: BridgeEventBus,
     metrics: Arc<BridgeMetrics>,
     plugins: Arc<PluginRegistry>,
@@ -78,6 +80,7 @@ impl BridgeServer {
                 config: Arc::new(config),
                 host_worker: Arc::new(host_worker),
                 instances: Arc::new(InstanceRegistry::new()),
+                component_handler_events: Arc::new(ComponentHandlerEventPublisher::new()),
                 events,
                 metrics,
                 plugins: Arc::new(PluginRegistry::new()),
@@ -202,6 +205,7 @@ where
                     config: &state.config,
                     host_worker: &state.host_worker,
                     instances: &state.instances,
+                    component_handler_events: &state.component_handler_events,
                     events: &state.events,
                     metrics: &state.metrics,
                     plugins: &state.plugins,
