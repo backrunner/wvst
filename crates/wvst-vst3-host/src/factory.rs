@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::HostResult;
+use crate::{HostResult, Vst3ComponentInstance, Vst3ProcessingConfig};
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +31,28 @@ pub struct Vst3ComponentProbe {
     pub created: bool,
 }
 
+pub struct Vst3LoadedComponent {
+    instance: Vst3ComponentInstance,
+    _module: platform::LoadedPluginModule,
+}
+
+impl Vst3LoadedComponent {
+    fn new(instance: Vst3ComponentInstance, module: platform::LoadedPluginModule) -> Self {
+        Self {
+            instance,
+            _module: module,
+        }
+    }
+
+    pub fn instance(&self) -> &Vst3ComponentInstance {
+        &self.instance
+    }
+
+    pub fn instance_mut(&mut self) -> &mut Vst3ComponentInstance {
+        &mut self.instance
+    }
+}
+
 pub fn load_vst3_factory_info(
     bundle_path: impl AsRef<std::path::Path>,
 ) -> HostResult<Vst3FactoryInfo> {
@@ -49,6 +71,17 @@ pub fn create_vst3_component_probe(
         &class_id,
         crate::vst3_abi::VST3_I_COMPONENT_IID,
     )
+}
+
+pub fn create_vst3_component_instance(
+    bundle_path: impl AsRef<std::path::Path>,
+    class_id: &str,
+    processing_config: Vst3ProcessingConfig,
+) -> HostResult<Vst3LoadedComponent> {
+    let class_id = crate::vst3_abi::normalize_fuid_string(class_id)
+        .ok_or_else(|| crate::HostError::InvalidClassId(class_id.to_string()))?;
+
+    platform::create_vst3_component_instance(bundle_path.as_ref(), &class_id, processing_config)
 }
 
 #[cfg(target_os = "macos")]
@@ -71,7 +104,7 @@ mod platform {
         FUnknown, IPluginFactory, K_RESULT_OK, PClassInfo, PFactoryInfo,
         VST3_I_AUDIO_PROCESSOR_IID, fixed_string, tuid_hex,
     };
-    use crate::{HostError, HostResult};
+    use crate::{HostError, HostResult, Vst3ComponentInstance, Vst3ProcessingConfig};
 
     type BundleEntry = unsafe extern "C" fn(bundle: CFBundleRef) -> Boolean;
     type BundleExit = unsafe extern "C" fn() -> Boolean;
@@ -107,6 +140,35 @@ mod platform {
             audio_processor,
             created: true,
         })
+    }
+
+    pub fn create_vst3_component_instance(
+        bundle_path: &Path,
+        class_id: &str,
+        processing_config: Vst3ProcessingConfig,
+    ) -> HostResult<super::Vst3LoadedComponent> {
+        let mut bundle = MacBundle::open(bundle_path)?;
+        bundle.call_entry()?;
+
+        let factory = bundle.plugin_factory()?;
+        let component = factory.create_instance(class_id, crate::vst3_abi::VST3_I_COMPONENT_IID)?;
+        let processor = component.query_interface_owned(VST3_I_AUDIO_PROCESSOR_IID)?;
+        let instance = unsafe {
+            Vst3ComponentInstance::from_raw_parts(
+                component.into_raw().cast(),
+                processor,
+                processing_config,
+            )
+        }?;
+
+        Ok(super::Vst3LoadedComponent::new(
+            instance,
+            LoadedPluginModule { _bundle: bundle },
+        ))
+    }
+
+    pub(super) struct LoadedPluginModule {
+        _bundle: MacBundle,
     }
 
     struct MacBundle {
@@ -380,7 +442,29 @@ mod platform {
     }
 
     impl Vst3UnknownInstance {
+        fn into_raw(self) -> *mut FUnknown {
+            let object = self.object;
+            std::mem::forget(self);
+            object
+        }
+
         fn supports_interface(&self, interface_id: &str) -> HostResult<bool> {
+            let object = match self.query_interface_owned(interface_id) {
+                Ok(object) => object,
+                Err(
+                    HostError::InterfaceQueryFailed { .. }
+                    | HostError::InterfaceReturnedNull { .. },
+                ) => {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            };
+
+            release_unknown(object.cast());
+            Ok(true)
+        }
+
+        fn query_interface_owned(&self, interface_id: &str) -> HostResult<*mut c_void> {
             let interface_id_string = CString::new(interface_id)
                 .map_err(|error| HostError::ModuleLoadFailed(error.to_string()))?;
             let mut object: *mut c_void = std::ptr::null_mut();
@@ -390,7 +474,9 @@ mod platform {
             // queryInterface returns a referenced object.
             let vtable = unsafe { (*self.object).vtable };
             if vtable.is_null() {
-                return Ok(false);
+                return Err(HostError::InterfaceReturnedNull {
+                    interface_id: interface_id.to_string(),
+                });
             }
             // SAFETY: The vtable belongs to the live FUnknown object above. The
             // interface id is a NUL-terminated FUID string.
@@ -398,12 +484,19 @@ mod platform {
                 ((*vtable).query_interface)(self.object, interface_id_string.as_ptr(), &mut object)
             };
 
-            if result != K_RESULT_OK || object.is_null() {
-                return Ok(false);
+            if result != K_RESULT_OK {
+                return Err(HostError::InterfaceQueryFailed {
+                    interface_id: interface_id.to_string(),
+                    result,
+                });
+            }
+            if object.is_null() {
+                return Err(HostError::InterfaceReturnedNull {
+                    interface_id: interface_id.to_string(),
+                });
             }
 
-            release_unknown(object.cast());
-            Ok(true)
+            Ok(object)
         }
     }
 
@@ -458,7 +551,9 @@ mod platform {
     use std::path::Path;
 
     use super::{Vst3ComponentProbe, Vst3FactoryInfo};
-    use crate::{HostError, HostResult};
+    use crate::{HostError, HostResult, Vst3ProcessingConfig};
+
+    pub(super) struct LoadedPluginModule;
 
     pub fn load_vst3_factory_info(_bundle_path: &Path) -> HostResult<Vst3FactoryInfo> {
         Err(HostError::UnsupportedPlatform(
@@ -475,18 +570,18 @@ mod platform {
             "VST3 createInstance is currently implemented for macOS only",
         ))
     }
+
+    pub fn create_vst3_component_instance(
+        _bundle_path: &Path,
+        _class_id: &str,
+        _processing_config: Vst3ProcessingConfig,
+    ) -> HostResult<super::Vst3LoadedComponent> {
+        Err(HostError::UnsupportedPlatform(
+            "VST3 createInstance is currently implemented for macOS only",
+        ))
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::HostError;
-
-    #[test]
-    fn rejects_invalid_component_class_id_before_loading_bundle() {
-        let error = create_vst3_component_probe("/tmp/Missing.vst3", "class-a")
-            .expect_err("invalid class id");
-
-        assert!(matches!(error, HostError::InvalidClassId(class_id) if class_id == "class-a"));
-    }
-}
+#[path = "factory_tests.rs"]
+mod tests;

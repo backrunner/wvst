@@ -37,6 +37,13 @@ pub enum HostError {
         from: &'static str,
         action: &'static str,
     },
+    InterfaceQueryFailed {
+        interface_id: String,
+        result: i32,
+    },
+    InterfaceReturnedNull {
+        interface_id: String,
+    },
     InvalidMaxBlockFrames(u16),
     InvalidSampleRate(u32),
     MissingSymbol(&'static str),
@@ -111,6 +118,21 @@ impl Display for HostError {
                 write!(
                     formatter,
                     "invalid VST3 lifecycle transition: cannot {action} from {from}"
+                )
+            }
+            Self::InterfaceQueryFailed {
+                interface_id,
+                result,
+            } => {
+                write!(
+                    formatter,
+                    "VST3 queryInterface failed for interface {interface_id}: {result}"
+                )
+            }
+            Self::InterfaceReturnedNull { interface_id } => {
+                write!(
+                    formatter,
+                    "VST3 queryInterface returned null for interface {interface_id}"
                 )
             }
             Self::InvalidMaxBlockFrames(value) => {

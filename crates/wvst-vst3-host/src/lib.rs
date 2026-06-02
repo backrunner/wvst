@@ -13,8 +13,8 @@ pub use audio_processor::Vst3AudioProcessor;
 pub use component::Vst3ComponentInstance;
 pub use error::{HostError, HostResult};
 pub use factory::{
-    Vst3ComponentProbe, Vst3FactoryClass, Vst3FactoryInfo, create_vst3_component_probe,
-    load_vst3_factory_info,
+    Vst3ComponentProbe, Vst3FactoryClass, Vst3FactoryInfo, Vst3LoadedComponent,
+    create_vst3_component_instance, create_vst3_component_probe, load_vst3_factory_info,
 };
 pub use lifecycle::{Vst3Lifecycle, Vst3LifecycleState, Vst3ProcessingConfig};
 pub use metadata::HeadlessPluginMetadata;
