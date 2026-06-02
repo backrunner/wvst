@@ -5,6 +5,9 @@ use wvst_vst3_host::{
     Vst3ParameterChange, Vst3PolyPressureEvent,
 };
 
+use super::ipc_event_ordering::{
+    sort_input_events_by_sample_offset, sort_parameter_changes_by_sample_offset,
+};
 use super::ipc_parameter_events::push_mapped_parameter_change;
 
 pub(super) fn decode_midi_events_into(
@@ -46,6 +49,8 @@ pub(super) fn decode_midi_events_into(
         }
         midi_event_to_parameter_change(frames, event, parameter_changes, &parameter_id_for_midi)?;
     }
+    sort_input_events_by_sample_offset(destination);
+    sort_parameter_changes_by_sample_offset(parameter_changes);
 
     Ok(())
 }

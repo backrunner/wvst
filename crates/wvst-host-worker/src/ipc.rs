@@ -27,6 +27,8 @@ mod ipc_buffers;
 mod ipc_capabilities;
 #[path = "ipc_connection.rs"]
 mod ipc_connection;
+#[path = "ipc_event_ordering.rs"]
+mod ipc_event_ordering;
 #[path = "ipc_midi.rs"]
 mod ipc_midi;
 #[path = "ipc_parameter_events.rs"]

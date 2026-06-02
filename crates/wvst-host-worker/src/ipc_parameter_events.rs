@@ -1,6 +1,8 @@
 use wvst_protocol::{AudioFrameHeader, PARAMETER_AUTOMATION_EVENT_LEN, ParameterAutomationEvent};
 use wvst_vst3_host::{DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK, Vst3ParameterChange};
 
+use super::ipc_event_ordering::sort_parameter_changes_by_sample_offset;
+
 pub(super) fn decode_parameter_events_into(
     input_header: AudioFrameHeader,
     payload: &[u8],
@@ -31,6 +33,7 @@ pub(super) fn decode_parameter_events_into(
         let event = ParameterAutomationEvent::decode(chunk).map_err(|error| error.to_string())?;
         push_parameter_change(frames, destination, event)?;
     }
+    sort_parameter_changes_by_sample_offset(destination);
 
     Ok(())
 }

@@ -46,6 +46,7 @@
 - `wvst-protocol` 和 Web SDK 已定义固定 16 字节 MIDI/note event schema，事件包含 sample offset、kind、channel、data bytes 和 note id；audio frame payload 已能表达 audio samples 后追加 event section。
 - Web SDK 已提供 `sendMidiEvents()` 路径，DedicatedWorker 会缓存 MIDI events、按 sample offset 排序，并随下一块 audio frame 发送到 Bridge；Bridge/worker 音频 IPC 已能接受 event section，worker 会将 note on/off、poly pressure 和对应 raw MIDI note 事件转换为 VST3 `IEventList` 输入。
 - `wvst-protocol` 和 Web SDK 已新增固定 16 字节 parameter automation event schema，audio frame header 使用保留字段携带 `parameterEventCount`，payload 现在可表达 audio samples + MIDI events + parameter events。
+- worker 音频 IPC 边界已对输入 MIDI/note events、parameter automation、MIDI mapping 产生的参数变化，以及插件输出回 Web 的 MIDI/parameter events 按 block 内 sample offset 做确定性排序；同 sample offset 的 MIDI/note events 保留原始相对顺序，parameter changes 再按 ParamID 稳定归并。
 - Rust audio frame 协议已允许 `channels = 0`，passthrough worker 路径已支持 zero-input instrument frame 并覆盖测试。
 - `wvst-vst3-host` 已增加 VST3 FUID 规范化、`IPluginFactory::createInstance` ABI skeleton 和 macOS `create_vst3_component_probe()` safe facade；`wvst-host-worker component-probe <plugin.vst3> <class-id>` 可在隔离 worker 内验证 component 创建并释放。
 - VST3 ABI 边界已补入 `IPluginBase`、`IComponent`、`IAudioProcessor`、`IHostApplication`、`ProcessSetup`、`AudioBusBuffers` 和 `ProcessData` 的 Rust repr(C) skeleton，`queryInterface` 已改为传递 16-byte TUID 而非 FUID 字符串，后续真实 process path 可以继续在 `wvst-vst3-host` 内收敛 unsafe。
@@ -128,7 +129,7 @@
 仍缺少：
 
 - MIDI/note event schema、Web/Bridge/worker 数据面传输、VST3 `IEventList` note/poly pressure 转换，以及 CC、pitch bend、channel aftertouch 经 `IMidiMapping` 到 VST3 parameter-change path 的映射已有首版。
-- 更完整的按 block sequence + sample offset 事件排序、Web worker 侧背压和 late-event 策略。
+- Rust worker 边界已具备 block 内 sample offset 确定性排序；仍缺少 Web worker 侧背压和 late-event 策略。
 - 音源 VST 的 zero-input audio buffer/session/passthrough worker plumbing 已有首版；note on/off 已能随 block 进入真实 VST3 `process()`，仍缺少真实第三方 instrument 兼容测试和 timing 诊断。
 - Web MIDI adapter 和虚拟键盘示例。
 

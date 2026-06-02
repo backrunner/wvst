@@ -12,6 +12,9 @@ use wvst_protocol::{
 };
 
 use super::WorkerIpcState;
+use super::ipc_event_ordering::{
+    sort_output_events_by_sample_offset, sort_parameter_changes_by_sample_offset,
+};
 use super::ipc_midi::{decode_midi_events_into, encode_midi_events_into};
 use super::ipc_parameter_events::{decode_parameter_events_into, encode_parameter_events_into};
 
@@ -220,13 +223,12 @@ fn process_message_into(
             &mut instance.process_output,
         )
         .map_err(AudioProcessError::from_backend_error)?;
-
     encode_output_frame_into(
         input_header,
         output_channels,
         output,
-        &instance.process_output.events,
-        &instance.process_output.parameter_changes,
+        &mut instance.process_output.events,
+        &mut instance.process_output.parameter_changes,
         output_body,
     )
 }
@@ -235,10 +237,13 @@ fn encode_output_frame_into(
     input_header: AudioFrameHeader,
     output_channels: usize,
     output: &[f32],
-    events: &[wvst_vst3_host::Vst3OutputEvent],
-    parameter_changes: &[wvst_vst3_host::Vst3ParameterChange],
+    events: &mut [wvst_vst3_host::Vst3OutputEvent],
+    parameter_changes: &mut [wvst_vst3_host::Vst3ParameterChange],
     destination: &mut Vec<u8>,
 ) -> Result<(), AudioProcessError> {
+    sort_output_events_by_sample_offset(events);
+    sort_parameter_changes_by_sample_offset(parameter_changes);
+
     let output_channels = u16::try_from(output_channels)
         .map_err(|_| AudioProcessError::invalid("output channel count overflows u16"))?;
     let output_channels = ChannelCount::new(output_channels)
