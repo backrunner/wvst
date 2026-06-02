@@ -29,7 +29,13 @@ pub use audio_processor::Vst3AudioProcessor;
 pub use bus_info::{Vst3AudioBusInfo, Vst3BusDirection, Vst3BusType};
 pub use component::Vst3ComponentInstance;
 pub use component_handler::{
-    Vst3ComponentHandlerEvent, Vst3ComponentHandlerEventKind, Vst3ComponentHandlerSnapshot,
+    VST3_RESTART_FLAG_IO_CHANGED, VST3_RESTART_FLAG_KEYSWITCH_CHANGED,
+    VST3_RESTART_FLAG_LATENCY_CHANGED, VST3_RESTART_FLAG_MIDI_CC_ASSIGNMENT_CHANGED,
+    VST3_RESTART_FLAG_NOTE_EXPRESSION_CHANGED, VST3_RESTART_FLAG_PARAM_ID_MAPPING_CHANGED,
+    VST3_RESTART_FLAG_PARAM_TITLES_CHANGED, VST3_RESTART_FLAG_PARAM_VALUES_CHANGED,
+    VST3_RESTART_FLAG_PREFETCHABLE_SUPPORT_CHANGED, VST3_RESTART_FLAG_RELOAD_COMPONENT,
+    VST3_RESTART_FLAG_ROUTING_INFO_CHANGED, Vst3ComponentHandlerEvent,
+    Vst3ComponentHandlerEventKind, Vst3ComponentHandlerSnapshot, Vst3RestartFlags,
 };
 pub use connection_point::Vst3ConnectionPoint;
 pub use edit_controller::{Vst3EditController, Vst3ParameterFlags, Vst3ParameterInfo};

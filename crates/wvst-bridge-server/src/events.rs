@@ -93,6 +93,8 @@ pub enum BridgeEventKind {
         #[serde(skip_serializing_if = "Option::is_none")]
         flags: Option<i32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        restart_flags: Option<Vst3RestartFlags>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         dirty: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         editor_name: Option<String>,
@@ -110,6 +112,25 @@ pub enum BridgeEventKind {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Vst3ComponentHandlerEventKind(pub String);
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vst3RestartFlags {
+    pub raw: i32,
+    pub reload_component: bool,
+    pub io_changed: bool,
+    pub param_values_changed: bool,
+    pub latency_changed: bool,
+    pub param_titles_changed: bool,
+    pub midi_cc_assignment_changed: bool,
+    pub note_expression_changed: bool,
+    pub io_titles_changed: bool,
+    pub prefetchable_support_changed: bool,
+    pub routing_info_changed: bool,
+    pub keyswitch_changed: bool,
+    pub param_id_mapping_changed: bool,
+    pub unknown_bits: i32,
+}
 
 #[derive(Debug, Clone)]
 pub struct BridgeEventBus {

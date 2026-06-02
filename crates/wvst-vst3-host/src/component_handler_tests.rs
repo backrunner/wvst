@@ -59,7 +59,13 @@ fn records_edit_and_restart_callbacks() {
         ((*(*pointer).vtable).begin_edit)(pointer, 42);
         ((*(*pointer).vtable).perform_edit)(pointer, 42, 0.75);
         ((*(*pointer).vtable).end_edit)(pointer, 42);
-        ((*(*pointer).vtable).restart_component)(pointer, 3);
+        ((*(*pointer).vtable).restart_component)(
+            pointer,
+            VST3_RESTART_FLAG_IO_CHANGED
+                | VST3_RESTART_FLAG_LATENCY_CHANGED
+                | VST3_RESTART_FLAG_PARAM_TITLES_CHANGED
+                | (1 << 20),
+        );
     }
 
     let snapshot = handler.snapshot();
@@ -75,7 +81,23 @@ fn records_edit_and_restart_callbacks() {
         snapshot.recent_events[3].kind,
         Vst3ComponentHandlerEventKind::RestartComponent
     );
-    assert_eq!(snapshot.recent_events[3].flags, Some(3));
+    assert_eq!(
+        snapshot.recent_events[3].flags,
+        Some(
+            VST3_RESTART_FLAG_IO_CHANGED
+                | VST3_RESTART_FLAG_LATENCY_CHANGED
+                | VST3_RESTART_FLAG_PARAM_TITLES_CHANGED
+                | (1 << 20)
+        )
+    );
+    let restart_flags = snapshot.recent_events[3]
+        .restart_flags
+        .expect("restart flags");
+    assert!(restart_flags.io_changed);
+    assert!(restart_flags.latency_changed);
+    assert!(restart_flags.param_titles_changed);
+    assert!(!restart_flags.param_values_changed);
+    assert_eq!(restart_flags.unknown_bits, 1 << 20);
 }
 
 #[test]

@@ -19,6 +19,7 @@ export {
   type JsonValue,
   type RpcTransport,
   type Vst3ComponentHandlerEventKind,
+  type Vst3RestartFlags,
 } from "./transport.js";
 export {
   WVSTBridgeWorkerClient,

@@ -126,7 +126,7 @@ async fn creates_lists_and_destroys_instance() {
     );
     assert_eq!(
         status_value["result"]["worker"]["runtime"][0]["diagnostics"]["componentHandler"]["totalEvents"],
-        2
+        3
     );
     assert_eq!(
         status_value["result"]["worker"]["runtime"][0]["diagnostics"]["passthroughReason"]["kind"],
@@ -141,16 +141,28 @@ async fn creates_lists_and_destroys_instance() {
         .iter()
         .filter(|event| event["kind"]["type"] == "vst3-component-handler-event")
         .collect::<Vec<_>>();
-    assert_eq!(handler_events.len(), 2);
+    assert_eq!(handler_events.len(), 3);
     assert_eq!(handler_events[0]["kind"]["handlerKind"], "begin-edit");
     assert_eq!(handler_events[0]["kind"]["parameterId"], 42);
     assert_eq!(handler_events[1]["kind"]["handlerKind"], "perform-edit");
     assert_eq!(handler_events[1]["kind"]["valueNormalized"], 0.75);
+    assert_eq!(
+        handler_events[2]["kind"]["handlerKind"],
+        "restart-component"
+    );
+    assert_eq!(
+        handler_events[2]["kind"]["restartFlags"]["latencyChanged"],
+        true
+    );
+    assert_eq!(
+        handler_events[2]["kind"]["restartFlags"]["paramTitlesChanged"],
+        true
+    );
 
     let second_status_value = request_json(&status_request, context).await;
     assert_eq!(
         second_status_value["result"]["worker"]["runtime"][0]["diagnostics"]["componentHandler"]["totalEvents"],
-        2
+        3
     );
     let deduped_events_value =
         request_json(r#"{"id":73,"method":"bridge.events","params":{}}"#, context).await;
@@ -160,7 +172,7 @@ async fn creates_lists_and_destroys_instance() {
         .iter()
         .filter(|event| event["kind"]["type"] == "vst3-component-handler-event")
         .count();
-    assert_eq!(deduped_handler_events, 2);
+    assert_eq!(deduped_handler_events, 3);
 
     let parameters_request = serde_json::json!({
         "id": 31,
@@ -722,7 +734,7 @@ while IFS= read -r line; do
     *instance.connection.notifyController*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"controller","messageId":"TextMessage","attributeCount":0,"notified":true}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
-    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0,"diagnostics":{"passthroughReason":{"kind":"non-bundle-path","message":"test fallback"},"componentHandler":{"totalEvents":2,"recentEvents":[{"sequence":1,"kind":"begin-edit","parameterId":42},{"sequence":2,"kind":"perform-edit","parameterId":42,"valueNormalized":0.75}]}}}]}}\n' "$id" "$runtime_capabilities" ;;
+    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0,"diagnostics":{"passthroughReason":{"kind":"non-bundle-path","message":"test fallback"},"componentHandler":{"totalEvents":3,"recentEvents":[{"sequence":1,"kind":"begin-edit","parameterId":42},{"sequence":2,"kind":"perform-edit","parameterId":42,"valueNormalized":0.75},{"sequence":3,"kind":"restart-component","flags":24,"restartFlags":{"raw":24,"reloadComponent":false,"ioChanged":false,"paramValuesChanged":false,"latencyChanged":true,"paramTitlesChanged":true,"midiCcAssignmentChanged":false,"noteExpressionChanged":false,"ioTitlesChanged":false,"prefetchableSupportChanged":false,"routingInfoChanged":false,"keyswitchChanged":false,"paramIdMappingChanged":false,"unknownBits":0}}]}}}]}}\n' "$id" "$runtime_capabilities" ;;
     *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
   esac

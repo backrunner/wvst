@@ -3,7 +3,9 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use crate::events::{BridgeEventBus, BridgeEventKind, Vst3ComponentHandlerEventKind};
+use crate::events::{
+    BridgeEventBus, BridgeEventKind, Vst3ComponentHandlerEventKind, Vst3RestartFlags,
+};
 use crate::instance_registry::InstanceRecord;
 
 #[derive(Debug, Default)]
@@ -24,6 +26,7 @@ struct ComponentHandlerEvent {
     parameter_id: Option<u32>,
     value_normalized: Option<f64>,
     flags: Option<i32>,
+    restart_flags: Option<Vst3RestartFlags>,
     dirty: Option<bool>,
     editor_name: Option<String>,
 }
@@ -86,6 +89,7 @@ impl ComponentHandlerEventPublisher {
                 parameter_id: event.parameter_id,
                 value_normalized: event.value_normalized,
                 flags: event.flags,
+                restart_flags: event.restart_flags,
                 dirty: event.dirty,
                 editor_name: event.editor_name.clone(),
             });
@@ -162,11 +166,31 @@ fn component_handler_event(value: &Value) -> Option<ComponentHandlerEvent> {
         parameter_id: json_u32(value, "parameterId"),
         value_normalized: json_finite_f64(value, "valueNormalized"),
         flags: json_i32(value, "flags"),
+        restart_flags: value.get("restartFlags").and_then(restart_flags),
         dirty: value.get("dirty").and_then(Value::as_bool),
         editor_name: value
             .get("editorName")
             .and_then(Value::as_str)
             .map(str::to_string),
+    })
+}
+
+fn restart_flags(value: &Value) -> Option<Vst3RestartFlags> {
+    Some(Vst3RestartFlags {
+        raw: json_i32(value, "raw")?,
+        reload_component: json_bool(value, "reloadComponent")?,
+        io_changed: json_bool(value, "ioChanged")?,
+        param_values_changed: json_bool(value, "paramValuesChanged")?,
+        latency_changed: json_bool(value, "latencyChanged")?,
+        param_titles_changed: json_bool(value, "paramTitlesChanged")?,
+        midi_cc_assignment_changed: json_bool(value, "midiCcAssignmentChanged")?,
+        note_expression_changed: json_bool(value, "noteExpressionChanged")?,
+        io_titles_changed: json_bool(value, "ioTitlesChanged")?,
+        prefetchable_support_changed: json_bool(value, "prefetchableSupportChanged")?,
+        routing_info_changed: json_bool(value, "routingInfoChanged")?,
+        keyswitch_changed: json_bool(value, "keyswitchChanged")?,
+        param_id_mapping_changed: json_bool(value, "paramIdMappingChanged")?,
+        unknown_bits: json_i32(value, "unknownBits")?,
     })
 }
 
@@ -186,6 +210,10 @@ fn json_i32(value: &Value, key: &str) -> Option<i32> {
         .get(key)?
         .as_i64()
         .and_then(|value| i32::try_from(value).ok())
+}
+
+fn json_bool(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
 }
 
 fn json_finite_f64(value: &Value, key: &str) -> Option<f64> {
@@ -257,6 +285,56 @@ mod tests {
             recent[0].kind.kind_type(),
             "vst3-component-handler-events-lost"
         );
+    }
+
+    #[test]
+    fn forwards_structured_restart_flags() {
+        let publisher = ComponentHandlerEventPublisher::new();
+        let events = BridgeEventBus::new();
+        let instance = instance_record();
+        let metrics = json!({
+            "runtime": [{
+                "streamId": 9,
+                "diagnostics": {
+                    "componentHandler": {
+                        "totalEvents": 1,
+                        "recentEvents": [{
+                            "sequence": 1,
+                            "kind": "restart-component",
+                            "flags": 24,
+                            "restartFlags": {
+                                "raw": 24,
+                                "reloadComponent": false,
+                                "ioChanged": false,
+                                "paramValuesChanged": false,
+                                "latencyChanged": true,
+                                "paramTitlesChanged": true,
+                                "midiCcAssignmentChanged": false,
+                                "noteExpressionChanged": false,
+                                "ioTitlesChanged": false,
+                                "prefetchableSupportChanged": false,
+                                "routingInfoChanged": false,
+                                "keyswitchChanged": false,
+                                "paramIdMappingChanged": false,
+                                "unknownBits": 0
+                            }
+                        }]
+                    }
+                }
+            }]
+        });
+
+        publisher.publish_from_worker_metrics(&events, &instance, &metrics);
+
+        let recent = events.recent_since(None);
+        let BridgeEventKind::Vst3ComponentHandlerEvent { restart_flags, .. } = &recent[0].kind
+        else {
+            panic!("expected component handler event");
+        };
+        let restart_flags = restart_flags.expect("restart flags");
+        assert!(restart_flags.latency_changed);
+        assert!(restart_flags.param_titles_changed);
+        assert_eq!(restart_flags.raw, 24);
     }
 
     fn instance_record() -> InstanceRecord {

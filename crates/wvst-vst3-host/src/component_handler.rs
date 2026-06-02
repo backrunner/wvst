@@ -12,6 +12,30 @@ use crate::vst3_abi::{
 };
 
 const MAX_COMPONENT_HANDLER_EVENTS: usize = 64;
+pub const VST3_RESTART_FLAG_RELOAD_COMPONENT: i32 = 1 << 0;
+pub const VST3_RESTART_FLAG_IO_CHANGED: i32 = 1 << 1;
+pub const VST3_RESTART_FLAG_PARAM_VALUES_CHANGED: i32 = 1 << 2;
+pub const VST3_RESTART_FLAG_LATENCY_CHANGED: i32 = 1 << 3;
+pub const VST3_RESTART_FLAG_PARAM_TITLES_CHANGED: i32 = 1 << 4;
+pub const VST3_RESTART_FLAG_MIDI_CC_ASSIGNMENT_CHANGED: i32 = 1 << 5;
+pub const VST3_RESTART_FLAG_NOTE_EXPRESSION_CHANGED: i32 = 1 << 6;
+pub const VST3_RESTART_FLAG_IO_TITLES_CHANGED: i32 = 1 << 7;
+pub const VST3_RESTART_FLAG_PREFETCHABLE_SUPPORT_CHANGED: i32 = 1 << 8;
+pub const VST3_RESTART_FLAG_ROUTING_INFO_CHANGED: i32 = 1 << 9;
+pub const VST3_RESTART_FLAG_KEYSWITCH_CHANGED: i32 = 1 << 10;
+pub const VST3_RESTART_FLAG_PARAM_ID_MAPPING_CHANGED: i32 = 1 << 11;
+const VST3_RESTART_FLAGS_KNOWN_MASK: i32 = VST3_RESTART_FLAG_RELOAD_COMPONENT
+    | VST3_RESTART_FLAG_IO_CHANGED
+    | VST3_RESTART_FLAG_PARAM_VALUES_CHANGED
+    | VST3_RESTART_FLAG_LATENCY_CHANGED
+    | VST3_RESTART_FLAG_PARAM_TITLES_CHANGED
+    | VST3_RESTART_FLAG_MIDI_CC_ASSIGNMENT_CHANGED
+    | VST3_RESTART_FLAG_NOTE_EXPRESSION_CHANGED
+    | VST3_RESTART_FLAG_IO_TITLES_CHANGED
+    | VST3_RESTART_FLAG_PREFETCHABLE_SUPPORT_CHANGED
+    | VST3_RESTART_FLAG_ROUTING_INFO_CHANGED
+    | VST3_RESTART_FLAG_KEYSWITCH_CHANGED
+    | VST3_RESTART_FLAG_PARAM_ID_MAPPING_CHANGED;
 
 #[derive(Debug)]
 pub struct Vst3ComponentHandler {
@@ -30,9 +54,67 @@ pub struct Vst3ComponentHandlerEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flags: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub restart_flags: Option<Vst3RestartFlags>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dirty: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vst3RestartFlags {
+    pub raw: i32,
+    pub reload_component: bool,
+    pub io_changed: bool,
+    pub param_values_changed: bool,
+    pub latency_changed: bool,
+    pub param_titles_changed: bool,
+    pub midi_cc_assignment_changed: bool,
+    pub note_expression_changed: bool,
+    pub io_titles_changed: bool,
+    pub prefetchable_support_changed: bool,
+    pub routing_info_changed: bool,
+    pub keyswitch_changed: bool,
+    pub param_id_mapping_changed: bool,
+    pub unknown_bits: i32,
+}
+
+impl Vst3RestartFlags {
+    pub fn from_raw(raw: i32) -> Self {
+        Self {
+            raw,
+            reload_component: has_restart_flag(raw, VST3_RESTART_FLAG_RELOAD_COMPONENT),
+            io_changed: has_restart_flag(raw, VST3_RESTART_FLAG_IO_CHANGED),
+            param_values_changed: has_restart_flag(raw, VST3_RESTART_FLAG_PARAM_VALUES_CHANGED),
+            latency_changed: has_restart_flag(raw, VST3_RESTART_FLAG_LATENCY_CHANGED),
+            param_titles_changed: has_restart_flag(raw, VST3_RESTART_FLAG_PARAM_TITLES_CHANGED),
+            midi_cc_assignment_changed: has_restart_flag(
+                raw,
+                VST3_RESTART_FLAG_MIDI_CC_ASSIGNMENT_CHANGED,
+            ),
+            note_expression_changed: has_restart_flag(
+                raw,
+                VST3_RESTART_FLAG_NOTE_EXPRESSION_CHANGED,
+            ),
+            io_titles_changed: has_restart_flag(raw, VST3_RESTART_FLAG_IO_TITLES_CHANGED),
+            prefetchable_support_changed: has_restart_flag(
+                raw,
+                VST3_RESTART_FLAG_PREFETCHABLE_SUPPORT_CHANGED,
+            ),
+            routing_info_changed: has_restart_flag(raw, VST3_RESTART_FLAG_ROUTING_INFO_CHANGED),
+            keyswitch_changed: has_restart_flag(raw, VST3_RESTART_FLAG_KEYSWITCH_CHANGED),
+            param_id_mapping_changed: has_restart_flag(
+                raw,
+                VST3_RESTART_FLAG_PARAM_ID_MAPPING_CHANGED,
+            ),
+            unknown_bits: raw & !VST3_RESTART_FLAGS_KNOWN_MASK,
+        }
+    }
+}
+
+fn has_restart_flag(raw: i32, flag: i32) -> bool {
+    raw & flag != 0
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -359,6 +441,7 @@ impl ComponentHandlerObject {
             parameter_id: record.parameter_id,
             value_normalized: record.value_normalized,
             flags: record.flags,
+            restart_flags: restart_flags(record.kind, record.flags),
             dirty: record.dirty,
             editor_name: record.editor_name,
         };
@@ -379,6 +462,17 @@ impl ComponentHandlerObject {
                 .map(|events| events.clone())
                 .unwrap_or_default(),
         }
+    }
+}
+
+fn restart_flags(
+    kind: Vst3ComponentHandlerEventKind,
+    flags: Option<i32>,
+) -> Option<Vst3RestartFlags> {
+    if kind == Vst3ComponentHandlerEventKind::RestartComponent {
+        flags.map(Vst3RestartFlags::from_raw)
+    } else {
+        None
     }
 }
 

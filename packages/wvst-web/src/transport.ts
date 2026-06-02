@@ -87,6 +87,7 @@ export type BridgeEventKind =
       parameterId?: number;
       valueNormalized?: number;
       flags?: number;
+      restartFlags?: Vst3RestartFlags;
       dirty?: boolean;
       editorName?: string;
     }
@@ -109,6 +110,23 @@ export type Vst3ComponentHandlerEventKind =
   | "request-open-editor"
   | "start-group-edit"
   | "finish-group-edit";
+
+export interface Vst3RestartFlags {
+  raw: number;
+  reloadComponent: boolean;
+  ioChanged: boolean;
+  paramValuesChanged: boolean;
+  latencyChanged: boolean;
+  paramTitlesChanged: boolean;
+  midiCcAssignmentChanged: boolean;
+  noteExpressionChanged: boolean;
+  ioTitlesChanged: boolean;
+  prefetchableSupportChanged: boolean;
+  routingInfoChanged: boolean;
+  keyswitchChanged: boolean;
+  paramIdMappingChanged: boolean;
+  unknownBits: number;
+}
 
 export interface BridgeLatencyMetrics {
   count: number;
