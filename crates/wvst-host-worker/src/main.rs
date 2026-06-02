@@ -31,8 +31,9 @@ fn run(args: Vec<String>) -> Result<(), String> {
         Some("component-probe") => component_probe(args.get(1), args.get(2)),
         Some("passthrough-probe") => passthrough_probe(),
         Some("serve") => ipc::serve_stdio(parse_audio_connect(&args[1..])?),
+        Some("serve-framed") => ipc::serve_framed_stdio(parse_audio_connect(&args[1..])?),
         _ => Err(
-            "usage: wvst-host-worker describe <plugin.vst3> | factory-info <plugin.vst3> | factory-probe <plugin.vst3> | component-probe <plugin.vst3> <class-id> | passthrough-probe | serve"
+            "usage: wvst-host-worker describe <plugin.vst3> | factory-info <plugin.vst3> | factory-probe <plugin.vst3> | component-probe <plugin.vst3> <class-id> | passthrough-probe | serve | serve-framed"
                 .to_string(),
         ),
     }

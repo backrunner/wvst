@@ -61,6 +61,33 @@ async fn releases_quarantine_after_duration() {
     );
 }
 
+#[tokio::test]
+async fn starts_real_worker_with_framed_control_ipc() {
+    let Some(worker) = option_env!("CARGO_BIN_EXE_wvst-host-worker") else {
+        return;
+    };
+    let supervisor = WorkerSupervisor::with_options(
+        WorkerSupervisorOptions::new(PathBuf::from(worker))
+            .with_timeout(Duration::from_secs(5))
+            .with_audio_ipc(false),
+    );
+
+    let ready = supervisor
+        .start_instance(&record())
+        .await
+        .expect("framed worker starts");
+
+    assert_eq!(ready["backend"], "passthrough");
+    assert_eq!(
+        supervisor
+            .destroy_instance(1)
+            .await
+            .expect("destroy")
+            .expect("destroy result")["workerState"],
+        "destroyed"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn rejects_start_when_instance_limit_is_reached() {
@@ -69,6 +96,7 @@ async fn rejects_start_when_instance_limit_is_reached() {
         WorkerSupervisorOptions::new(worker.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
+            .with_framed_control_ipc(false)
             .with_max_instances(1),
     );
     supervisor
@@ -107,6 +135,7 @@ async fn records_worker_shutdown_audit_when_destroying_instance() {
         WorkerSupervisorOptions::new(worker.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
+            .with_framed_control_ipc(false)
             .with_metrics(Arc::clone(&metrics)),
     );
 
@@ -142,6 +171,7 @@ async fn kills_worker_process_group_when_destroying_instance() {
         WorkerSupervisorOptions::new(worker.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
+            .with_framed_control_ipc(false)
             .with_metrics(Arc::clone(&metrics)),
     );
 

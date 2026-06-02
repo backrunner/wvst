@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -14,6 +14,9 @@ use tokio::time::timeout;
 use crate::instance_registry::InstanceRecord;
 use crate::metrics::{BridgeMetrics, WorkerShutdownAudit};
 use crate::worker_process_tree::WorkerTerminationTarget;
+use wvst_protocol::{
+    WORKER_CONTROL_IPC_HEADER_LEN, WorkerControlIpcHeader, WorkerControlIpcMessage,
+};
 
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_QUARANTINE_DURATION: Duration = Duration::from_secs(60);
@@ -38,6 +41,7 @@ pub struct WorkerSupervisor {
     executable: PathBuf,
     timeout: Duration,
     use_audio_ipc: bool,
+    use_framed_control_ipc: bool,
     max_instances: usize,
     metrics: Option<Arc<BridgeMetrics>>,
     failures: Mutex<BTreeMap<String, u32>>,
@@ -52,6 +56,7 @@ pub struct WorkerSupervisorOptions {
     timeout: Duration,
     quarantine_duration: Duration,
     use_audio_ipc: bool,
+    use_framed_control_ipc: bool,
     max_instances: usize,
     metrics: Option<Arc<BridgeMetrics>>,
 }
@@ -64,6 +69,7 @@ struct WorkerProcess {
     stderr: StderrTail,
     audio: Option<WorkerAudioConnection>,
     termination_target: WorkerTerminationTarget,
+    use_framed_control_ipc: bool,
     next_request_id: u64,
 }
 
@@ -152,6 +158,7 @@ impl WorkerSupervisor {
             executable: options.executable,
             timeout: options.timeout,
             use_audio_ipc: options.use_audio_ipc,
+            use_framed_control_ipc: options.use_framed_control_ipc,
             max_instances: options.max_instances,
             metrics: options.metrics,
             failures: Mutex::new(BTreeMap::new()),
@@ -268,6 +275,7 @@ impl WorkerSupervisorOptions {
             timeout: DEFAULT_IPC_TIMEOUT,
             quarantine_duration: DEFAULT_QUARANTINE_DURATION,
             use_audio_ipc: true,
+            use_framed_control_ipc: true,
             max_instances: DEFAULT_MAX_WORKER_INSTANCES,
             metrics: None,
         }
@@ -288,6 +296,11 @@ impl WorkerSupervisorOptions {
         self
     }
 
+    pub fn with_framed_control_ipc(mut self, enabled: bool) -> Self {
+        self.use_framed_control_ipc = enabled;
+        self
+    }
+
     pub fn with_max_instances(mut self, max_instances: usize) -> Self {
         self.max_instances = max_instances.max(1);
         self
@@ -304,6 +317,7 @@ impl WorkerProcess {
         executable: PathBuf,
         timeout_duration: Duration,
         use_audio_ipc: bool,
+        use_framed_control_ipc: bool,
         metrics: Option<Arc<BridgeMetrics>>,
     ) -> Result<Self, WorkerSupervisorError> {
         let audio_listener = if use_audio_ipc {
@@ -317,7 +331,11 @@ impl WorkerProcess {
         };
 
         let mut command = Command::new(&executable);
-        command.arg("serve");
+        command.arg(if use_framed_control_ipc {
+            "serve-framed"
+        } else {
+            "serve"
+        });
         WorkerTerminationTarget::configure_command(&mut command);
         if let Some(listener) = audio_listener.as_ref() {
             let address = listener
@@ -358,6 +376,7 @@ impl WorkerProcess {
             stderr: StderrTail::spawn(stderr),
             audio: None,
             termination_target,
+            use_framed_control_ipc,
             next_request_id: 1,
         };
 
@@ -397,34 +416,10 @@ impl WorkerProcess {
             "params": params,
         }))
         .map_err(|error| self.protocol_error(error.to_string()))?;
-        let line = format!("{request}\n");
-
-        match timeout(timeout_duration, self.stdin.write_all(line.as_bytes())).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
-            Err(_) => {
-                let error = self.timeout_error(method, timeout_duration).await;
-                return Err(error);
-            }
-        }
-        match timeout(timeout_duration, self.stdin.flush()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
-            Err(_) => {
-                let error = self.timeout_error(method, timeout_duration).await;
-                return Err(error);
-            }
-        }
-
-        let line = match timeout(timeout_duration, self.stdout.next_line()).await {
-            Ok(line) => line
-                .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?
-                .ok_or_else(|| self.protocol_error("worker stdout closed".to_string()))?,
-            Err(_) => {
-                let error = self.timeout_error(method, timeout_duration).await;
-                return Err(error);
-            }
-        };
+        self.write_request(id, &request, timeout_duration).await?;
+        let line = self
+            .read_response_body(id, method, timeout_duration)
+            .await?;
         let response = serde_json::from_str::<WorkerResponse>(&line)
             .map_err(|error| WorkerSupervisorError::InvalidJson(error.to_string()))?;
 
@@ -444,6 +439,101 @@ impl WorkerProcess {
         response
             .result
             .ok_or_else(|| self.protocol_error("missing result".to_string()))
+    }
+
+    async fn write_request(
+        &mut self,
+        id: u64,
+        request: &str,
+        timeout_duration: Duration,
+    ) -> Result<(), WorkerSupervisorError> {
+        let body = if self.use_framed_control_ipc {
+            WorkerControlIpcMessage::request(id, request.as_bytes().to_vec())
+                .map_err(|error| self.protocol_error(error.to_string()))?
+                .encode()
+                .map_err(|error| self.protocol_error(error.to_string()))?
+        } else {
+            format!("{request}\n").into_bytes()
+        };
+
+        match timeout(timeout_duration, self.stdin.write_all(&body)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
+            Err(_) => {
+                let error = self.timeout_error("control.write", timeout_duration).await;
+                return Err(error);
+            }
+        }
+        match timeout(timeout_duration, self.stdin.flush()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
+            Err(_) => {
+                let error = self.timeout_error("control.flush", timeout_duration).await;
+                return Err(error);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn read_response_body(
+        &mut self,
+        id: u64,
+        method: &'static str,
+        timeout_duration: Duration,
+    ) -> Result<String, WorkerSupervisorError> {
+        if !self.use_framed_control_ipc {
+            return match timeout(timeout_duration, self.stdout.next_line()).await {
+                Ok(line) => line
+                    .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?
+                    .ok_or_else(|| self.protocol_error("worker stdout closed".to_string())),
+                Err(_) => {
+                    let error = self.timeout_error(method, timeout_duration).await;
+                    Err(error)
+                }
+            };
+        }
+
+        let mut header_bytes = [0; WORKER_CONTROL_IPC_HEADER_LEN];
+        match timeout(
+            timeout_duration,
+            self.stdout.get_mut().read_exact(&mut header_bytes),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
+            Err(_) => {
+                let error = self.timeout_error(method, timeout_duration).await;
+                return Err(error);
+            }
+        }
+        let header = WorkerControlIpcHeader::decode(&header_bytes)
+            .map_err(|error| self.protocol_error(error.to_string()))?;
+        if header.sequence != id {
+            return Err(
+                self.protocol_error(format!("framed response sequence mismatch for {method}"))
+            );
+        }
+        let body_len = usize::try_from(header.body_len)
+            .map_err(|_| self.protocol_error("framed response body too large".to_string()))?;
+        let mut body = vec![0; body_len];
+        match timeout(
+            timeout_duration,
+            self.stdout.get_mut().read_exact(&mut body),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
+            Err(_) => {
+                let error = self.timeout_error(method, timeout_duration).await;
+                return Err(error);
+            }
+        }
+
+        String::from_utf8(body)
+            .map_err(|error| self.protocol_error(format!("invalid framed response utf8: {error}")))
     }
 
     async fn shutdown(&mut self) -> WorkerShutdownAudit {
@@ -507,6 +597,7 @@ impl WorkerSupervisor {
             self.executable.clone(),
             self.timeout,
             self.use_audio_ipc,
+            self.use_framed_control_ipc,
             self.metrics.clone(),
         )
         .await?;
@@ -521,8 +612,12 @@ impl WorkerSupervisor {
             }
         };
 
-        if let Err(error) =
-            worker_supervisor_hello::validate_worker_hello(&process.stderr, hello).await
+        if let Err(error) = worker_supervisor_hello::validate_worker_hello(
+            &process.stderr,
+            hello,
+            self.use_framed_control_ipc,
+        )
+        .await
         {
             self.record_shutdown(process.shutdown().await);
             return Err(error);
@@ -679,12 +774,17 @@ impl WorkerSupervisor {
         Self::with_options(
             WorkerSupervisorOptions::new(executable)
                 .with_timeout(timeout)
-                .with_audio_ipc(false),
+                .with_audio_ipc(false)
+                .with_framed_control_ipc(false),
         )
     }
 
     pub fn new_for_test_with_audio(executable: PathBuf, timeout: Duration) -> Self {
-        Self::with_options(WorkerSupervisorOptions::new(executable).with_timeout(timeout))
+        Self::with_options(
+            WorkerSupervisorOptions::new(executable)
+                .with_timeout(timeout)
+                .with_framed_control_ipc(false),
+        )
     }
 
     pub fn new_for_test_with_quarantine(
@@ -696,7 +796,8 @@ impl WorkerSupervisor {
             WorkerSupervisorOptions::new(executable)
                 .with_timeout(timeout)
                 .with_quarantine_duration(quarantine_duration)
-                .with_audio_ipc(false),
+                .with_audio_ipc(false)
+                .with_framed_control_ipc(false),
         )
     }
 }

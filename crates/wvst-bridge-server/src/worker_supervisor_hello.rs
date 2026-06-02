@@ -18,11 +18,14 @@ struct WorkerCapabilities {
     instance_lifecycle: bool,
     #[serde(default)]
     binary_audio_process: bool,
+    #[serde(default)]
+    framed_control_ipc: bool,
 }
 
 pub(super) async fn validate_worker_hello(
     stderr: &StderrTail,
     hello: Value,
+    require_framed_control_ipc: bool,
 ) -> Result<(), WorkerSupervisorError> {
     let parsed = match serde_json::from_value::<WorkerHello>(hello.clone()) {
         Ok(parsed) => parsed,
@@ -64,6 +67,16 @@ pub(super) async fn validate_worker_hello(
         return Err(incompatible_worker(
             stderr,
             "missing binaryAudioProcess capability".to_string(),
+            Some(u64::from(parsed.ipc_version)),
+            hello,
+        )
+        .await);
+    }
+
+    if require_framed_control_ipc && !parsed.capabilities.framed_control_ipc {
+        return Err(incompatible_worker(
+            stderr,
+            "missing framedControlIpc capability".to_string(),
             Some(u64::from(parsed.ipc_version)),
             hello,
         )

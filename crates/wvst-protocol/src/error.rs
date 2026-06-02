@@ -6,11 +6,14 @@ pub enum ProtocolError {
     BufferTooSmall { min: usize, actual: usize },
     InvalidMagic(u32),
     InvalidWorkerAudioIpcMagic(u32),
+    InvalidWorkerControlIpcMagic(u32),
     UnsupportedWorkerAudioIpcVersion(u16),
+    UnsupportedWorkerControlIpcVersion(u16),
     UnsupportedAudioFrameVersion(u16),
     InvalidHeaderLength(u16),
     InvalidSampleFormat(u8),
     InvalidWorkerAudioMessageKind(u16),
+    InvalidWorkerControlMessageKind(u16),
     InvalidMidiEventKind(u8),
     InvalidMidiChannel(u8),
     InvalidMidiData { field: &'static str, value: u8 },
@@ -33,8 +36,14 @@ impl Display for ProtocolError {
             Self::InvalidWorkerAudioIpcMagic(value) => {
                 write!(formatter, "invalid worker audio IPC magic: {value:#x}")
             }
+            Self::InvalidWorkerControlIpcMagic(value) => {
+                write!(formatter, "invalid worker control IPC magic: {value:#x}")
+            }
             Self::UnsupportedWorkerAudioIpcVersion(value) => {
                 write!(formatter, "unsupported worker audio IPC version: {value}")
+            }
+            Self::UnsupportedWorkerControlIpcVersion(value) => {
+                write!(formatter, "unsupported worker control IPC version: {value}")
             }
             Self::UnsupportedAudioFrameVersion(value) => {
                 write!(formatter, "unsupported audio frame version: {value}")
@@ -43,6 +52,9 @@ impl Display for ProtocolError {
             Self::InvalidSampleFormat(value) => write!(formatter, "invalid sample format: {value}"),
             Self::InvalidWorkerAudioMessageKind(value) => {
                 write!(formatter, "invalid worker audio message kind: {value}")
+            }
+            Self::InvalidWorkerControlMessageKind(value) => {
+                write!(formatter, "invalid worker control message kind: {value}")
             }
             Self::InvalidMidiEventKind(value) => {
                 write!(formatter, "invalid MIDI event kind: {value}")

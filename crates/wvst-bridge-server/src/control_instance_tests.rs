@@ -383,6 +383,7 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
         crate::worker_supervisor::WorkerSupervisorOptions::new(worker_path.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
+            .with_framed_control_ipc(false)
             .with_max_instances(1),
     );
     let context = RequestContext {

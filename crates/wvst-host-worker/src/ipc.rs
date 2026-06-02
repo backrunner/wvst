@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use wvst_protocol::{
+    WORKER_CONTROL_IPC_HEADER_LEN, WorkerControlIpcHeader, WorkerControlIpcMessage,
+};
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
 use wvst_vst3_host::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
@@ -123,9 +126,21 @@ pub fn serve_stdio(audio_connect: Option<String>) -> Result<(), String> {
     serve_with_audio(stdin.lock(), stdout.lock(), audio_connect)
 }
 
+pub fn serve_framed_stdio(audio_connect: Option<String>) -> Result<(), String> {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+
+    serve_framed_with_audio(stdin.lock(), stdout.lock(), audio_connect)
+}
+
 #[cfg(test)]
 pub fn serve(reader: impl BufRead, mut writer: impl Write) -> Result<(), String> {
     serve_with_audio(reader, &mut writer, None)
+}
+
+#[cfg(test)]
+pub fn serve_framed(reader: impl Read, writer: impl Write) -> Result<(), String> {
+    serve_framed_with_audio(reader, writer, None)
 }
 
 fn serve_with_audio(
@@ -155,6 +170,63 @@ fn serve_with_audio(
     }
 
     Ok(())
+}
+
+fn serve_framed_with_audio(
+    mut reader: impl Read,
+    mut writer: impl Write,
+    audio_connect: Option<String>,
+) -> Result<(), String> {
+    let state = Arc::new(Mutex::new(WorkerIpcState::default()));
+    if let Some(address) = audio_connect {
+        ipc_audio::spawn_audio_thread(address, Arc::clone(&state));
+    }
+
+    while let Some((sequence, request)) = read_control_request(&mut reader)? {
+        let response = {
+            let mut state = state
+                .lock()
+                .map_err(|_| "worker state mutex poisoned".to_string())?;
+            handle_ipc_line(&request, &mut state)
+        };
+        write_control_response(&mut writer, sequence, response)?;
+    }
+
+    Ok(())
+}
+
+fn read_control_request(reader: &mut impl Read) -> Result<Option<(u64, String)>, String> {
+    let mut header_bytes = [0; WORKER_CONTROL_IPC_HEADER_LEN];
+    match reader.read_exact(&mut header_bytes) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    }
+    let header =
+        WorkerControlIpcHeader::decode(&header_bytes).map_err(|error| error.to_string())?;
+    let body_len = usize::try_from(header.body_len).map_err(|_| "control body too large")?;
+    let mut body = vec![0; body_len];
+    reader
+        .read_exact(&mut body)
+        .map_err(|error| error.to_string())?;
+
+    String::from_utf8(body)
+        .map(|request| Some((header.sequence, request)))
+        .map_err(|error| format!("invalid control request utf8: {error}"))
+}
+
+fn write_control_response(
+    writer: &mut impl Write,
+    sequence: u64,
+    response: String,
+) -> Result<(), String> {
+    let message = WorkerControlIpcMessage::response(sequence, response.into_bytes())
+        .map_err(|error| error.to_string())?;
+    let frame = message.encode().map_err(|error| error.to_string())?;
+    writer
+        .write_all(&frame)
+        .map_err(|error| error.to_string())?;
+    writer.flush().map_err(|error| error.to_string())
 }
 
 pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
@@ -438,7 +510,8 @@ fn worker_hello() -> Value {
             "vst3UnitData": true,
             "vst3ControllerState": true,
             "preallocatedAudioBuffers": true,
-            "sampleRateValidation": true
+            "sampleRateValidation": true,
+            "framedControlIpc": true
         }
     })
 }
@@ -824,6 +897,29 @@ mod tests {
 
         let text = String::from_utf8(output).expect("utf8");
         assert_eq!(text.lines().count(), 2);
+    }
+
+    #[test]
+    fn serve_framed_round_trips_control_frames() {
+        let request =
+            WorkerControlIpcMessage::request(42, br#"{"id":1,"method":"worker.hello"}"#.to_vec())
+                .expect("request")
+                .encode()
+                .expect("encoded request");
+        let mut output = Vec::new();
+
+        serve_framed(&request[..], &mut output).expect("served");
+
+        let header = WorkerControlIpcHeader::decode(&output).expect("header");
+        assert_eq!(header.sequence, 42);
+        assert_eq!(
+            header.body_len as usize,
+            output.len() - WORKER_CONTROL_IPC_HEADER_LEN
+        );
+        let response: Value = serde_json::from_slice(&output[WORKER_CONTROL_IPC_HEADER_LEN..])
+            .expect("response json");
+        assert_eq!(response["id"], 1);
+        assert_eq!(response["result"]["capabilities"]["framedControlIpc"], true);
     }
 
     fn unique_temp_dir() -> std::path::PathBuf {
