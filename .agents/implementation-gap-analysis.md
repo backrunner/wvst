@@ -49,6 +49,7 @@
 - `wvst-vst3-host` 已加入 `Vst3ProcessBuffers`，能预分配 planar input/output buffer，将 interleaved f32 输入转换为 VST3 channel buffers，并把 planar 输出复制回 interleaved f32；同时覆盖无输入音源 VST 的 buffer 路径。
 - `wvst-vst3-host` 已加入 VST3 `IEventList` / `Event` ABI skeleton 和 `Vst3EventList` safe wrapper，`ProcessData.input_events` 现在指向稳定的预分配事件列表，每个 block 会清空旧事件并填充新的 note/poly pressure 事件。
 - `wvst-vst3-host` 已加入 VST3 `IParameterChanges` / `IParamValueQueue` ABI skeleton 和 `Vst3ParameterChanges` safe wrapper，`ProcessData.input_parameter_changes` 现在指向稳定的 host-owned 参数队列，每个 block 会按 ParamID 分组填充 sample-accurate normalized automation points。
+- `wvst-vst3-host` 已加入 VST3 host-owned `ProcessContext` 和 `IProcessContextRequirements` 查询，`ProcessData.process_context` 指向稳定堆内存并随 block 推进 sample timeline、tempo、拍号和 musical position；worker diagnostics 已暴露插件声明的 process context requirements bitmask。
 - `wvst-vst3-host` 已加入 `Vst3AudioProcessor` facade，能封装 owned `IAudioProcessor` 指针并调用 `canProcessSampleSize`、`setupProcessing`、`setProcessing`、`process`、latency/tail 查询；fake ABI fixture 已覆盖真实 `ProcessData` 指针链路。
 - `wvst-vst3-host` 已加入 `Vst3ComponentInstance` holder，能持有 owned `IComponent` + `Vst3AudioProcessor`，并将 initialize、setupProcessing、setActive、setProcessing、process、terminate 串入 `Vst3Lifecycle`；fake component/processor fixture 已覆盖完整生命周期和错误传播。
 - `wvst-vst3-host` 已接入基础 audio bus 配置：`setupProcessing` 前调用 `setBusArrangements` 设置 mono/stereo 或 zero-input instrument arrangement，`activate/terminate` 会开关主 audio input/output bus，并覆盖 `setActive` 失败后的 bus rollback。
@@ -58,8 +59,8 @@
 - `Vst3ComponentInstance::initialize()` 已传入 WVST `IHostApplication` host context，插件可通过 `queryInterface(IHostApplication)` 读取宿主名称；host-side `createInstance()` 已支持创建 host-owned `IMessage` 和 `IAttributeList` 对象，覆盖 controller/editor communication 常见宿主对象请求。
 - `wvst-host-worker serve` 已接入首版 runtime backend：instance create 可持久保存 `Vst3LoadedComponent`，`instance.start/stop/destroy` 会驱动真实 VST3 lifecycle，worker audio IPC 可调用真实 `process()`；invalid class id 或非 bundle 路径仍回退 passthrough 以保持测试和开发路径可用。
 - worker create response、worker metrics、Bridge instance record 和 Web SDK `InstanceDescriptor` 已暴露 backend、`latencySamples`、`tailSamples`，Web 侧可以在挂载后读取插件处理延迟和 tail 信息。
-- VST3 controller 基础链路已接入：component 可查询 controller class id，macOS factory runtime 会创建可选 `IEditController`，worker 初始化 controller、注册可记录 begin/perform/end edit 与 restartComponent 的 `IComponentHandler`，并在 component/controller 都支持 `IConnectionPoint` 时建立/释放双向连接；Bridge/worker/Web 控制面已暴露参数列表、unit/program metadata、normalized 参数读写、component/controller state base64 get/set 聚合、unit selection、unit-by-bus 查询、`setUnitProgramData`、`IProgramListData` 和 `IUnitData` 数据读写。
-- `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler` host callback 事件快照、`IConnectionPoint` component/controller 通信 facade 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入、handler edit/restart callbacks、连接点 connect/disconnect 和生命周期释放。
+- VST3 controller 基础链路已接入：component 可查询 controller class id，macOS factory runtime 会创建可选 `IEditController`，worker 初始化 controller、注册可记录 begin/perform/end edit、restartComponent、dirty/editor/group-edit 的 `IComponentHandler`/`IComponentHandler2`，并在 component/controller 都支持 `IConnectionPoint` 时建立/释放双向连接；Bridge/worker/Web 控制面已暴露参数列表、unit/program metadata、normalized 参数读写、component/controller state base64 get/set 聚合、unit selection、unit-by-bus 查询、`setUnitProgramData`、`IProgramListData` 和 `IUnitData` 数据读写。
+- `wvst-vst3-host` 已提供 `IBStream` 内存流、`IComponentHandler`/`IComponentHandler2` host callback 事件快照、`IConnectionPoint` component/controller 通信 facade 和 `Vst3EditController` safe facade，并用 fake ABI 覆盖参数信息、参数设置、state 写入、handler edit/restart/dirty/editor/group-edit callbacks、连接点 connect/disconnect 和生命周期释放。
 - `wvst-host-worker` metrics 已暴露 VST3 runtime diagnostics，其中包含 controller `IComponentHandler` 最近事件和累计事件数；Web SDK metrics 类型已同步，后续 Web 主动推送/参数同步可以复用该结构。
 - `wvst-vst3-host` 已提供可选 `IUnitInfo` facade，能读取 units、program lists、program names 和 selected unit；`wvst-host-worker` / Bridge / Web SDK 已提供 `instance.units` / `client.instances.units()` 查询 API。
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
@@ -93,8 +94,8 @@
 仍缺少：
 
 - 更完整的多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、host-created `IMessage` / `IAttributeList`、audio bus 查询、selected-bus activation，并支持单个主 bus 的 mono/stereo/常见 3.0 到 7.1 speaker arrangement。
-- `IEditController`、`IComponentHandler` callback 事件记录、`IConnectionPoint`、参数列表、unit/program metadata、normalized 参数读写、component/controller state get/set 聚合、unit selection、unit-by-bus、program/unit data 读写以及 parameter-change queue/sample-accurate automation 已有首版；仍缺少真实第三方 controller/automation/unit-info/program-data/message/connection-point 兼容验证，以及把 handler 事件主动推送到 Web UI 的协议。
-- 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
+- `IEditController`、`IComponentHandler`/`IComponentHandler2` callback 事件记录、`IConnectionPoint`、参数列表、unit/program metadata、normalized 参数读写、component/controller state get/set 聚合、unit selection、unit-by-bus、program/unit data 读写以及 parameter-change queue/sample-accurate automation 已有首版；仍缺少真实第三方 controller/automation/unit-info/program-data/message/connection-point 兼容验证，以及把 handler 事件主动推送到 Web UI 的协议。
+- 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、process context、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
 
 ### 4. 低延迟音频数据面
 

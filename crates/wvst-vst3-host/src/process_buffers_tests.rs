@@ -3,10 +3,11 @@ use crate::event_list::{Vst3InputEvent, Vst3NoteEvent};
 use crate::parameter_changes::Vst3ParameterChange;
 use crate::vst3_abi::IParameterChanges;
 use crate::vst3_abi::{Event, IEventList, VST3_EVENT_TYPE_NOTE_ON};
+use crate::vst3_abi::{ProcessContext, VST3_PROCESS_CONTEXT_PLAYING};
 
 #[test]
 fn deinterleaves_stereo_input_to_planar_channels() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 2, 2).expect("buffers");
     let input = [1.0, 10.0, 2.0, 20.0, 3.0, 30.0];
 
     buffers.prepare_interleaved_f32(3, &input).expect("prepare");
@@ -28,7 +29,7 @@ fn deinterleaves_stereo_input_to_planar_channels() {
 
 #[test]
 fn copies_planar_output_to_interleaved_buffer() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 2, 2).expect("buffers");
     buffers
         .prepare_interleaved_f32(3, &[0.0; 6])
         .expect("prepare");
@@ -51,7 +52,7 @@ fn copies_planar_output_to_interleaved_buffer() {
 
 #[test]
 fn clears_each_planar_output_channel_between_blocks() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 2, 2).expect("buffers");
     buffers
         .prepare_interleaved_f32(3, &[0.0; 6])
         .expect("prepare");
@@ -77,7 +78,7 @@ fn clears_each_planar_output_channel_between_blocks() {
 
 #[test]
 fn rejects_frame_count_above_max() {
-    let mut buffers = Vst3ProcessBuffers::new(2, 2, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 2, 2, 2).expect("buffers");
     let error = buffers
         .prepare_interleaved_f32(3, &[0.0; 6])
         .expect_err("frame count above max");
@@ -93,7 +94,7 @@ fn rejects_frame_count_above_max() {
 
 #[test]
 fn rejects_invalid_input_and_output_lengths() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 2, 2).expect("buffers");
     let input_error = buffers
         .prepare_interleaved_f32(2, &[0.0; 3])
         .expect_err("input mismatch");
@@ -123,7 +124,7 @@ fn rejects_invalid_input_and_output_lengths() {
 
 #[test]
 fn supports_instrument_buffers_without_input_bus() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
 
     buffers.prepare_interleaved_f32(2, &[]).expect("prepare");
     buffers
@@ -148,8 +149,43 @@ fn supports_instrument_buffers_without_input_bus() {
 }
 
 #[test]
+fn exposes_process_context_and_advances_timeline() {
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 2, 2).expect("buffers");
+
+    buffers
+        .prepare_interleaved_f32(64, &[0.0; 128])
+        .expect("first block");
+    let context = unsafe {
+        &*buffers
+            .process_data
+            .process_context
+            .cast::<ProcessContext>()
+    };
+
+    assert!(!buffers.process_data.process_context.is_null());
+    assert_eq!(context.sample_rate, 48_000.0);
+    assert_eq!(context.project_time_samples, 0);
+    assert_eq!(context.continous_time_samples, 64);
+    assert_ne!(context.state & VST3_PROCESS_CONTEXT_PLAYING, 0);
+
+    buffers
+        .prepare_interleaved_f32(32, &[0.0; 64])
+        .expect("second block");
+    let context = unsafe {
+        &*buffers
+            .process_data
+            .process_context
+            .cast::<ProcessContext>()
+    };
+
+    assert_eq!(context.project_time_samples, 64);
+    assert_eq!(context.continous_time_samples, 96);
+    assert!(context.project_time_music > 0.0);
+}
+
+#[test]
 fn exposes_prepared_input_events_to_process_data() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
     buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
     buffers
         .prepare_input_events(
@@ -180,7 +216,7 @@ fn exposes_prepared_input_events_to_process_data() {
 
 #[test]
 fn clears_prepared_input_events_between_blocks() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
     buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
     buffers
         .prepare_input_events(
@@ -207,7 +243,7 @@ fn clears_prepared_input_events_between_blocks() {
 
 #[test]
 fn exposes_prepared_parameter_changes_to_process_data() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
     buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
     buffers
         .prepare_input_parameter_changes(
@@ -251,7 +287,7 @@ fn exposes_prepared_parameter_changes_to_process_data() {
 
 #[test]
 fn clears_prepared_parameter_changes_between_blocks() {
-    let mut buffers = Vst3ProcessBuffers::new(128, 0, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
     buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
     buffers
         .prepare_input_parameter_changes(

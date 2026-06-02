@@ -37,6 +37,7 @@ impl Vst3ComponentInstance {
         let component = unsafe { Vst3ComponentHandle::from_raw(component)? };
         let processor = unsafe { Vst3AudioProcessor::from_raw(processor)? };
         let buffers = Vst3ProcessBuffers::new(
+            processing_config.sample_rate as f64,
             processing_config.max_block_frames,
             processing_config.input_channels,
             processing_config.output_channels,
@@ -245,6 +246,10 @@ impl Vst3ComponentInstance {
 
     pub fn tail_samples(&self) -> u32 {
         self.processor.tail_samples()
+    }
+
+    pub fn process_context_requirements(&self) -> Option<u32> {
+        self.processor.process_context_requirements()
     }
 
     fn require_state(

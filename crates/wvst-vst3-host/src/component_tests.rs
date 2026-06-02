@@ -4,8 +4,8 @@ use std::slice;
 
 use crate::vst3_abi::{
     AudioBusBuffers, BusInfo, FUnknown, IAudioProcessor, IAudioProcessorVTable, IComponent,
-    IComponentVTable, K_RESULT_OK, ProcessData, ProcessSetup, SpeakerArrangement, TUid,
-    VST3_BUS_DIRECTION_INPUT, VST3_BUS_DIRECTION_OUTPUT, VST3_BUS_FLAG_DEFAULT_ACTIVE,
+    IComponentVTable, K_RESULT_FALSE, K_RESULT_OK, ProcessData, ProcessSetup, SpeakerArrangement,
+    TUid, VST3_BUS_DIRECTION_INPUT, VST3_BUS_DIRECTION_OUTPUT, VST3_BUS_FLAG_DEFAULT_ACTIVE,
     VST3_BUS_TYPE_MAIN, VST3_MEDIA_TYPE_AUDIO, VST3_SAMPLE_32, VST3_SPEAKER_STEREO,
 };
 
@@ -450,9 +450,12 @@ static FAKE_PROCESSOR_VTABLE: IAudioProcessorVTable = IAudioProcessorVTable {
 unsafe extern "system" fn fake_processor_query_interface(
     _this: *mut IAudioProcessor,
     _iid: *const i8,
-    _obj: *mut *mut c_void,
+    obj: *mut *mut c_void,
 ) -> i32 {
-    -1
+    if !obj.is_null() {
+        unsafe { *obj = ptr::null_mut() };
+    }
+    K_RESULT_FALSE
 }
 
 unsafe extern "system" fn fake_processor_add_ref(_this: *mut IAudioProcessor) -> u32 {

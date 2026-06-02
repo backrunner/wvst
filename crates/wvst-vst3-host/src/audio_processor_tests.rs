@@ -3,8 +3,11 @@ use std::ptr;
 use std::slice;
 
 use crate::vst3_abi::{
-    AudioBusBuffers, IAudioProcessor, IAudioProcessorVTable, K_RESULT_OK, ProcessData,
-    ProcessSetup, SpeakerArrangement, VST3_SAMPLE_32, VST3_SPEAKER_51, VST3_SPEAKER_STEREO,
+    AudioBusBuffers, IAudioProcessor, IAudioProcessorVTable, IProcessContextRequirements,
+    IProcessContextRequirementsVTable, K_RESULT_FALSE, K_RESULT_OK, ProcessData, ProcessSetup,
+    SpeakerArrangement, VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID, VST3_PROCESS_CONTEXT_NEED_TEMPO,
+    VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE, VST3_SAMPLE_32, VST3_SPEAKER_51, VST3_SPEAKER_STEREO,
+    parse_tuid_hex,
 };
 
 use super::*;
@@ -14,6 +17,8 @@ fn sets_up_processes_and_releases_audio_processor() {
     let mut fake = FakeProcessor::new();
     fake.latency_samples = 64;
     fake.tail_samples = 128;
+    fake.process_context_requirements =
+        Some(VST3_PROCESS_CONTEXT_NEED_TEMPO | VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE);
     let mut processor =
         unsafe { Vst3AudioProcessor::from_raw(fake.raw_processor()) }.expect("processor");
     let config = Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
@@ -30,11 +35,16 @@ fn sets_up_processes_and_releases_audio_processor() {
     assert_eq!(setup.sample_rate, 48_000.0);
     assert_eq!(processor.latency_samples(), 64);
     assert_eq!(processor.tail_samples(), 128);
+    assert_eq!(
+        processor.process_context_requirements(),
+        Some(VST3_PROCESS_CONTEXT_NEED_TEMPO | VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE)
+    );
+    assert_eq!(fake.requirements_release_calls, 1);
 
     processor.set_processing(true).expect("start");
     assert!(processor.is_processing());
 
-    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 2, 2).expect("buffers");
     buffers
         .prepare_interleaved_f32(2, &[1.0, 2.0, 3.0, 4.0])
         .expect("prepare");
@@ -149,7 +159,7 @@ fn rejects_failed_process_call() {
     let mut processor =
         unsafe { Vst3AudioProcessor::from_raw(fake.raw_processor()) }.expect("processor");
     let config = Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
-    let mut buffers = Vst3ProcessBuffers::new(128, 2, 2).expect("buffers");
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 2, 2).expect("buffers");
     buffers
         .prepare_interleaved_f32(2, &[1.0, 2.0, 3.0, 4.0])
         .expect("prepare");
@@ -177,6 +187,7 @@ fn rejects_null_audio_processor_pointer() {
 #[repr(C)]
 struct FakeProcessor {
     processor: IAudioProcessor,
+    requirements: IProcessContextRequirements,
     can_process_result: i32,
     setup_result: i32,
     set_bus_arrangement_result: i32,
@@ -194,6 +205,8 @@ struct FakeProcessor {
     last_num_samples: i32,
     latency_samples: u32,
     tail_samples: u32,
+    process_context_requirements: Option<u32>,
+    requirements_release_calls: u32,
 }
 
 impl FakeProcessor {
@@ -201,6 +214,9 @@ impl FakeProcessor {
         Self {
             processor: IAudioProcessor {
                 vtable: &FAKE_AUDIO_PROCESSOR_VTABLE,
+            },
+            requirements: IProcessContextRequirements {
+                vtable: &FAKE_PROCESS_CONTEXT_REQUIREMENTS_VTABLE,
             },
             can_process_result: K_RESULT_OK,
             setup_result: K_RESULT_OK,
@@ -219,6 +235,8 @@ impl FakeProcessor {
             last_num_samples: 0,
             latency_samples: 0,
             tail_samples: 0,
+            process_context_requirements: None,
+            requirements_release_calls: 0,
         }
     }
 
@@ -242,11 +260,27 @@ static FAKE_AUDIO_PROCESSOR_VTABLE: IAudioProcessorVTable = IAudioProcessorVTabl
 };
 
 unsafe extern "system" fn fake_query_interface(
-    _this: *mut IAudioProcessor,
-    _iid: *const i8,
-    _obj: *mut *mut c_void,
+    this: *mut IAudioProcessor,
+    iid: *const i8,
+    obj: *mut *mut c_void,
 ) -> i32 {
-    -1
+    if obj.is_null() {
+        return K_RESULT_FALSE;
+    }
+    let fake = unsafe { fake_mut(this) };
+    let requested = unsafe { tuid_from_raw(iid) };
+    let context_iid = parse_tuid_hex(VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID).expect("iid");
+    if requested == Some(context_iid) {
+        if fake.process_context_requirements.is_some() {
+            unsafe { *obj = (&mut fake.requirements as *mut IProcessContextRequirements).cast() };
+            return K_RESULT_OK;
+        }
+        unsafe { *obj = ptr::null_mut() };
+        return K_RESULT_FALSE;
+    }
+
+    unsafe { *obj = ptr::null_mut() };
+    K_RESULT_FALSE
 }
 
 unsafe extern "system" fn fake_add_ref(_this: *mut IAudioProcessor) -> u32 {
@@ -348,6 +382,45 @@ unsafe extern "system" fn fake_get_tail_samples(this: *mut IAudioProcessor) -> u
     unsafe { fake_mut(this) }.tail_samples
 }
 
+static FAKE_PROCESS_CONTEXT_REQUIREMENTS_VTABLE: IProcessContextRequirementsVTable =
+    IProcessContextRequirementsVTable {
+        query_interface: fake_requirements_query_interface,
+        add_ref: fake_requirements_add_ref,
+        release: fake_requirements_release,
+        get_process_context_requirements: fake_get_process_context_requirements,
+    };
+
+unsafe extern "system" fn fake_requirements_query_interface(
+    _this: *mut IProcessContextRequirements,
+    _iid: *const i8,
+    obj: *mut *mut c_void,
+) -> i32 {
+    if !obj.is_null() {
+        unsafe { *obj = ptr::null_mut() };
+    }
+    K_RESULT_FALSE
+}
+
+unsafe extern "system" fn fake_requirements_add_ref(
+    _this: *mut IProcessContextRequirements,
+) -> u32 {
+    1
+}
+
+unsafe extern "system" fn fake_requirements_release(this: *mut IProcessContextRequirements) -> u32 {
+    let fake = unsafe { fake_mut_from_requirements(this) };
+    fake.requirements_release_calls += 1;
+    fake.requirements_release_calls
+}
+
+unsafe extern "system" fn fake_get_process_context_requirements(
+    this: *mut IProcessContextRequirements,
+) -> u32 {
+    unsafe { fake_mut_from_requirements(this) }
+        .process_context_requirements
+        .unwrap_or(0)
+}
+
 fn process_first_audio_bus(data: &mut ProcessData) -> i32 {
     if data.num_samples < 0 || data.num_outputs <= 0 || data.outputs.is_null() {
         return -1;
@@ -395,6 +468,23 @@ unsafe fn fake_mut<'a>(this: *mut IAudioProcessor) -> &'a mut FakeProcessor {
     // SAFETY: FakeProcessor is repr(C) and stores IAudioProcessor as its first
     // field, so the interface pointer has the same address as the fake object.
     unsafe { &mut *(this.cast::<FakeProcessor>()) }
+}
+
+unsafe fn fake_mut_from_requirements<'a>(
+    this: *mut IProcessContextRequirements,
+) -> &'a mut FakeProcessor {
+    let base = this.cast::<u8>();
+    let offset = std::mem::offset_of!(FakeProcessor, requirements);
+    unsafe { &mut *(base.sub(offset).cast::<FakeProcessor>()) }
+}
+
+unsafe fn tuid_from_raw(raw: *const i8) -> Option<crate::vst3_abi::TUid> {
+    if raw.is_null() {
+        return None;
+    }
+    let mut output = [0; 16];
+    unsafe { output.copy_from_slice(std::slice::from_raw_parts(raw.cast::<u8>(), 16)) };
+    Some(output)
 }
 
 unsafe fn first_bus<'a>(buses: *mut AudioBusBuffers, count: i32) -> &'a AudioBusBuffers {

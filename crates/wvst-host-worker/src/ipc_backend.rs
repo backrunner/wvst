@@ -40,6 +40,8 @@ pub(super) enum WorkerBackendKind {
 pub(super) struct WorkerBackendDiagnostics {
     #[serde(skip_serializing_if = "Option::is_none")]
     component_handler: Option<wvst_vst3_host::Vst3ComponentHandlerSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    process_context_requirements: Option<u32>,
 }
 
 impl WorkerBackend {
@@ -108,9 +110,14 @@ impl WorkerBackend {
         match self {
             Self::Passthrough(_) => WorkerBackendDiagnostics {
                 component_handler: None,
+                process_context_requirements: None,
             },
             Self::Vst3Runtime(runtime) => WorkerBackendDiagnostics {
                 component_handler: runtime.component.component_handler_snapshot(),
+                process_context_requirements: runtime
+                    .component
+                    .instance()
+                    .process_context_requirements(),
             },
         }
     }

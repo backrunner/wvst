@@ -255,6 +255,7 @@ export interface InstanceWorkerRuntimeMetrics {
 
 export interface InstanceWorkerRuntimeDiagnostics {
   componentHandler?: Vst3ComponentHandlerSnapshot | null;
+  processContextRequirements?: number;
 }
 
 export interface Vst3ComponentHandlerSnapshot {
@@ -264,10 +265,20 @@ export interface Vst3ComponentHandlerSnapshot {
 
 export interface Vst3ComponentHandlerEvent {
   sequence: number;
-  kind: "begin-edit" | "perform-edit" | "end-edit" | "restart-component";
+  kind:
+    | "begin-edit"
+    | "perform-edit"
+    | "end-edit"
+    | "restart-component"
+    | "set-dirty"
+    | "request-open-editor"
+    | "start-group-edit"
+    | "finish-group-edit";
   parameterId?: number;
   valueNormalized?: number;
   flags?: number;
+  dirty?: boolean;
+  editorName?: string;
 }
 
 export interface InstanceStatusResult {

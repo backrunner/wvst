@@ -6,9 +6,9 @@ use crate::HostError;
 use crate::vst3_abi::{
     FUnknown, IAudioProcessor, IAudioProcessorVTable, IComponent, IComponentHandler,
     IComponentVTable, IConnectionPoint, IConnectionPointVTable, IEditController,
-    IEditControllerVTable, IMessage, K_RESULT_OK, ParameterInfo, ProcessData, ProcessSetup,
-    SpeakerArrangement, TUid, VST3_FUNKNOWN_IID, VST3_I_CONNECTION_POINT_IID, VST3_SAMPLE_32,
-    parse_tuid_hex,
+    IEditControllerVTable, IMessage, K_RESULT_FALSE, K_RESULT_OK, ParameterInfo, ProcessData,
+    ProcessSetup, SpeakerArrangement, TUid, VST3_FUNKNOWN_IID, VST3_I_CONNECTION_POINT_IID,
+    VST3_SAMPLE_32, parse_tuid_hex,
 };
 
 #[test]
@@ -356,9 +356,12 @@ unsafe extern "system" fn fake_get_state(_this: *mut IComponent, _state: *mut c_
 unsafe extern "system" fn fake_processor_query_interface(
     _this: *mut IAudioProcessor,
     _iid: *const i8,
-    _obj: *mut *mut c_void,
+    obj: *mut *mut c_void,
 ) -> i32 {
-    1
+    if !obj.is_null() {
+        unsafe { *obj = ptr::null_mut() };
+    }
+    K_RESULT_FALSE
 }
 
 unsafe extern "system" fn fake_processor_add_ref(_this: *mut IAudioProcessor) -> u32 {

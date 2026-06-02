@@ -7,7 +7,10 @@ use crate::event_list::{DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3EventList, Vst3In
 use crate::parameter_changes::{
     DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK, Vst3ParameterChange, Vst3ParameterChanges,
 };
-use crate::vst3_abi::{AudioBusBuffers, ProcessData, VST3_PROCESS_MODE_REALTIME, VST3_SAMPLE_32};
+use crate::vst3_abi::{
+    AudioBusBuffers, ProcessContext, ProcessData, VST3_PROCESS_CONTEXT_PLAYING,
+    VST3_PROCESS_MODE_REALTIME, VST3_SAMPLE_32,
+};
 use crate::{HostError, HostResult};
 
 #[derive(Debug)]
@@ -24,11 +27,17 @@ pub struct Vst3ProcessBuffers {
     output_buses: Vec<AudioBusBuffers>,
     input_events: Vst3EventList,
     input_parameter_changes: Vst3ParameterChanges,
+    process_context: Box<ProcessContext>,
     process_data: ProcessData,
 }
 
 impl Vst3ProcessBuffers {
-    pub fn new(max_frames: u16, input_channels: u16, output_channels: u16) -> HostResult<Self> {
+    pub fn new(
+        sample_rate: f64,
+        max_frames: u16,
+        input_channels: u16,
+        output_channels: u16,
+    ) -> HostResult<Self> {
         if max_frames == 0 {
             return Err(HostError::InvalidMaxBlockFrames(max_frames));
         }
@@ -50,6 +59,7 @@ impl Vst3ProcessBuffers {
         let input_events = Vst3EventList::new(DEFAULT_MAX_VST3_EVENTS_PER_BLOCK);
         let input_parameter_changes =
             Vst3ParameterChanges::new(DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK);
+        let process_context = Box::new(ProcessContext::stopped(sample_rate));
 
         let mut buffers = Self {
             max_frames,
@@ -64,6 +74,7 @@ impl Vst3ProcessBuffers {
             output_buses,
             input_events,
             input_parameter_changes,
+            process_context,
             process_data: empty_process_data(),
         };
         buffers.refresh_abi_pointers();
@@ -115,6 +126,17 @@ impl Vst3ProcessBuffers {
         }
         self.prepared_frames = frames;
         self.process_data.num_samples = frames as i32;
+        self.process_context.state |= VST3_PROCESS_CONTEXT_PLAYING;
+        self.process_context.project_time_samples = self.process_context.continous_time_samples;
+        self.process_context.continous_time_samples = self
+            .process_context
+            .continous_time_samples
+            .saturating_add(frames as i64);
+        self.process_context.project_time_music = samples_to_quarter_notes(
+            self.process_context.project_time_samples,
+            self.process_context.sample_rate,
+        );
+        self.process_context.bar_position_music = self.process_context.project_time_music;
 
         Ok(())
     }
@@ -246,6 +268,8 @@ impl Vst3ProcessBuffers {
         self.process_data.input_events = self.input_events.as_raw_ptr().cast::<c_void>();
         self.process_data.input_parameter_changes =
             self.input_parameter_changes.as_raw_ptr().cast::<c_void>();
+        self.process_data.process_context =
+            (&mut *self.process_context as *mut ProcessContext).cast::<c_void>();
     }
 }
 
@@ -295,6 +319,14 @@ fn empty_process_data() -> ProcessData {
         output_events: ptr::null_mut::<c_void>(),
         process_context: ptr::null_mut::<c_void>(),
     }
+}
+
+fn samples_to_quarter_notes(samples: i64, sample_rate: f64) -> f64 {
+    if sample_rate <= 0.0 {
+        return 0.0;
+    }
+    let seconds = samples as f64 / sample_rate;
+    seconds * (120.0 / 60.0)
 }
 
 #[cfg(test)]

@@ -29,6 +29,8 @@ pub const VST3_I_PROGRAM_LIST_DATA_IID: &str = "8683B01F7B354F70A2651DEC353AF4FF
 pub const VST3_I_UNIT_DATA_IID: &str = "6C389611D391455DB870B83394A0EFDD";
 pub const VST3_I_CONNECTION_POINT_IID: &str = "70A4156F6E6E4026989148BFAA60D8D1";
 pub const VST3_I_COMPONENT_HANDLER_IID: &str = "93A0BEA30BD045DB8E890B0CC1E46AC6";
+pub const VST3_I_COMPONENT_HANDLER2_IID: &str = "F040B4B3A36045ECABCDC045B4D5A2CC";
+pub const VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID: &str = "2A654303EF764E3D95B5FE83730EF6D0";
 pub const VST3_I_HOST_APPLICATION_IID: &str = "58E595CCDB2D49698B6AAF8C36A664E5";
 pub const VST3_I_ATTRIBUTE_LIST_IID: &str = "1E5F0AEBCC7F4533A254401138AD5EE4";
 pub const VST3_I_MESSAGE_IID: &str = "936F033BC6C047DBBB0882F813C1E613";
@@ -59,6 +61,30 @@ pub const VST3_SPEAKER_50: SpeakerArrangement = 0x37;
 pub const VST3_SPEAKER_51: SpeakerArrangement = 0x3f;
 pub const VST3_SPEAKER_61_CINE: SpeakerArrangement = 0x13f;
 pub const VST3_SPEAKER_71_CINE: SpeakerArrangement = 0xff;
+pub const VST3_PROCESS_CONTEXT_PLAYING: u32 = 1 << 1;
+pub const VST3_PROCESS_CONTEXT_CYCLE_ACTIVE: u32 = 1 << 2;
+pub const VST3_PROCESS_CONTEXT_RECORDING: u32 = 1 << 3;
+pub const VST3_PROCESS_CONTEXT_SYSTEM_TIME_VALID: u32 = 1 << 8;
+pub const VST3_PROCESS_CONTEXT_PROJECT_TIME_MUSIC_VALID: u32 = 1 << 9;
+pub const VST3_PROCESS_CONTEXT_TEMPO_VALID: u32 = 1 << 10;
+pub const VST3_PROCESS_CONTEXT_BAR_POSITION_VALID: u32 = 1 << 11;
+pub const VST3_PROCESS_CONTEXT_CYCLE_VALID: u32 = 1 << 12;
+pub const VST3_PROCESS_CONTEXT_TIME_SIG_VALID: u32 = 1 << 13;
+pub const VST3_PROCESS_CONTEXT_SMPTE_VALID: u32 = 1 << 14;
+pub const VST3_PROCESS_CONTEXT_CLOCK_VALID: u32 = 1 << 15;
+pub const VST3_PROCESS_CONTEXT_CONT_TIME_VALID: u32 = 1 << 17;
+pub const VST3_PROCESS_CONTEXT_CHORD_VALID: u32 = 1 << 18;
+pub const VST3_PROCESS_CONTEXT_NEED_SYSTEM_TIME: u32 = 1 << 0;
+pub const VST3_PROCESS_CONTEXT_NEED_CONT_TIME: u32 = 1 << 1;
+pub const VST3_PROCESS_CONTEXT_NEED_PROJECT_TIME_MUSIC: u32 = 1 << 2;
+pub const VST3_PROCESS_CONTEXT_NEED_BAR_POSITION_MUSIC: u32 = 1 << 3;
+pub const VST3_PROCESS_CONTEXT_NEED_CYCLE_MUSIC: u32 = 1 << 4;
+pub const VST3_PROCESS_CONTEXT_NEED_SAMPLES_TO_NEXT_CLOCK: u32 = 1 << 5;
+pub const VST3_PROCESS_CONTEXT_NEED_TEMPO: u32 = 1 << 6;
+pub const VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE: u32 = 1 << 7;
+pub const VST3_PROCESS_CONTEXT_NEED_CHORD: u32 = 1 << 8;
+pub const VST3_PROCESS_CONTEXT_NEED_FRAME_RATE: u32 = 1 << 9;
+pub const VST3_PROCESS_CONTEXT_NEED_TRANSPORT_STATE: u32 = 1 << 10;
 
 pub type TBool = u8;
 pub type TUid = [u8; 16];
@@ -68,6 +94,8 @@ pub type CtrlNumber = i16;
 pub type UnitId = i32;
 pub type ProgramListId = i32;
 pub type SampleRate = f64;
+pub type TSamples = i64;
+pub type TQuarterNotes = f64;
 pub type SpeakerArrangement = u64;
 pub type String128 = [u16; 128];
 pub type FidString = *const c_char;
@@ -270,6 +298,47 @@ pub struct IComponentHandlerVTable {
     pub end_edit: unsafe extern "system" fn(this: *mut IComponentHandler, id: ParamId) -> i32,
     pub restart_component:
         unsafe extern "system" fn(this: *mut IComponentHandler, flags: i32) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IComponentHandler2 {
+    pub vtable: *const IComponentHandler2VTable,
+}
+
+#[repr(C)]
+pub struct IComponentHandler2VTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IComponentHandler2,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IComponentHandler2) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IComponentHandler2) -> u32,
+    pub set_dirty: unsafe extern "system" fn(this: *mut IComponentHandler2, state: TBool) -> i32,
+    pub request_open_editor:
+        unsafe extern "system" fn(this: *mut IComponentHandler2, name: FidString) -> i32,
+    pub start_group_edit: unsafe extern "system" fn(this: *mut IComponentHandler2) -> i32,
+    pub finish_group_edit: unsafe extern "system" fn(this: *mut IComponentHandler2) -> i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct IProcessContextRequirements {
+    pub vtable: *const IProcessContextRequirementsVTable,
+}
+
+#[repr(C)]
+pub struct IProcessContextRequirementsVTable {
+    pub query_interface: unsafe extern "system" fn(
+        this: *mut IProcessContextRequirements,
+        iid: *const i8,
+        obj: *mut *mut c_void,
+    ) -> i32,
+    pub add_ref: unsafe extern "system" fn(this: *mut IProcessContextRequirements) -> u32,
+    pub release: unsafe extern "system" fn(this: *mut IProcessContextRequirements) -> u32,
+    pub get_process_context_requirements:
+        unsafe extern "system" fn(this: *mut IProcessContextRequirements) -> u32,
 }
 
 #[repr(C)]
@@ -795,6 +864,69 @@ pub struct AudioBusBuffers {
     pub num_channels: i32,
     pub silence_flags: u64,
     pub channel_buffers32: *mut *mut f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FrameRate {
+    pub frames_per_second: u32,
+    pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Chord {
+    pub key_note: u8,
+    pub root_note: u8,
+    pub chord_mask: i16,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProcessContext {
+    pub state: u32,
+    pub sample_rate: SampleRate,
+    pub project_time_samples: TSamples,
+    pub system_time: i64,
+    pub continous_time_samples: TSamples,
+    pub project_time_music: TQuarterNotes,
+    pub bar_position_music: TQuarterNotes,
+    pub cycle_start_music: TQuarterNotes,
+    pub cycle_end_music: TQuarterNotes,
+    pub tempo: f64,
+    pub time_sig_numerator: i32,
+    pub time_sig_denominator: i32,
+    pub chord: Chord,
+    pub smpte_offset_subframes: i32,
+    pub frame_rate: FrameRate,
+    pub samples_to_next_clock: i32,
+}
+
+impl ProcessContext {
+    pub fn stopped(sample_rate: SampleRate) -> Self {
+        Self {
+            state: VST3_PROCESS_CONTEXT_CONT_TIME_VALID
+                | VST3_PROCESS_CONTEXT_PROJECT_TIME_MUSIC_VALID
+                | VST3_PROCESS_CONTEXT_BAR_POSITION_VALID
+                | VST3_PROCESS_CONTEXT_TEMPO_VALID
+                | VST3_PROCESS_CONTEXT_TIME_SIG_VALID,
+            sample_rate,
+            project_time_samples: 0,
+            system_time: 0,
+            continous_time_samples: 0,
+            project_time_music: 0.0,
+            bar_position_music: 0.0,
+            cycle_start_music: 0.0,
+            cycle_end_music: 0.0,
+            tempo: 120.0,
+            time_sig_numerator: 4,
+            time_sig_denominator: 4,
+            chord: Chord::default(),
+            smpte_offset_subframes: 0,
+            frame_rate: FrameRate::default(),
+            samples_to_next_clock: 0,
+        }
+    }
 }
 
 #[repr(C)]

@@ -3,9 +3,11 @@ use std::ptr;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
-    IAudioProcessor, IAudioProcessorVTable, K_RESULT_OK, ProcessSetup, VST3_SAMPLE_32,
+    IAudioProcessor, IAudioProcessorVTable, IProcessContextRequirements, K_RESULT_FALSE,
+    K_RESULT_OK, ProcessSetup, VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID, VST3_SAMPLE_32,
     VST3_SPEAKER_30_CINE, VST3_SPEAKER_40_MUSIC, VST3_SPEAKER_50, VST3_SPEAKER_51,
     VST3_SPEAKER_61_CINE, VST3_SPEAKER_71_CINE, VST3_SPEAKER_MONO, VST3_SPEAKER_STEREO,
+    parse_tuid_hex,
 };
 use crate::{HostError, HostResult, Vst3ProcessBuffers, Vst3ProcessingConfig};
 
@@ -13,6 +15,7 @@ use crate::{HostError, HostResult, Vst3ProcessBuffers, Vst3ProcessingConfig};
 pub struct Vst3AudioProcessor {
     processor: NonNull<IAudioProcessor>,
     processing: bool,
+    process_context_requirements: Option<u32>,
 }
 
 impl Vst3AudioProcessor {
@@ -34,6 +37,7 @@ impl Vst3AudioProcessor {
         Ok(Self {
             processor,
             processing: false,
+            process_context_requirements: None,
         })
     }
 
@@ -41,7 +45,12 @@ impl Vst3AudioProcessor {
         self.processing
     }
 
+    pub const fn process_context_requirements(&self) -> Option<u32> {
+        self.process_context_requirements
+    }
+
     pub fn setup_realtime_f32(&mut self, config: Vst3ProcessingConfig) -> HostResult<()> {
+        self.process_context_requirements = self.query_process_context_requirements()?;
         self.call_result("canProcessSampleSize", |processor, vtable| unsafe {
             // SAFETY: vtable and processor were validated by from_raw; the
             // sample-size value is a VST3 ABI constant.
@@ -131,6 +140,51 @@ impl Vst3AudioProcessor {
         // SAFETY: from_raw validated both the object pointer and the vtable
         // pointer. The wrapper owns the reference until Drop calls release.
         unsafe { &*self.processor.as_ref().vtable }
+    }
+
+    fn query_process_context_requirements(&self) -> HostResult<Option<u32>> {
+        let Some(requirements) =
+            self.query_optional_interface(VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID)?
+        else {
+            return Ok(None);
+        };
+        let requirements = requirements.cast::<IProcessContextRequirements>();
+        let vtable = unsafe { &*(*requirements).vtable };
+        let flags = unsafe { (vtable.get_process_context_requirements)(requirements) };
+        unsafe { (vtable.release)(requirements) };
+        Ok(Some(flags))
+    }
+
+    fn query_optional_interface(&self, interface_id: &str) -> HostResult<Option<*mut c_void>> {
+        let interface_tuid = parse_tuid_hex(interface_id)
+            .ok_or_else(|| HostError::InvalidInterfaceId(interface_id.to_string()))?;
+        let mut object: *mut c_void = ptr::null_mut();
+        let result = unsafe {
+            // SAFETY: processor/vtable were validated by from_raw. object is
+            // writable stack storage for the optional queried interface.
+            (self.vtable().query_interface)(
+                self.processor.as_ptr(),
+                interface_tuid.as_ptr().cast(),
+                &mut object,
+            )
+        };
+
+        if result == K_RESULT_FALSE {
+            return Ok(None);
+        }
+        if result != K_RESULT_OK {
+            return Err(HostError::InterfaceQueryFailed {
+                interface_id: interface_id.to_string(),
+                result,
+            });
+        }
+        if object.is_null() {
+            return Err(HostError::InterfaceReturnedNull {
+                interface_id: interface_id.to_string(),
+            });
+        }
+
+        Ok(Some(object))
     }
 }
 
