@@ -11,7 +11,7 @@ use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use wvst_core::ChannelCount;
-use wvst_process_supervision::WorkerResourceLimits;
+use wvst_process_supervision::{LinuxCgroupLimits, WorkerResourceLimits};
 use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameFlags, AudioFrameHeader};
 
 use crate::audio_in_flight::AudioInFlightLimiter;
@@ -151,6 +151,18 @@ fn worker_resource_limits(config: &BridgeConfig) -> WorkerResourceLimits {
     }
     if let Some(seconds) = config.worker_cpu_time_limit_seconds() {
         limits = limits.with_cpu_time_seconds(seconds);
+    }
+    if let Some(parent) = config.worker_linux_cgroup_parent() {
+        let mut cgroup = LinuxCgroupLimits::new(parent.to_path_buf());
+        if let Some(bytes) = config.worker_linux_cgroup_memory_max_bytes() {
+            cgroup = cgroup.with_memory_max_bytes(bytes);
+        }
+        if let Some((quota, period)) = config.worker_linux_cgroup_cpu_max_micros() {
+            cgroup = cgroup.with_cpu_max_micros(quota, period);
+        }
+        if !cgroup.is_empty() {
+            limits = limits.with_linux_cgroup(cgroup);
+        }
     }
     limits
 }

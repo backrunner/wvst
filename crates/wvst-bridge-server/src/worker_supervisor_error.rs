@@ -7,7 +7,10 @@ impl WorkerSupervisorError {
         match self {
             Self::WorkerRejected { code, .. } => *code,
             Self::Timeout { .. } => 5035,
-            Self::Spawn { .. } | Self::MissingPipe(_) | Self::Io(_) => 5036,
+            Self::Spawn { .. }
+            | Self::MissingPipe(_)
+            | Self::Io(_)
+            | Self::SupervisionSetup { .. } => 5036,
             Self::InvalidJson(_) | Self::Protocol { .. } => 5037,
             Self::Quarantined { .. } => 4093,
             Self::IncompatibleWorker { .. } => 4094,
@@ -31,6 +34,9 @@ impl WorkerSupervisorError {
             }
             Self::InvalidJson(message) => format!("worker returned invalid JSON: {message}"),
             Self::Protocol { message, .. } => format!("worker protocol error: {message}"),
+            Self::SupervisionSetup { message } => {
+                format!("worker supervision setup failed: {message}")
+            }
             Self::Quarantined {
                 plugin_id,
                 failures,
@@ -78,6 +84,9 @@ impl WorkerSupervisorError {
             Self::InvalidJson(message) => json!({ "kind": "invalid-json", "message": message }),
             Self::Protocol { message, stderr } => {
                 json!({ "kind": "protocol", "message": message, "stderr": stderr })
+            }
+            Self::SupervisionSetup { message } => {
+                json!({ "kind": "supervision-setup-failed", "message": message })
             }
             Self::Quarantined {
                 plugin_id,

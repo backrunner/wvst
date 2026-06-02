@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
 use url::{Host, Url};
+use wvst_process_supervision::DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS;
 use wvst_protocol::WORKER_CONTROL_IPC_MAX_BODY_LEN;
 
 use crate::{BridgeError, BridgeResult};
@@ -20,6 +22,10 @@ pub struct BridgeConfig {
     max_control_message_bytes: usize,
     worker_memory_limit_bytes: Option<u64>,
     worker_cpu_time_limit_seconds: Option<u64>,
+    worker_linux_cgroup_parent: Option<PathBuf>,
+    worker_linux_cgroup_memory_max_bytes: Option<u64>,
+    worker_linux_cgroup_cpu_quota_micros: Option<u64>,
+    worker_linux_cgroup_cpu_period_micros: u64,
 }
 
 impl BridgeConfig {
@@ -65,6 +71,25 @@ impl BridgeConfig {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0);
+        let worker_linux_cgroup_parent = std::env::var_os("WVST_WORKER_LINUX_CGROUP_PARENT")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let worker_linux_cgroup_memory_max_bytes =
+            std::env::var("WVST_WORKER_LINUX_CGROUP_MEMORY_MAX_BYTES")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0);
+        let worker_linux_cgroup_cpu_quota_micros =
+            std::env::var("WVST_WORKER_LINUX_CGROUP_CPU_QUOTA_MICROS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0);
+        let worker_linux_cgroup_cpu_period_micros =
+            std::env::var("WVST_WORKER_LINUX_CGROUP_CPU_PERIOD_MICROS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS);
 
         Ok(Self {
             bind_addr,
@@ -76,6 +101,10 @@ impl BridgeConfig {
             max_control_message_bytes,
             worker_memory_limit_bytes,
             worker_cpu_time_limit_seconds,
+            worker_linux_cgroup_parent,
+            worker_linux_cgroup_memory_max_bytes,
+            worker_linux_cgroup_cpu_quota_micros,
+            worker_linux_cgroup_cpu_period_micros,
         })
     }
 
@@ -90,6 +119,10 @@ impl BridgeConfig {
             max_control_message_bytes: DEFAULT_MAX_CONTROL_MESSAGE_BYTES,
             worker_memory_limit_bytes: None,
             worker_cpu_time_limit_seconds: None,
+            worker_linux_cgroup_parent: None,
+            worker_linux_cgroup_memory_max_bytes: None,
+            worker_linux_cgroup_cpu_quota_micros: None,
+            worker_linux_cgroup_cpu_period_micros: DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS,
         }
     }
 
@@ -125,6 +158,45 @@ impl BridgeConfig {
 
     pub fn without_worker_cpu_time_limit(mut self) -> Self {
         self.worker_cpu_time_limit_seconds = None;
+        self
+    }
+
+    pub fn with_worker_linux_cgroup_parent(mut self, parent: impl Into<PathBuf>) -> Self {
+        self.worker_linux_cgroup_parent = Some(parent.into());
+        self
+    }
+
+    pub fn without_worker_linux_cgroup(mut self) -> Self {
+        self.worker_linux_cgroup_parent = None;
+        self.worker_linux_cgroup_memory_max_bytes = None;
+        self.worker_linux_cgroup_cpu_quota_micros = None;
+        self.worker_linux_cgroup_cpu_period_micros = DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS;
+        self
+    }
+
+    pub fn with_worker_linux_cgroup_memory_max_bytes(mut self, bytes: u64) -> Self {
+        self.worker_linux_cgroup_memory_max_bytes = Some(bytes.max(1));
+        self
+    }
+
+    pub fn without_worker_linux_cgroup_memory_max(mut self) -> Self {
+        self.worker_linux_cgroup_memory_max_bytes = None;
+        self
+    }
+
+    pub fn with_worker_linux_cgroup_cpu_max_micros(
+        mut self,
+        quota_micros: u64,
+        period_micros: u64,
+    ) -> Self {
+        self.worker_linux_cgroup_cpu_quota_micros = Some(quota_micros.max(1));
+        self.worker_linux_cgroup_cpu_period_micros = period_micros.max(1);
+        self
+    }
+
+    pub fn without_worker_linux_cgroup_cpu_max(mut self) -> Self {
+        self.worker_linux_cgroup_cpu_quota_micros = None;
+        self.worker_linux_cgroup_cpu_period_micros = DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS;
         self
     }
 
@@ -177,6 +249,19 @@ impl BridgeConfig {
 
     pub fn worker_cpu_time_limit_seconds(&self) -> Option<u64> {
         self.worker_cpu_time_limit_seconds
+    }
+
+    pub fn worker_linux_cgroup_parent(&self) -> Option<&Path> {
+        self.worker_linux_cgroup_parent.as_deref()
+    }
+
+    pub fn worker_linux_cgroup_memory_max_bytes(&self) -> Option<u64> {
+        self.worker_linux_cgroup_memory_max_bytes
+    }
+
+    pub fn worker_linux_cgroup_cpu_max_micros(&self) -> Option<(u64, u64)> {
+        self.worker_linux_cgroup_cpu_quota_micros
+            .map(|quota| (quota, self.worker_linux_cgroup_cpu_period_micros))
     }
 }
 
@@ -299,5 +384,37 @@ mod tests {
                 .worker_cpu_time_limit_seconds(),
             None
         );
+    }
+
+    #[test]
+    fn configures_optional_linux_cgroup_limits() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+
+        assert_eq!(config.worker_linux_cgroup_parent(), None);
+        assert_eq!(config.worker_linux_cgroup_memory_max_bytes(), None);
+        assert_eq!(config.worker_linux_cgroup_cpu_max_micros(), None);
+
+        let configured = config
+            .clone()
+            .with_worker_linux_cgroup_parent("/sys/fs/cgroup/wvst")
+            .with_worker_linux_cgroup_memory_max_bytes(256 * 1024 * 1024)
+            .with_worker_linux_cgroup_cpu_max_micros(50_000, 100_000);
+        assert_eq!(
+            configured.worker_linux_cgroup_parent(),
+            Some(Path::new("/sys/fs/cgroup/wvst"))
+        );
+        assert_eq!(
+            configured.worker_linux_cgroup_memory_max_bytes(),
+            Some(256 * 1024 * 1024)
+        );
+        assert_eq!(
+            configured.worker_linux_cgroup_cpu_max_micros(),
+            Some((50_000, 100_000))
+        );
+
+        let cleared = configured.without_worker_linux_cgroup();
+        assert_eq!(cleared.worker_linux_cgroup_parent(), None);
+        assert_eq!(cleared.worker_linux_cgroup_memory_max_bytes(), None);
+        assert_eq!(cleared.worker_linux_cgroup_cpu_max_micros(), None);
     }
 }

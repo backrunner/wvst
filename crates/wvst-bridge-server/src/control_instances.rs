@@ -184,7 +184,14 @@ pub async fn handle_instance_restart(
         Err(error) => {
             context.metrics.increment_worker_failures();
             let _ = context.instances.mark_worker_failed(record.instance_id);
-            emit_worker_error(&context, record.instance_id, &record.plugin_id, &error);
+            emit_recovery_failed(
+                &context,
+                record.instance_id,
+                &record.plugin_id,
+                WorkerRecoveryMode::ManualRestart,
+                "restart-failed",
+                &error,
+            );
             response_worker_supervisor_error(id, error)
         }
     }
@@ -348,10 +355,12 @@ async fn handle_status_worker_failure(
         }
         Err(restart_error) => {
             let _ = context.instances.mark_worker_failed(record.instance_id);
-            emit_worker_error(
+            emit_recovery_failed(
                 &context,
                 record.instance_id,
                 &record.plugin_id,
+                WorkerRecoveryMode::AutoHeartbeat,
+                "restart-failed",
                 &restart_error,
             );
             response_worker_supervisor_error(id, restart_error)
@@ -393,7 +402,14 @@ async fn mark_restarted_instance(
             },
             Err(error) => {
                 let _ = context.instances.mark_worker_failed(record.instance_id);
-                emit_worker_error(&context, record.instance_id, &record.plugin_id, &error);
+                emit_recovery_failed(
+                    &context,
+                    record.instance_id,
+                    &record.plugin_id,
+                    WorkerRecoveryMode::ManualRestart,
+                    "restore-processing-failed",
+                    &error,
+                );
                 response_worker_supervisor_error(id, error)
             }
         };
@@ -449,7 +465,14 @@ async fn mark_auto_recovered_instance(
             },
             Err(error) => {
                 let _ = context.instances.mark_worker_failed(record.instance_id);
-                emit_worker_error(&context, record.instance_id, &record.plugin_id, &error);
+                emit_recovery_failed(
+                    &context,
+                    record.instance_id,
+                    &record.plugin_id,
+                    WorkerRecoveryMode::AutoHeartbeat,
+                    "restore-processing-failed",
+                    &error,
+                );
                 response_worker_supervisor_error(id, error)
             }
         };
@@ -498,6 +521,24 @@ fn emit_worker_error(
         message: error.rpc_message(),
         error_data: Some(error.rpc_data()),
     });
+}
+
+fn emit_recovery_failed(
+    context: &ControlContext<'_>,
+    instance_id: u64,
+    plugin_id: &str,
+    mode: WorkerRecoveryMode,
+    reason: &str,
+    error: &WorkerSupervisorError,
+) {
+    context.events.emit(BridgeEventKind::WorkerRecoveryFailed {
+        instance_id,
+        plugin_id: plugin_id.to_string(),
+        mode,
+        reason: reason.to_string(),
+        error_data: Some(error.rpc_data()),
+    });
+    emit_worker_error(context, instance_id, plugin_id, error);
 }
 
 pub async fn handle_instance_parameters(

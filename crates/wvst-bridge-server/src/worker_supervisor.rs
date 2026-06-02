@@ -128,6 +128,9 @@ pub enum WorkerSupervisorError {
         message: String,
         stderr: String,
     },
+    SupervisionSetup {
+        message: String,
+    },
     Quarantined {
         plugin_id: String,
         failures: u32,
@@ -360,7 +363,7 @@ impl WorkerProcess {
         } else {
             "serve"
         });
-        WorkerTerminationTarget::configure_command(&mut command, resource_limits);
+        WorkerTerminationTarget::configure_command(&mut command, resource_limits.clone());
         if let Some(listener) = audio_listener.as_ref() {
             let address = listener
                 .local_addr()
@@ -380,7 +383,16 @@ impl WorkerProcess {
                 message: error.to_string(),
             })?;
         let termination_target =
-            WorkerTerminationTarget::from_child_with_limits(&child, resource_limits);
+            match WorkerTerminationTarget::try_from_child_with_limits(&child, resource_limits) {
+                Ok(target) => target,
+                Err(error) => {
+                    let _ = child.start_kill();
+                    let _ = timeout(DEFAULT_IPC_TIMEOUT, child.wait()).await;
+                    return Err(WorkerSupervisorError::SupervisionSetup {
+                        message: error.to_string(),
+                    });
+                }
+            };
         let stdin = child
             .stdin
             .take()
@@ -622,7 +634,7 @@ impl WorkerSupervisor {
             self.timeout,
             self.use_audio_ipc,
             self.use_framed_control_ipc,
-            self.resource_limits,
+            self.resource_limits.clone(),
             self.metrics.clone(),
         )
         .await?;

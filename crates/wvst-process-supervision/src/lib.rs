@@ -1,26 +1,39 @@
+use std::error::Error;
+use std::fmt::{Display, Formatter};
+use std::path::{Path, PathBuf};
+
 use tokio::process::{Child, Command};
 
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub const DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS: u64 = 100_000;
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct WorkerResourceLimits {
     address_space_bytes: Option<u64>,
     cpu_time_seconds: Option<u64>,
+    linux_cgroup: Option<LinuxCgroupLimits>,
 }
 
 impl WorkerResourceLimits {
-    pub const fn none() -> Self {
+    pub fn none() -> Self {
         Self {
             address_space_bytes: None,
             cpu_time_seconds: None,
+            linux_cgroup: None,
         }
     }
 
-    pub const fn with_address_space_bytes(mut self, bytes: u64) -> Self {
+    pub fn with_address_space_bytes(mut self, bytes: u64) -> Self {
         self.address_space_bytes = Some(bytes);
         self
     }
 
-    pub const fn with_cpu_time_seconds(mut self, seconds: u64) -> Self {
+    pub fn with_cpu_time_seconds(mut self, seconds: u64) -> Self {
         self.cpu_time_seconds = Some(seconds);
+        self
+    }
+
+    pub fn with_linux_cgroup(mut self, cgroup: LinuxCgroupLimits) -> Self {
+        self.linux_cgroup = Some(cgroup);
         self
     }
 
@@ -32,8 +45,99 @@ impl WorkerResourceLimits {
         self.cpu_time_seconds
     }
 
+    pub fn linux_cgroup(&self) -> Option<&LinuxCgroupLimits> {
+        self.linux_cgroup.as_ref()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.address_space_bytes.is_none()
+            && self.cpu_time_seconds.is_none()
+            && self
+                .linux_cgroup
+                .as_ref()
+                .is_none_or(LinuxCgroupLimits::is_empty)
+    }
+
+    fn has_unix_rlimits(&self) -> bool {
+        self.address_space_bytes.is_some() || self.cpu_time_seconds.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct LinuxCgroupLimits {
+    parent: PathBuf,
+    memory_max_bytes: Option<u64>,
+    cpu_quota_micros: Option<u64>,
+    cpu_period_micros: u64,
+}
+
+impl LinuxCgroupLimits {
+    pub fn new(parent: impl Into<PathBuf>) -> Self {
+        Self {
+            parent: parent.into(),
+            memory_max_bytes: None,
+            cpu_quota_micros: None,
+            cpu_period_micros: DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS,
+        }
+    }
+
+    pub fn with_memory_max_bytes(mut self, bytes: u64) -> Self {
+        self.memory_max_bytes = Some(bytes.max(1));
+        self
+    }
+
+    pub fn with_cpu_max_micros(mut self, quota_micros: u64, period_micros: u64) -> Self {
+        self.cpu_quota_micros = Some(quota_micros.max(1));
+        self.cpu_period_micros = period_micros.max(1);
+        self
+    }
+
+    pub fn parent(&self) -> &Path {
+        &self.parent
+    }
+
+    pub const fn memory_max_bytes(&self) -> Option<u64> {
+        self.memory_max_bytes
+    }
+
+    pub const fn cpu_max_micros(&self) -> Option<(u64, u64)> {
+        match self.cpu_quota_micros {
+            Some(quota) => Some((quota, self.cpu_period_micros)),
+            None => None,
+        }
+    }
+
     pub const fn is_empty(&self) -> bool {
-        self.address_space_bytes.is_none() && self.cpu_time_seconds.is_none()
+        self.memory_max_bytes.is_none() && self.cpu_quota_micros.is_none()
+    }
+}
+
+#[derive(Debug)]
+pub enum WorkerSupervisionError {
+    MissingChildId,
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl Display for WorkerSupervisionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingChildId => write!(formatter, "worker child pid is unavailable"),
+            Self::Io { path, source } => {
+                write!(formatter, "{}: {source}", path.display())
+            }
+        }
+    }
+}
+
+impl Error for WorkerSupervisionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::MissingChildId => None,
+            Self::Io { source, .. } => Some(source),
+        }
     }
 }
 
@@ -41,6 +145,8 @@ impl WorkerResourceLimits {
 pub struct WorkerTerminationTarget {
     #[cfg(unix)]
     process_group_id: Option<u32>,
+    #[cfg(target_os = "linux")]
+    cgroup: Option<linux::CgroupHandle>,
     #[cfg(windows)]
     job: Option<windows::JobHandle>,
 }
@@ -56,10 +162,28 @@ impl WorkerTerminationTarget {
         Self::from_child_with_limits(child, WorkerResourceLimits::none())
     }
 
-    pub fn from_child_with_limits(child: &Child, _limits: WorkerResourceLimits) -> Self {
-        Self {
+    pub fn from_child_with_limits(child: &Child, limits: WorkerResourceLimits) -> Self {
+        Self::try_from_child_with_limits(child, limits).unwrap_or_else(|_| Self {
             process_group_id: child.id(),
-        }
+            #[cfg(target_os = "linux")]
+            cgroup: None,
+        })
+    }
+
+    pub fn try_from_child_with_limits(
+        child: &Child,
+        limits: WorkerResourceLimits,
+    ) -> Result<Self, WorkerSupervisionError> {
+        #[cfg(target_os = "linux")]
+        let cgroup = linux::CgroupHandle::create_for_child(child, limits.linux_cgroup())?;
+        #[cfg(not(target_os = "linux"))]
+        let _ = limits;
+
+        Ok(Self {
+            process_group_id: child.id(),
+            #[cfg(target_os = "linux")]
+            cgroup,
+        })
     }
 
     pub fn terminate_tree(&self) -> bool {
@@ -84,21 +208,32 @@ impl WorkerTerminationTarget {
 
 #[cfg(unix)]
 fn configure_unix_resource_limits(command: &mut Command, limits: WorkerResourceLimits) {
-    if limits.is_empty() {
+    if !limits.has_unix_rlimits() {
         return;
     }
+    let rlimits = UnixResourceLimitValues {
+        address_space_bytes: limits.address_space_bytes,
+        cpu_time_seconds: limits.cpu_time_seconds,
+    };
 
     unsafe {
         // SAFETY: `pre_exec` runs in the child process after fork and before
         // exec. The closure only calls async-signal-safe `setrlimit` through
         // rustix with Copy data captured from the parent; it does not touch
         // shared Rust state, allocate, lock, or perform I/O.
-        command.pre_exec(move || apply_unix_resource_limits(limits));
+        command.pre_exec(move || apply_unix_resource_limits(rlimits));
     }
 }
 
 #[cfg(unix)]
-fn apply_unix_resource_limits(limits: WorkerResourceLimits) -> std::io::Result<()> {
+#[derive(Debug, Clone, Copy)]
+struct UnixResourceLimitValues {
+    address_space_bytes: Option<u64>,
+    cpu_time_seconds: Option<u64>,
+}
+
+#[cfg(unix)]
+fn apply_unix_resource_limits(limits: UnixResourceLimitValues) -> std::io::Result<()> {
     if let Some(bytes) = limits.address_space_bytes {
         rustix::process::setrlimit(
             rustix::process::Resource::As,
@@ -198,6 +333,88 @@ mod tests {
 
         assert!(!limits.is_empty());
         assert_eq!(limits.cpu_time_seconds(), Some(30));
+    }
+
+    #[test]
+    fn linux_cgroup_limits_store_memory_and_cpu_max() {
+        let cgroup = LinuxCgroupLimits::new("/sys/fs/cgroup/wvst")
+            .with_memory_max_bytes(128 * 1024 * 1024)
+            .with_cpu_max_micros(50_000, 100_000);
+        let limits = WorkerResourceLimits::none().with_linux_cgroup(cgroup.clone());
+
+        assert!(!limits.is_empty());
+        assert_eq!(limits.linux_cgroup(), Some(&cgroup));
+        assert_eq!(cgroup.parent(), Path::new("/sys/fs/cgroup/wvst"));
+        assert_eq!(cgroup.memory_max_bytes(), Some(128 * 1024 * 1024));
+        assert_eq!(cgroup.cpu_max_micros(), Some((50_000, 100_000)));
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use tokio::process::Child;
+
+    use super::{LinuxCgroupLimits, WorkerSupervisionError};
+
+    #[derive(Debug)]
+    pub struct CgroupHandle {
+        path: PathBuf,
+    }
+
+    impl CgroupHandle {
+        pub fn create_for_child(
+            child: &Child,
+            limits: Option<&LinuxCgroupLimits>,
+        ) -> Result<Option<Self>, WorkerSupervisionError> {
+            let Some(limits) = limits.filter(|limits| !limits.is_empty()) else {
+                return Ok(None);
+            };
+            let pid = child.id().ok_or(WorkerSupervisionError::MissingChildId)?;
+            let path = worker_cgroup_path(limits.parent(), pid);
+
+            create_dir(&path)?;
+            if let Some(bytes) = limits.memory_max_bytes() {
+                write_cgroup_file(&path.join("memory.max"), &bytes.to_string())?;
+            }
+            if let Some((quota, period)) = limits.cpu_max_micros() {
+                write_cgroup_file(&path.join("cpu.max"), &format!("{quota} {period}"))?;
+            }
+            write_cgroup_file(&path.join("cgroup.procs"), &pid.to_string())?;
+
+            Ok(Some(Self { path }))
+        }
+    }
+
+    impl Drop for CgroupHandle {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir(&self.path);
+        }
+    }
+
+    fn worker_cgroup_path(parent: &Path, pid: u32) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        parent.join(format!("wvst-worker-{pid}-{nonce}"))
+    }
+
+    fn create_dir(path: &Path) -> Result<(), WorkerSupervisionError> {
+        fs::create_dir(path).map_err(|source| WorkerSupervisionError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+
+    fn write_cgroup_file(path: &Path, value: &str) -> Result<(), WorkerSupervisionError> {
+        fs::write(path, value).map_err(|source| WorkerSupervisionError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
     }
 }
 

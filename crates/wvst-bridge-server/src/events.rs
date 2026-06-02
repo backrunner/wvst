@@ -112,6 +112,14 @@ pub enum BridgeEventKind {
         processing_restored: bool,
         mode: WorkerRecoveryMode,
     },
+    WorkerRecoveryFailed {
+        instance_id: u64,
+        plugin_id: String,
+        mode: WorkerRecoveryMode,
+        reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_data: Option<Value>,
+    },
     WorkerQuarantined {
         plugin_id: String,
         failures: u32,
@@ -316,5 +324,21 @@ mod tests {
         assert_eq!(recovered["type"], "worker-recovered");
         assert_eq!(recovered["mode"], "manual-restart");
         assert_eq!(recovered["processingRestored"], true);
+    }
+
+    #[test]
+    fn serializes_worker_recovery_failed_diagnostics() {
+        let value = json!(BridgeEventKind::WorkerRecoveryFailed {
+            instance_id: 7,
+            plugin_id: "vst3:test".to_string(),
+            mode: WorkerRecoveryMode::AutoHeartbeat,
+            reason: "restart-failed".to_string(),
+            error_data: Some(json!({ "kind": "spawn" })),
+        });
+
+        assert_eq!(value["type"], "worker-recovery-failed");
+        assert_eq!(value["mode"], "auto-heartbeat");
+        assert_eq!(value["reason"], "restart-failed");
+        assert_eq!(value["errorData"]["kind"], "spawn");
     }
 }

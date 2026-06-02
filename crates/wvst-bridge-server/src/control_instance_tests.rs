@@ -657,6 +657,76 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn emits_recovery_failed_when_auto_restart_recreate_fails() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
+    let events = BridgeEventBus::new();
+    let metrics = BridgeMetrics::new();
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
+    let worker_path = serve_worker_rejects_recreate_after_metrics_exit_script();
+    let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        component_handler_events: &component_handler_events,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
+        workers: &workers,
+    };
+
+    let create_value = request_json(&instance_create_request(1, &plugin_id), context).await;
+    let instance_id = create_value["result"]["instanceId"]
+        .as_u64()
+        .expect("instance id");
+    let start_value =
+        request_json(&instance_request(2, "instance.start", instance_id), context).await;
+    assert_eq!(start_value["result"]["instance"]["state"], "processing");
+
+    let status_value = request_json(
+        &instance_request(3, "instance.status", instance_id),
+        context,
+    )
+    .await;
+    assert_eq!(status_value["error"]["code"], 4220);
+    assert_eq!(status_value["error"]["data"]["kind"], "worker-rejected");
+
+    let failed = instances.get(instance_id).expect("failed instance");
+    assert_eq!(failed.state, InstanceState::Failed);
+    assert_eq!(failed.worker_state, WorkerState::Failed);
+
+    let events_value =
+        request_json(r#"{"id":41,"method":"bridge.events","params":{}}"#, context).await;
+    let recovery_failed = events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find(|event| event["kind"]["type"] == "worker-recovery-failed")
+        .expect("recovery failed event");
+    assert_eq!(recovery_failed["kind"]["mode"], "auto-heartbeat");
+    assert_eq!(recovery_failed["kind"]["reason"], "restart-failed");
+    assert_eq!(
+        recovery_failed["kind"]["errorData"]["kind"],
+        "worker-rejected"
+    );
+    assert_eq!(
+        recovery_failed["kind"]["errorData"]["workerData"]["stage"],
+        "component.create"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn restarts_failed_instance_with_same_stream() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
         .with_worker_auto_restart(false);
@@ -999,6 +1069,47 @@ while IFS= read -r line; do
   esac
 done
 "#,
+    )
+    .expect("script");
+    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&worker, permissions).expect("permissions");
+    worker
+}
+
+#[cfg(unix)]
+fn serve_worker_rejects_recreate_after_metrics_exit_script() -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = unique_temp_dir();
+    std::fs::create_dir_all(&directory).expect("temp dir");
+    let marker = directory.join("created-once");
+    let worker = directory.join("serve-worker-rejects-recreate.sh");
+    std::fs::write(
+        &worker,
+        format!(
+            r#"#!/bin/sh
+marker={marker:?}
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *worker.hello*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"workerName":"test-worker","ipcVersion":1,"capabilities":{{"instanceLifecycle":true,"binaryAudioProcess":true}}}}}}\n' "$id" ;;
+    *instance.create*)
+      if [ -f "$marker" ]; then
+        printf '{{"jsonrpc":"2.0","id":%s,"error":{{"code":4220,"message":"component create failed","data":{{"kind":"vst3-runtime-init","stage":"component.create","hostError":"factory-create-instance-failed","message":"component create failed"}}}}}}\n' "$id"
+      else
+        : > "$marker"
+        printf '{{"jsonrpc":"2.0","id":%s,"result":{{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}}}\n' "$id"
+      fi
+      ;;
+    *instance.startProcessing*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"instanceId":1,"streamId":1,"workerState":"processing"}}}}\n' "$id" ;;
+    *worker.metrics*) exit 0 ;;
+    *) printf '{{"jsonrpc":"2.0","id":%s,"error":{{"code":-32601,"message":"unknown"}}}}\n' "$id" ;;
+  esac
+done
+"#,
+            marker = marker.to_string_lossy()
+        ),
     )
     .expect("script");
     let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();

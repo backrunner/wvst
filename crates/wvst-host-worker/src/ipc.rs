@@ -568,6 +568,10 @@ fn worker_hello() -> Value {
             "sampleRateValidation": true,
             "framedControlIpc": true,
             "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION,
+            "framedControlMaxBodyBytes": WORKER_CONTROL_IPC_MAX_BODY_LEN,
+            "framedControlSequenceIds": true,
+            "framedControlStatusCodes": true,
+            "framedControlErrorResponses": true,
             "vst3ControlErrors": true,
             "vst3ControlPayloadLimits": true,
             "maxVst3StateBytes": DEFAULT_MAX_VST3_STATE_BYTES
@@ -698,6 +702,22 @@ mod tests {
         assert_eq!(value["result"]["capabilities"]["vst3UnitData"], true);
         assert_eq!(value["result"]["capabilities"]["vst3ControllerState"], true);
         assert_eq!(value["result"]["capabilities"]["vst3ControlErrors"], true);
+        assert_eq!(
+            value["result"]["capabilities"]["framedControlMaxBodyBytes"],
+            WORKER_CONTROL_IPC_MAX_BODY_LEN
+        );
+        assert_eq!(
+            value["result"]["capabilities"]["framedControlSequenceIds"],
+            true
+        );
+        assert_eq!(
+            value["result"]["capabilities"]["framedControlStatusCodes"],
+            true
+        );
+        assert_eq!(
+            value["result"]["capabilities"]["framedControlErrorResponses"],
+            true
+        );
         assert_eq!(
             value["result"]["capabilities"]["maxVst3StateBytes"],
             DEFAULT_MAX_VST3_STATE_BYTES
@@ -1031,6 +1051,22 @@ mod tests {
         assert_eq!(
             response["result"]["capabilities"]["framedControlIpcVersion"],
             WORKER_CONTROL_IPC_SCHEMA_VERSION
+        );
+        assert_eq!(
+            response["result"]["capabilities"]["framedControlMaxBodyBytes"],
+            WORKER_CONTROL_IPC_MAX_BODY_LEN
+        );
+        assert_eq!(
+            response["result"]["capabilities"]["framedControlSequenceIds"],
+            true
+        );
+        assert_eq!(
+            response["result"]["capabilities"]["framedControlStatusCodes"],
+            true
+        );
+        assert_eq!(
+            response["result"]["capabilities"]["framedControlErrorResponses"],
+            true
         );
     }
 

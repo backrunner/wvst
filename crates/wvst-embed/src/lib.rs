@@ -195,6 +195,31 @@ impl BridgeRuntimeBuilder {
         self
     }
 
+    pub fn worker_linux_cgroup_parent(mut self, parent: impl Into<PathBuf>) -> Self {
+        self.options.config = self.options.config.with_worker_linux_cgroup_parent(parent);
+        self
+    }
+
+    pub fn worker_linux_cgroup_memory_max_bytes(mut self, bytes: u64) -> Self {
+        self.options.config = self
+            .options
+            .config
+            .with_worker_linux_cgroup_memory_max_bytes(bytes);
+        self
+    }
+
+    pub fn worker_linux_cgroup_cpu_max_micros(
+        mut self,
+        quota_micros: u64,
+        period_micros: u64,
+    ) -> Self {
+        self.options.config = self
+            .options
+            .config
+            .with_worker_linux_cgroup_cpu_max_micros(quota_micros, period_micros);
+        self
+    }
+
     pub fn subscribe_events(&self) -> broadcast::Receiver<BridgeEvent> {
         self.events.subscribe()
     }
@@ -290,6 +315,9 @@ mod tests {
             .max_worker_instances(2)
             .worker_memory_limit_bytes(64 * 1024 * 1024)
             .worker_cpu_time_limit_seconds(30)
+            .worker_linux_cgroup_parent("/sys/fs/cgroup/wvst")
+            .worker_linux_cgroup_memory_max_bytes(128 * 1024 * 1024)
+            .worker_linux_cgroup_cpu_max_micros(50_000, 100_000)
             .build();
 
         assert_eq!(
@@ -303,5 +331,17 @@ mod tests {
             Some(64 * 1024 * 1024)
         );
         assert_eq!(runtime.config.worker_cpu_time_limit_seconds(), Some(30));
+        assert_eq!(
+            runtime.config.worker_linux_cgroup_parent(),
+            Some(std::path::Path::new("/sys/fs/cgroup/wvst"))
+        );
+        assert_eq!(
+            runtime.config.worker_linux_cgroup_memory_max_bytes(),
+            Some(128 * 1024 * 1024)
+        );
+        assert_eq!(
+            runtime.config.worker_linux_cgroup_cpu_max_micros(),
+            Some((50_000, 100_000))
+        );
     }
 }

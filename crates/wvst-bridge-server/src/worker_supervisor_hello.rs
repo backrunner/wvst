@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
-use wvst_protocol::WORKER_CONTROL_IPC_SCHEMA_VERSION;
+use wvst_protocol::{WORKER_CONTROL_IPC_MAX_BODY_LEN, WORKER_CONTROL_IPC_SCHEMA_VERSION};
 
 use super::{EXPECTED_WORKER_IPC_VERSION, StderrTail, WorkerSupervisorError};
 
@@ -23,6 +23,14 @@ struct WorkerCapabilities {
     framed_control_ipc: bool,
     #[serde(default)]
     framed_control_ipc_version: Option<u16>,
+    #[serde(default)]
+    framed_control_max_body_bytes: Option<u32>,
+    #[serde(default)]
+    framed_control_sequence_ids: bool,
+    #[serde(default)]
+    framed_control_status_codes: bool,
+    #[serde(default)]
+    framed_control_error_responses: bool,
 }
 
 pub(super) async fn validate_worker_hello(
@@ -101,6 +109,55 @@ pub(super) async fn validate_worker_hello(
         .await);
     }
 
+    if require_framed_control_ipc
+        && parsed
+            .capabilities
+            .framed_control_max_body_bytes
+            .unwrap_or(0)
+            < WORKER_CONTROL_IPC_MAX_BODY_LEN
+    {
+        return Err(incompatible_worker(
+            stderr,
+            format!(
+                "unsupported framedControlMaxBodyBytes {:?}, expected at least {}",
+                parsed.capabilities.framed_control_max_body_bytes, WORKER_CONTROL_IPC_MAX_BODY_LEN
+            ),
+            Some(u64::from(parsed.ipc_version)),
+            hello,
+        )
+        .await);
+    }
+
+    if require_framed_control_ipc && !parsed.capabilities.framed_control_sequence_ids {
+        return Err(incompatible_worker(
+            stderr,
+            "missing framedControlSequenceIds capability".to_string(),
+            Some(u64::from(parsed.ipc_version)),
+            hello,
+        )
+        .await);
+    }
+
+    if require_framed_control_ipc && !parsed.capabilities.framed_control_status_codes {
+        return Err(incompatible_worker(
+            stderr,
+            "missing framedControlStatusCodes capability".to_string(),
+            Some(u64::from(parsed.ipc_version)),
+            hello,
+        )
+        .await);
+    }
+
+    if require_framed_control_ipc && !parsed.capabilities.framed_control_error_responses {
+        return Err(incompatible_worker(
+            stderr,
+            "missing framedControlErrorResponses capability".to_string(),
+            Some(u64::from(parsed.ipc_version)),
+            hello,
+        )
+        .await);
+    }
+
     Ok(())
 }
 
@@ -137,7 +194,11 @@ mod tests {
                 "instanceLifecycle": true,
                 "binaryAudioProcess": true,
                 "framedControlIpc": true,
-                "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION
+                "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION,
+                "framedControlMaxBodyBytes": WORKER_CONTROL_IPC_MAX_BODY_LEN,
+                "framedControlSequenceIds": true,
+                "framedControlStatusCodes": true,
+                "framedControlErrorResponses": true
             }
         });
 
@@ -165,6 +226,59 @@ mod tests {
             error,
             WorkerSupervisorError::IncompatibleWorker { reason, .. }
                 if reason.contains("framedControlIpcVersion")
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_framed_control_ipc_with_too_small_body_cap() {
+        let hello = json!({
+            "ipcVersion": EXPECTED_WORKER_IPC_VERSION,
+            "capabilities": {
+                "instanceLifecycle": true,
+                "binaryAudioProcess": true,
+                "framedControlIpc": true,
+                "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION,
+                "framedControlMaxBodyBytes": 1024,
+                "framedControlSequenceIds": true,
+                "framedControlStatusCodes": true,
+                "framedControlErrorResponses": true
+            }
+        });
+
+        let error = validate_worker_hello(&StderrTail::default(), hello, true)
+            .await
+            .expect_err("incompatible hello");
+
+        assert!(matches!(
+            error,
+            WorkerSupervisorError::IncompatibleWorker { reason, .. }
+                if reason.contains("framedControlMaxBodyBytes")
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_framed_control_ipc_without_error_response_capability() {
+        let hello = json!({
+            "ipcVersion": EXPECTED_WORKER_IPC_VERSION,
+            "capabilities": {
+                "instanceLifecycle": true,
+                "binaryAudioProcess": true,
+                "framedControlIpc": true,
+                "framedControlIpcVersion": WORKER_CONTROL_IPC_SCHEMA_VERSION,
+                "framedControlMaxBodyBytes": WORKER_CONTROL_IPC_MAX_BODY_LEN,
+                "framedControlSequenceIds": true,
+                "framedControlStatusCodes": true
+            }
+        });
+
+        let error = validate_worker_hello(&StderrTail::default(), hello, true)
+            .await
+            .expect_err("incompatible hello");
+
+        assert!(matches!(
+            error,
+            WorkerSupervisorError::IncompatibleWorker { reason, .. }
+                if reason.contains("framedControlErrorResponses")
         ));
     }
 
