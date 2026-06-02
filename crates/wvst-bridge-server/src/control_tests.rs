@@ -2,6 +2,7 @@ use super::*;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::events::{BridgeEventBus, BridgeEventKind};
 use crate::instance_registry::InstanceRegistry;
 use crate::metrics::BridgeMetrics;
@@ -16,6 +17,7 @@ async fn responds_to_hello() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
+    let stream_tracker = AudioStreamTracker::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -24,6 +26,7 @@ async fn responds_to_hello() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         origin: Some("http://localhost:5173"),
         session_authorized: false,
         workers: &workers,
@@ -49,6 +52,7 @@ async fn rejects_denied_origin() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
+    let stream_tracker = AudioStreamTracker::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -57,6 +61,7 @@ async fn rejects_denied_origin() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         origin: Some("https://example.com"),
         session_authorized: false,
         workers: &workers,
@@ -81,6 +86,7 @@ async fn rejects_plugin_list_before_hello() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
+    let stream_tracker = AudioStreamTracker::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -89,6 +95,7 @@ async fn rejects_plugin_list_before_hello() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         origin: None,
         session_authorized: false,
         workers: &workers,
@@ -109,6 +116,7 @@ async fn lists_cached_plugins_after_hello() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
+    let stream_tracker = AudioStreamTracker::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -117,6 +125,7 @@ async fn lists_cached_plugins_after_hello() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         origin: None,
         session_authorized: true,
         workers: &workers,
@@ -143,6 +152,7 @@ async fn returns_recent_bridge_events() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
+    let stream_tracker = AudioStreamTracker::new();
     let workers = test_workers();
     events.emit(BridgeEventKind::ServerStarting);
     events.emit(BridgeEventKind::ServerStopped);
@@ -153,6 +163,7 @@ async fn returns_recent_bridge_events() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         origin: None,
         session_authorized: true,
         workers: &workers,
@@ -186,6 +197,7 @@ async fn routes_factory_info_to_host_worker() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
+    let stream_tracker = AudioStreamTracker::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -194,6 +206,7 @@ async fn routes_factory_info_to_host_worker() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         origin: None,
         session_authorized: true,
         workers: &workers,

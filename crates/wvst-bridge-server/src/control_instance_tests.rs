@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::events::BridgeEventBus;
 use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::{InstanceRegistry, InstanceState, WorkerState};
@@ -20,6 +21,7 @@ struct RequestContext<'a> {
     events: &'a BridgeEventBus,
     metrics: &'a BridgeMetrics,
     plugins: &'a PluginRegistry,
+    stream_tracker: &'a AudioStreamTracker,
     workers: &'a WorkerSupervisor,
 }
 
@@ -32,6 +34,7 @@ async fn creates_lists_and_destroys_instance() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let stream_tracker = AudioStreamTracker::new();
     let worker_path = serve_worker_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -41,6 +44,7 @@ async fn creates_lists_and_destroys_instance() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         workers: &workers,
     };
 
@@ -170,6 +174,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let stream_tracker = AudioStreamTracker::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -179,6 +184,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         workers: &workers,
     };
 
@@ -214,6 +220,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let stream_tracker = AudioStreamTracker::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -223,6 +230,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         workers: &workers,
     };
 
@@ -288,6 +296,7 @@ async fn restarts_failed_instance_with_same_stream() {
     let events = BridgeEventBus::new();
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let stream_tracker = AudioStreamTracker::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -297,6 +306,7 @@ async fn restarts_failed_instance_with_same_stream() {
         events: &events,
         metrics: &metrics,
         plugins: &plugins,
+        stream_tracker: &stream_tracker,
         workers: &workers,
     };
 
@@ -361,6 +371,7 @@ async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
             metrics: context.metrics,
             plugins: context.plugins,
             origin: None,
+            stream_tracker: context.stream_tracker,
             session_authorized: true,
             workers: context.workers,
         },

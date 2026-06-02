@@ -104,10 +104,20 @@ pub async fn handle_instance_destroy(
         }
     };
 
+    let stream_id = context
+        .instances
+        .get(params.instance_id)
+        .ok()
+        .map(|record| record.stream_id);
     let _ = context.workers.destroy_instance(params.instance_id).await;
 
     match context.instances.destroy(params) {
-        Ok(result) => response_result(id, json!(result)),
+        Ok(result) => {
+            if let Some(stream_id) = stream_id {
+                context.stream_tracker.reset(stream_id);
+            }
+            response_result(id, json!(result))
+        }
         Err(error) => response_instance_error(id, error),
     }
 }
@@ -592,7 +602,10 @@ pub fn handle_stream_open(id: Value, params: Value, context: ControlContext<'_>)
     };
 
     match context.instances.open_stream(params) {
-        Ok(record) => response_result(id, json!(record)),
+        Ok(record) => {
+            context.stream_tracker.reset(record.stream_id);
+            response_result(id, json!(record))
+        }
         Err(error) => response_instance_error(id, error),
     }
 }
@@ -606,7 +619,10 @@ pub fn handle_stream_close(id: Value, params: Value, context: ControlContext<'_>
     };
 
     match context.instances.close_stream(params) {
-        Ok(record) => response_result(id, json!(record)),
+        Ok(record) => {
+            context.stream_tracker.reset(record.stream_id);
+            response_result(id, json!(record))
+        }
         Err(error) => response_instance_error(id, error),
     }
 }

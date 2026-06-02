@@ -11,6 +11,7 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 use wvst_core::ChannelCount;
 use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameFlags, AudioFrameHeader};
 
+use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::config::BridgeConfig;
 use crate::control::{ControlContext, handle_control_text};
 use crate::error::BridgeResult;
@@ -29,6 +30,7 @@ struct BridgeState {
     events: BridgeEventBus,
     metrics: Arc<BridgeMetrics>,
     plugins: Arc<PluginRegistry>,
+    stream_tracker: Arc<AudioStreamTracker>,
     workers: Arc<WorkerSupervisor>,
 }
 
@@ -74,6 +76,7 @@ impl BridgeServer {
                 events,
                 metrics: Arc::new(BridgeMetrics::new()),
                 plugins: Arc::new(PluginRegistry::new()),
+                stream_tracker: Arc::new(AudioStreamTracker::new()),
                 workers: Arc::new(workers),
             },
         })
@@ -160,6 +163,7 @@ async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResul
                         events: &state.events,
                         metrics: &state.metrics,
                         plugins: &state.plugins,
+                        stream_tracker: &state.stream_tracker,
                         origin: origin.as_deref(),
                         session_authorized,
                         workers: &state.workers,
@@ -238,6 +242,10 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteRes
             AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
         );
     }
+
+    state
+        .metrics
+        .record_audio_stream_observation(state.stream_tracker.observe(header));
 
     let processed = match state
         .workers

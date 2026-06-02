@@ -70,6 +70,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
         events: BridgeEventBus::new(),
         metrics: Arc::new(BridgeMetrics::new()),
         plugins: Arc::new(plugins),
+        stream_tracker: Arc::new(AudioStreamTracker::new()),
         workers: Arc::new(WorkerSupervisor::new_for_test_with_audio(
             worker_path.clone(),
             Duration::from_secs(5),
@@ -101,6 +102,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
             events: &state.events,
             metrics: &state.metrics,
             plugins: &state.plugins,
+            stream_tracker: &state.stream_tracker,
             origin: None,
             session_authorized: true,
             workers: &state.workers,
@@ -131,6 +133,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
             events: &state.events,
             metrics: &state.metrics,
             plugins: &state.plugins,
+            stream_tracker: &state.stream_tracker,
             origin: None,
             session_authorized: true,
             workers: &state.workers,
@@ -156,6 +159,21 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
     assert_eq!(metrics.audio_route_latency.count, 2);
     assert!(metrics.audio_route_latency.p50_us.is_some());
 
+    let _ = process_binary_payload(audio_frame_with_sequence(stream_id, 12), &state).await;
+    let _ = process_binary_payload(
+        audio_frame_with_sequence_and_flags(stream_id, 12, wvst_protocol::AudioFrameFlags::LATE),
+        &state,
+    )
+    .await;
+    let metrics = state.metrics.snapshot();
+    assert_eq!(metrics.binary_frames, 4);
+    assert_eq!(metrics.audio_frames_routed, 3);
+    assert_eq!(metrics.audio_sequence_gap_events, 1);
+    assert_eq!(metrics.audio_sequence_gap_frames, 1);
+    assert_eq!(metrics.audio_frames_duplicate, 1);
+    assert_eq!(metrics.audio_frames_late, 1);
+    assert_eq!(metrics.audio_interarrival_jitter.count, 2);
+
     state
         .instances
         .close_stream(StreamLifecycleParams { instance_id })
@@ -178,11 +196,11 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
         vec![0.0, 0.0, 0.0, 0.0]
     );
     let metrics = state.metrics.snapshot();
-    assert_eq!(metrics.binary_frames, 3);
+    assert_eq!(metrics.binary_frames, 5);
     assert_eq!(metrics.audio_frame_fallbacks, 1);
-    assert_eq!(metrics.audio_frames_routed, 1);
+    assert_eq!(metrics.audio_frames_routed, 3);
     assert_eq!(metrics.audio_frame_route_failures, 1);
-    assert_eq!(metrics.audio_route_latency.count, 3);
+    assert_eq!(metrics.audio_route_latency.count, 5);
     assert!(metrics.audio_route_latency.p95_us.is_some());
 
     let _ = std::fs::remove_dir_all(root);
@@ -203,15 +221,31 @@ fn read_f32_payload(payload: &[u8]) -> Option<Vec<f32>> {
 }
 
 fn audio_frame(stream_id: u64) -> Vec<u8> {
+    audio_frame_with_sequence(stream_id, 10)
+}
+
+fn audio_frame_with_sequence(stream_id: u64, sequence: u64) -> Vec<u8> {
+    audio_frame_with_sequence_and_flags(
+        stream_id,
+        sequence,
+        wvst_protocol::AudioFrameFlags::empty(),
+    )
+}
+
+fn audio_frame_with_sequence_and_flags(
+    stream_id: u64,
+    sequence: u64,
+    flags: wvst_protocol::AudioFrameFlags,
+) -> Vec<u8> {
     let samples = [0.25_f32, 0.5, -0.25, -0.5];
     let header = AudioFrameHeader::new_f32(
         StreamId::new(stream_id),
-        10,
+        sequence,
         512,
         SampleRate::new(48_000).expect("sample rate"),
         FrameCount::new(2).expect("frames"),
         ChannelCount::new(2).expect("channels"),
-        wvst_protocol::AudioFrameFlags::empty(),
+        flags,
     )
     .expect("header");
     let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];

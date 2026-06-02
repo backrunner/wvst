@@ -1,3 +1,4 @@
+pub mod audio_stream_tracker;
 pub mod config;
 pub mod control;
 pub mod error;

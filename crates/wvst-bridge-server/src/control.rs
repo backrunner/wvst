@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use wvst_core::ProtocolVersion;
 use wvst_protocol::{AUDIO_FRAME_VERSION, negotiate_protocol};
 
+use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::config::BridgeConfig;
 use crate::events::BridgeEventBus;
 use crate::host_worker::{HostWorkerClient, HostWorkerError};
@@ -18,6 +19,7 @@ pub struct ControlContext<'a> {
     pub events: &'a BridgeEventBus,
     pub metrics: &'a BridgeMetrics,
     pub plugins: &'a PluginRegistry,
+    pub stream_tracker: &'a AudioStreamTracker,
     pub origin: Option<&'a str>,
     pub session_authorized: bool,
     pub workers: &'a WorkerSupervisor,

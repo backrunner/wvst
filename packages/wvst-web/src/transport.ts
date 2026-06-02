@@ -19,7 +19,13 @@ export interface BridgeMetrics {
   workerFailures: number;
   workerRestarts: number;
   workerAutoRestarts: number;
+  audioSequenceGapEvents: number;
+  audioSequenceGapFrames: number;
+  audioFramesDuplicate: number;
+  audioFramesOutOfOrder: number;
+  audioFramesLate: number;
   audioRouteLatency: BridgeLatencyMetrics;
+  audioInterarrivalJitter: BridgeLatencyMetrics;
 }
 
 export interface BridgeEventsOptions {

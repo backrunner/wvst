@@ -4,6 +4,8 @@ use std::time::Instant;
 
 use serde::Serialize;
 
+use crate::audio_stream_tracker::AudioStreamObservation;
+
 #[derive(Debug)]
 pub struct BridgeMetrics {
     started_at: Instant,
@@ -17,7 +19,13 @@ pub struct BridgeMetrics {
     worker_failures: AtomicU64,
     worker_restarts: AtomicU64,
     worker_auto_restarts: AtomicU64,
+    audio_sequence_gap_events: AtomicU64,
+    audio_sequence_gap_frames: AtomicU64,
+    audio_frames_duplicate: AtomicU64,
+    audio_frames_out_of_order: AtomicU64,
+    audio_frames_late: AtomicU64,
     audio_route_latency: LatencyHistogram,
+    audio_interarrival_jitter: LatencyHistogram,
 }
 
 const LATENCY_BUCKETS_US: [u64; 13] = [
@@ -50,7 +58,13 @@ impl BridgeMetrics {
             worker_failures: AtomicU64::new(0),
             worker_restarts: AtomicU64::new(0),
             worker_auto_restarts: AtomicU64::new(0),
+            audio_sequence_gap_events: AtomicU64::new(0),
+            audio_sequence_gap_frames: AtomicU64::new(0),
+            audio_frames_duplicate: AtomicU64::new(0),
+            audio_frames_out_of_order: AtomicU64::new(0),
+            audio_frames_late: AtomicU64::new(0),
             audio_route_latency: LatencyHistogram::new(),
+            audio_interarrival_jitter: LatencyHistogram::new(),
         }
     }
 
@@ -99,6 +113,28 @@ impl BridgeMetrics {
         self.audio_route_latency.record(value);
     }
 
+    pub fn record_audio_stream_observation(&self, observation: AudioStreamObservation) {
+        if observation.sequence_gap > 0 {
+            self.audio_sequence_gap_events
+                .fetch_add(1, Ordering::Relaxed);
+            self.audio_sequence_gap_frames
+                .fetch_add(observation.sequence_gap, Ordering::Relaxed);
+        }
+        if observation.duplicate {
+            self.audio_frames_duplicate.fetch_add(1, Ordering::Relaxed);
+        }
+        if observation.out_of_order {
+            self.audio_frames_out_of_order
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if observation.late {
+            self.audio_frames_late.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Some(jitter_us) = observation.interarrival_jitter_us {
+            self.audio_interarrival_jitter.record(jitter_us);
+        }
+    }
+
     pub fn snapshot(&self) -> BridgeMetricsSnapshot {
         BridgeMetricsSnapshot {
             uptime_ms: self.started_at.elapsed().as_millis() as u64,
@@ -112,7 +148,13 @@ impl BridgeMetrics {
             worker_failures: self.worker_failures.load(Ordering::Relaxed),
             worker_restarts: self.worker_restarts.load(Ordering::Relaxed),
             worker_auto_restarts: self.worker_auto_restarts.load(Ordering::Relaxed),
+            audio_sequence_gap_events: self.audio_sequence_gap_events.load(Ordering::Relaxed),
+            audio_sequence_gap_frames: self.audio_sequence_gap_frames.load(Ordering::Relaxed),
+            audio_frames_duplicate: self.audio_frames_duplicate.load(Ordering::Relaxed),
+            audio_frames_out_of_order: self.audio_frames_out_of_order.load(Ordering::Relaxed),
+            audio_frames_late: self.audio_frames_late.load(Ordering::Relaxed),
             audio_route_latency: self.audio_route_latency.snapshot(),
+            audio_interarrival_jitter: self.audio_interarrival_jitter.snapshot(),
         }
     }
 }
@@ -137,7 +179,13 @@ pub struct BridgeMetricsSnapshot {
     pub worker_failures: u64,
     pub worker_restarts: u64,
     pub worker_auto_restarts: u64,
+    pub audio_sequence_gap_events: u64,
+    pub audio_sequence_gap_frames: u64,
+    pub audio_frames_duplicate: u64,
+    pub audio_frames_out_of_order: u64,
+    pub audio_frames_late: u64,
     pub audio_route_latency: LatencySnapshot,
+    pub audio_interarrival_jitter: LatencySnapshot,
 }
 
 #[derive(Debug)]
@@ -242,5 +290,27 @@ mod tests {
         assert_eq!(latency.p95_us, Some(100_000));
         assert_eq!(latency.p99_us, Some(100_000));
         assert_eq!(latency.buckets[0].count, 1);
+    }
+
+    #[test]
+    fn reports_audio_stream_observation_counters() {
+        let metrics = BridgeMetrics::new();
+
+        metrics.record_audio_stream_observation(AudioStreamObservation {
+            sequence_gap: 3,
+            duplicate: true,
+            out_of_order: true,
+            late: true,
+            interarrival_jitter_us: Some(1_200),
+        });
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.audio_sequence_gap_events, 1);
+        assert_eq!(snapshot.audio_sequence_gap_frames, 3);
+        assert_eq!(snapshot.audio_frames_duplicate, 1);
+        assert_eq!(snapshot.audio_frames_out_of_order, 1);
+        assert_eq!(snapshot.audio_frames_late, 1);
+        assert_eq!(snapshot.audio_interarrival_jitter.count, 1);
+        assert_eq!(snapshot.audio_interarrival_jitter.p50_us, Some(2_000));
     }
 }
