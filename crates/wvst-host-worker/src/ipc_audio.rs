@@ -6,10 +6,13 @@ use std::thread;
 use wvst_core::ChannelCount;
 use wvst_protocol::{
     AUDIO_FRAME_HEADER_LEN, AudioFrameHeader, WORKER_AUDIO_IPC_HEADER_LEN, WorkerAudioIpcHeader,
-    WorkerAudioIpcMessage, WorkerAudioMessageKind,
+    WorkerAudioMessageKind,
 };
 
 use super::WorkerIpcState;
+
+#[cfg(test)]
+use wvst_protocol::WorkerAudioIpcMessage;
 
 const AUDIO_ERROR_INVALID_REQUEST: u16 = 4220;
 const AUDIO_ERROR_NOT_FOUND: u16 = 4040;
@@ -24,43 +27,73 @@ pub(super) fn spawn_audio_thread(address: String, state: Arc<Mutex<WorkerIpcStat
 
 fn serve_audio_connection(address: &str, state: Arc<Mutex<WorkerIpcState>>) -> Result<(), String> {
     let mut stream = TcpStream::connect(address).map_err(|error| error.to_string())?;
+    let mut request_body = Vec::new();
+    let mut response_body = Vec::new();
 
     loop {
-        let message = match read_message(&mut stream)? {
-            Some(message) => message,
+        let header = match read_message_into(&mut stream, &mut request_body)? {
+            Some(header) => header,
             None => return Ok(()),
         };
-        let sequence = message.header.sequence;
-        let response = match process_message(message, &state) {
-            Ok(body) => WorkerAudioIpcMessage::process_response(sequence, body),
-            Err(error) => WorkerAudioIpcMessage::error(sequence, error.status_code, error.message),
-        }
-        .map_err(|error| error.to_string())?;
+        let sequence = header.sequence;
 
-        write_message(&mut stream, &response)?;
+        match process_message_into(header, &request_body, &state, &mut response_body) {
+            Ok(()) => write_ipc_message(
+                &mut stream,
+                WorkerAudioMessageKind::ProcessResponse,
+                sequence,
+                0,
+                &response_body,
+            )?,
+            Err(error) => {
+                response_body.clear();
+                response_body.extend_from_slice(error.message.as_bytes());
+                write_ipc_message(
+                    &mut stream,
+                    WorkerAudioMessageKind::ProcessError,
+                    sequence,
+                    error.status_code,
+                    &response_body,
+                )?;
+            }
+        }
     }
 }
 
+#[cfg(test)]
 fn process_message(
     message: WorkerAudioIpcMessage,
     state: &Arc<Mutex<WorkerIpcState>>,
 ) -> Result<Vec<u8>, AudioProcessError> {
-    if message.header.kind != WorkerAudioMessageKind::ProcessRequest {
+    let mut output = Vec::new();
+    process_message_into(message.header, &message.body, state, &mut output)?;
+    Ok(output)
+}
+
+fn process_message_into(
+    message_header: WorkerAudioIpcHeader,
+    message_body: &[u8],
+    state: &Arc<Mutex<WorkerIpcState>>,
+    output_body: &mut Vec<u8>,
+) -> Result<(), AudioProcessError> {
+    output_body.clear();
+
+    if message_header.kind != WorkerAudioMessageKind::ProcessRequest {
         return Err(AudioProcessError::invalid(format!(
             "unexpected worker audio message kind: {:?}",
-            message.header.kind
+            message_header.kind
         )));
     }
 
-    let input_header = AudioFrameHeader::decode(&message.body)
+    let input_header = AudioFrameHeader::decode(message_body)
         .map_err(|error| AudioProcessError::invalid(error.to_string()))?;
     let expected_len = AUDIO_FRAME_HEADER_LEN
         .checked_add(input_header.payload_len as usize)
         .ok_or_else(|| AudioProcessError::invalid("audio frame length overflow"))?;
-    if message.body.len() != expected_len {
+    if message_body.len() != expected_len {
         return Err(AudioProcessError::invalid(format!(
             "audio frame length mismatch: expected {expected_len}, got {}",
-            message.body.len()
+            message_body.len()
         )));
     }
     if input_header.event_count != 0 {
@@ -126,20 +159,21 @@ fn process_message(
     let plugin = &instance.plugin;
     let (input, output) = instance
         .buffers
-        .prepare_process(frames, &message.body[AUDIO_FRAME_HEADER_LEN..])
+        .prepare_process(frames, &message_body[AUDIO_FRAME_HEADER_LEN..])
         .map_err(AudioProcessError::invalid)?;
     plugin
         .process_interleaved_f32(frames, input, output)
         .map_err(|error| AudioProcessError::invalid(error.to_string()))?;
 
-    encode_output_frame(input_header, output_channels, output)
+    encode_output_frame_into(input_header, output_channels, output, output_body)
 }
 
-fn encode_output_frame(
+fn encode_output_frame_into(
     input_header: AudioFrameHeader,
     output_channels: usize,
     output: &[f32],
-) -> Result<Vec<u8>, AudioProcessError> {
+    destination: &mut Vec<u8>,
+) -> Result<(), AudioProcessError> {
     let output_channels = u16::try_from(output_channels)
         .map_err(|_| AudioProcessError::invalid("output channel count overflows u16"))?;
     let output_channels = ChannelCount::new(output_channels)
@@ -154,18 +188,19 @@ fn encode_output_frame(
         input_header.flags,
     )
     .map_err(|error| AudioProcessError::invalid(error.to_string()))?;
-    let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];
+    let frame_len = AUDIO_FRAME_HEADER_LEN + header.payload_len as usize;
+    destination.resize(frame_len, 0);
     header
-        .encode(&mut frame[..AUDIO_FRAME_HEADER_LEN])
+        .encode(&mut destination[..AUDIO_FRAME_HEADER_LEN])
         .map_err(|error| AudioProcessError::invalid(error.to_string()))?;
 
     let mut offset = AUDIO_FRAME_HEADER_LEN;
     for sample in output {
-        frame[offset..offset + 4].copy_from_slice(&sample.to_le_bytes());
+        destination[offset..offset + 4].copy_from_slice(&sample.to_le_bytes());
         offset += 4;
     }
 
-    Ok(frame)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -182,7 +217,10 @@ fn read_f32_payload(payload: &[u8]) -> Result<Vec<f32>, AudioProcessError> {
         .collect())
 }
 
-fn read_message(stream: &mut TcpStream) -> Result<Option<WorkerAudioIpcMessage>, String> {
+fn read_message_into(
+    stream: &mut TcpStream,
+    body: &mut Vec<u8>,
+) -> Result<Option<WorkerAudioIpcHeader>, String> {
     let mut header_bytes = [0; WORKER_AUDIO_IPC_HEADER_LEN];
     match stream.read_exact(&mut header_bytes) {
         Ok(()) => {}
@@ -191,19 +229,29 @@ fn read_message(stream: &mut TcpStream) -> Result<Option<WorkerAudioIpcMessage>,
     }
 
     let header = WorkerAudioIpcHeader::decode(&header_bytes).map_err(|error| error.to_string())?;
-    let mut body = vec![0; header.body_len as usize];
-    stream
-        .read_exact(&mut body)
-        .map_err(|error| error.to_string())?;
+    body.resize(header.body_len as usize, 0);
+    stream.read_exact(body).map_err(|error| error.to_string())?;
 
-    Ok(Some(WorkerAudioIpcMessage { header, body }))
+    Ok(Some(header))
 }
 
-fn write_message(stream: &mut TcpStream, message: &WorkerAudioIpcMessage) -> Result<(), String> {
-    let frame = message.encode().map_err(|error| error.to_string())?;
-    stream
-        .write_all(&frame)
+fn write_ipc_message(
+    stream: &mut TcpStream,
+    kind: WorkerAudioMessageKind,
+    sequence: u64,
+    status_code: u16,
+    body: &[u8],
+) -> Result<(), String> {
+    let body_len = u32::try_from(body.len()).map_err(|_| "worker audio body too large")?;
+    let header = WorkerAudioIpcHeader::new(kind, status_code, sequence, body_len);
+    let mut header_bytes = [0; WORKER_AUDIO_IPC_HEADER_LEN];
+    header
+        .encode(&mut header_bytes)
         .map_err(|error| error.to_string())?;
+    stream
+        .write_all(&header_bytes)
+        .map_err(|error| error.to_string())?;
+    stream.write_all(body).map_err(|error| error.to_string())?;
     stream.flush().map_err(|error| error.to_string())
 }
 

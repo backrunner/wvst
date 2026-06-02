@@ -22,7 +22,7 @@
 - Instance heartbeat 已避免把正在 `processing` 的实例误降回 `ready`，降低控制面状态刷新对数据面的干扰。
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion`、`instanceLifecycle` 和 `binaryAudioProcess` capability，避免 Bridge 与不兼容 worker 继续创建实例。
 - Bridge 创建 worker 实例时已把 `sampleRate` 和 `maxBlockFrames` 传给 worker；worker audio IPC 会验证 sample rate、最大 block、输入通道数和 processing 状态。
-- `wvst-host-worker` 已为每个实例预分配 audio scratch buffers，passthrough audio IPC 不再为每个 block 重复分配输入/输出 sample Vec；当前仍会为协议响应 frame 分配输出字节 buffer。
+- `wvst-host-worker` 已为每个实例预分配 audio scratch buffers，并复用 audio IPC request/response body buffers；passthrough audio IPC 不再为每个 block 重复分配输入/输出 sample Vec 或响应 frame Vec。
 - Bridge 二进制音频帧已能按 `streamId` 路由到对应 worker 的独立二进制 audio IPC，并回传 worker 处理后的 F32 frame；未匹配实例或非法帧暂时保留 echo fallback。
 - Bridge metrics 已区分二进制帧总量、成功路由音频帧、fallback echo 和音频路由失败，便于后续接入 drop/late/underflow/overflow 统计。
 - Bridge/Web SDK 已提供 `stream.open` / `stream.close` 控制 API，实例记录包含 `streamState`，Bridge 只将 open stream 的音频帧路由到 worker。
@@ -77,7 +77,7 @@
 - stream open/close 已有首版控制 API；仍缺少 end-of-stream 帧语义、close 后 drain 策略和 WebAudio 端自动重开策略。
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，仍缺少共享内存/预分配 buffer 和背压语义。
-- worker passthrough 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers；仍缺少 worker 到真实 VST `process()` 的 buffer binding 和 response frame 复用策略。
+- worker passthrough 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；仍缺少 worker 到真实 VST `process()` 的 buffer binding。
 - late/drop/underflow/overflow 策略和 p50/p95/p99 指标；当前只有 route/fallback/failure 计数，还没有时延分位数。
 
 ### 5. MIDI 与音源 VST
