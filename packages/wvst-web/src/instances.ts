@@ -41,8 +41,28 @@ export interface InstanceDescriptor {
   streamState: "open" | "closed";
   backend?: string;
   controllerClassId?: string;
+  runtimeCapabilities: RuntimeCapabilities;
   latencySamples: number;
   tailSamples: number;
+}
+
+export interface RuntimeCapabilities {
+  binaryAudioProcess: boolean;
+  componentState: boolean;
+  controller: boolean;
+  controllerState: boolean;
+  parameters: boolean;
+  parameterAutomation: boolean;
+  units: boolean;
+  unitProgramData: boolean;
+  programListData: boolean;
+  unitData: boolean;
+  midiMapping: boolean;
+  outputEvents: boolean;
+  outputParameterChanges: boolean;
+  componentHandlerEvents: boolean;
+  connectionPoints: boolean;
+  processContext: boolean;
 }
 
 export interface InstanceStatusOptions {
@@ -248,6 +268,7 @@ export interface InstanceWorkerMetrics {
 export interface InstanceWorkerRuntimeMetrics {
   streamId: number;
   backend: string;
+  runtimeCapabilities: RuntimeCapabilities;
   latencySamples: number;
   tailSamples: number;
   diagnostics?: InstanceWorkerRuntimeDiagnostics;

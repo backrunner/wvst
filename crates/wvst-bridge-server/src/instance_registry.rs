@@ -8,6 +8,8 @@ use wvst_core::audio::MAX_CHANNEL_COUNT;
 use wvst_core::{ChannelCount, FrameCount, InstanceId, SampleRate, StreamId};
 use wvst_scanner::{PluginClass, PluginDescriptor};
 
+use crate::runtime_capabilities::RuntimeCapabilities;
+
 #[derive(Debug)]
 pub struct InstanceRegistry {
     next_instance_id: AtomicU64,
@@ -161,6 +163,7 @@ pub struct InstanceRecord {
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub controller_class_id: Option<String>,
+    pub runtime_capabilities: RuntimeCapabilities,
     pub latency_samples: u32,
     pub tail_samples: u32,
 }
@@ -211,6 +214,7 @@ pub struct InstanceDestroyResult {
 pub struct WorkerRuntimeInfo {
     pub backend: Option<String>,
     pub controller_class_id: Option<String>,
+    pub runtime_capabilities: RuntimeCapabilities,
     pub latency_samples: u32,
     pub tail_samples: u32,
 }
@@ -226,6 +230,9 @@ impl WorkerRuntimeInfo {
                 .get("controllerClassId")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            runtime_capabilities: RuntimeCapabilities::from_worker_result(
+                value.get("runtimeCapabilities"),
+            ),
             latency_samples: json_u32(value, "latencySamples"),
             tail_samples: json_u32(value, "tailSamples"),
         }
@@ -286,6 +293,7 @@ impl InstanceRegistry {
             stream_state: StreamState::Open,
             backend: None,
             controller_class_id: None,
+            runtime_capabilities: RuntimeCapabilities::default(),
             latency_samples: 0,
             tail_samples: 0,
         };
@@ -400,6 +408,7 @@ impl InstanceRegistry {
         if let Some(runtime) = runtime {
             record.backend = runtime.backend;
             record.controller_class_id = runtime.controller_class_id;
+            record.runtime_capabilities = runtime.runtime_capabilities;
             record.latency_samples = runtime.latency_samples;
             record.tail_samples = runtime.tail_samples;
         }

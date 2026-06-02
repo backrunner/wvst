@@ -7,6 +7,7 @@ pub mod host_worker;
 pub mod instance_registry;
 pub mod metrics;
 pub mod plugin_registry;
+pub mod runtime_capabilities;
 pub mod server;
 pub mod worker_supervisor;
 

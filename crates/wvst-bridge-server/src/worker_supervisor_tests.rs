@@ -168,6 +168,7 @@ fn record() -> InstanceRecord {
         stream_state: StreamState::Open,
         backend: None,
         controller_class_id: None,
+        runtime_capabilities: crate::runtime_capabilities::RuntimeCapabilities::default(),
         latency_samples: 0,
         tail_samples: 0,
     }

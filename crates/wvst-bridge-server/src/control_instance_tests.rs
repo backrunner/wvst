@@ -71,12 +71,28 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(create_value["result"]["workerState"], "ready");
     assert_eq!(create_value["result"]["streamState"], "open");
     assert_eq!(create_value["result"]["backend"], "passthrough");
+    assert_eq!(
+        create_value["result"]["runtimeCapabilities"]["binaryAudioProcess"],
+        true
+    );
+    assert_eq!(
+        create_value["result"]["runtimeCapabilities"]["parameters"],
+        true
+    );
+    assert_eq!(
+        create_value["result"]["runtimeCapabilities"]["componentState"],
+        false
+    );
     assert_eq!(create_value["result"]["latencySamples"], 0);
     assert_eq!(create_value["result"]["tailSamples"], 0);
 
     let list_value =
         request_json(r#"{"id":2,"method":"instance.list","params":{}}"#, context).await;
     assert_eq!(list_value["result"].as_array().expect("instances").len(), 1);
+    assert_eq!(
+        list_value["result"][0]["runtimeCapabilities"]["parameters"],
+        true
+    );
 
     let status_request = serde_json::json!({
         "id": 3,
@@ -86,8 +102,16 @@ async fn creates_lists_and_destroys_instance() {
     .to_string();
     let status_value = request_json(&status_request, context).await;
     assert_eq!(status_value["result"]["instance"]["workerState"], "ready");
+    assert_eq!(
+        status_value["result"]["instance"]["runtimeCapabilities"]["parameters"],
+        true
+    );
     assert_eq!(status_value["result"]["worker"]["ipcVersion"], 1);
     assert_eq!(status_value["result"]["worker"]["instances"], 1);
+    assert_eq!(
+        status_value["result"]["worker"]["runtime"][0]["runtimeCapabilities"]["parameters"],
+        true
+    );
 
     let parameters_request = serde_json::json!({
         "id": 31,
@@ -489,16 +513,17 @@ fn serve_worker_script() -> PathBuf {
     let worker = directory.join("serve-worker.sh");
     std::fs::write(
         &worker,
-        r#"#!/bin/sh
+r#"#!/bin/sh
+runtime_capabilities='"runtimeCapabilities":{"binaryAudioProcess":true,"componentState":false,"controller":true,"controllerState":true,"parameters":true,"parameterAutomation":true,"units":false,"unitProgramData":false,"programListData":false,"unitData":false,"midiMapping":false,"outputEvents":true,"outputParameterChanges":true,"componentHandlerEvents":true,"connectionPoints":false,"processContext":false}'
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}\n' "$id" ;;
+    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough",%s,"latencySamples":0,"tailSamples":0}}\n' "$id" "$runtime_capabilities" ;;
     *instance.parameters*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameters":[{"id":42,"title":"Gain","shortTitle":"Gain","units":"dB","stepCount":0,"defaultNormalizedValue":0.5,"unitId":0,"flags":{"raw":1,"canAutomate":true,"readOnly":false,"wrapAround":false,"list":false,"hidden":false,"programChange":false,"bypass":false}}]}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
     *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
-    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1}}\n' "$id" ;;
+    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0}]}}\n' "$id" "$runtime_capabilities" ;;
     *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
   esac

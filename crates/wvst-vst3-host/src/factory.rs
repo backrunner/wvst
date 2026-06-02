@@ -187,6 +187,10 @@ impl Vst3LoadedComponent {
             .transpose()
     }
 
+    pub fn has_program_list_data(&self) -> HostResult<bool> {
+        self.instance.program_list_data().map(|data| data.is_some())
+    }
+
     pub fn get_program_data(
         &self,
         list_id: i32,
@@ -215,6 +219,10 @@ impl Vst3LoadedComponent {
             .unit_data()?
             .map(|data| data.unit_data_supported(unit_id))
             .transpose()
+    }
+
+    pub fn has_unit_data(&self) -> HostResult<bool> {
+        self.instance.unit_data().map(|data| data.is_some())
     }
 
     pub fn get_unit_data(&self, unit_id: i32) -> HostResult<Option<Vec<u8>>> {

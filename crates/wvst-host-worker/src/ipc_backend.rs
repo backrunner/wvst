@@ -7,7 +7,7 @@ use wvst_vst3_host::{
     Vst3ProcessingConfig, Vst3UnitMetadata, create_vst3_component_instance,
 };
 
-use super::InstanceCreateParams;
+use super::{InstanceCreateParams, ipc_capabilities::WorkerRuntimeCapabilities};
 
 pub(super) enum WorkerBackend {
     Passthrough(HeadlessPluginInstance),
@@ -17,6 +17,7 @@ pub(super) enum WorkerBackend {
 pub(super) struct Vst3RuntimeBackend {
     component: Vst3LoadedComponent,
     midi_mapping: Vst3MidiMappingCache,
+    capabilities: WorkerRuntimeCapabilities,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +67,10 @@ impl WorkerBackend {
                     .map_err(error_message)?;
                 component.initialize_controller().map_err(error_message)?;
                 let midi_mapping = Vst3MidiMappingCache::from_component(&component);
+                let capabilities = WorkerRuntimeCapabilities::from_vst3_component(
+                    &component,
+                    !midi_mapping.is_empty(),
+                );
                 component
                     .instance_mut()
                     .setup_processing()
@@ -74,6 +79,7 @@ impl WorkerBackend {
                 Ok(Self::Vst3Runtime(Box::new(Vst3RuntimeBackend {
                     component,
                     midi_mapping,
+                    capabilities,
                 })))
             }
             Err(HostError::InvalidClassId(_)) => Self::passthrough(descriptor, params),
@@ -90,6 +96,13 @@ impl WorkerBackend {
 
     pub(super) fn supports_binary_audio_process(&self) -> bool {
         true
+    }
+
+    pub(super) fn capabilities(&self) -> WorkerRuntimeCapabilities {
+        match self {
+            Self::Passthrough(_) => WorkerRuntimeCapabilities::passthrough(),
+            Self::Vst3Runtime(runtime) => runtime.capabilities,
+        }
     }
 
     pub(super) fn latency_samples(&self) -> u32 {
@@ -468,6 +481,10 @@ impl Vst3MidiMappingCache {
 
     fn get(&self, channel: u8, controller: i16) -> Option<u32> {
         slot(channel, controller).and_then(|slot| self.assignments[slot])
+    }
+
+    fn is_empty(&self) -> bool {
+        self.assignments.iter().all(Option::is_none)
     }
 
     fn set(&mut self, channel: u8, controller: i16, parameter_id: u32) {

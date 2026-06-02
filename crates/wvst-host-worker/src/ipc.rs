@@ -16,6 +16,8 @@ mod ipc_audio;
 mod ipc_backend;
 #[path = "ipc_buffers.rs"]
 mod ipc_buffers;
+#[path = "ipc_capabilities.rs"]
+mod ipc_capabilities;
 #[path = "ipc_midi.rs"]
 mod ipc_midi;
 #[path = "ipc_parameter_events.rs"]
@@ -29,6 +31,7 @@ mod ipc_units;
 
 use ipc_backend::{WorkerBackend, WorkerBackendKind};
 use ipc_buffers::AudioScratchBuffers;
+use ipc_capabilities::WorkerRuntimeCapabilities;
 
 const WORKER_IPC_VERSION: u16 = 1;
 
@@ -45,6 +48,7 @@ struct WorkerInstance {
     output_channels: usize,
     processing: bool,
     backend: WorkerBackend,
+    capabilities: WorkerRuntimeCapabilities,
     buffers: AudioScratchBuffers,
     events: Vec<Vst3InputEvent>,
     parameter_changes: Vec<Vst3ParameterChange>,
@@ -98,6 +102,7 @@ struct InstanceReady {
     backend: WorkerBackendKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     controller_class_id: Option<String>,
+    runtime_capabilities: WorkerRuntimeCapabilities,
     latency_samples: u32,
     tail_samples: u32,
 }
@@ -266,9 +271,11 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
         worker_state: WorkerState::Ready,
         backend: backend.kind(),
         controller_class_id: backend.controller_class_id(),
+        runtime_capabilities: backend.capabilities(),
         latency_samples: backend.latency_samples(),
         tail_samples: backend.tail_samples(),
     };
+    let capabilities = backend.capabilities();
     state.instances.insert(
         params.instance_id,
         WorkerInstance {
@@ -279,6 +286,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
             output_channels: params.output_channels,
             processing: false,
             backend,
+            capabilities,
             buffers,
             events: Vec::with_capacity(DEFAULT_MAX_VST3_EVENTS_PER_BLOCK),
             parameter_changes: Vec::with_capacity(DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK),
@@ -428,6 +436,7 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
                 json!({
                     "streamId": instance.stream_id,
                     "backend": instance.backend.kind(),
+                    "runtimeCapabilities": instance.capabilities,
                     "latencySamples": instance.backend.latency_samples(),
                     "tailSamples": instance.backend.tail_samples(),
                     "diagnostics": instance.backend.diagnostics(),
@@ -516,6 +525,18 @@ mod tests {
         let create_value: Value = serde_json::from_str(&create).expect("create json");
         assert_eq!(create_value["result"]["workerState"], "ready");
         assert_eq!(create_value["result"]["backend"], "passthrough");
+        assert_eq!(
+            create_value["result"]["runtimeCapabilities"]["binaryAudioProcess"],
+            true
+        );
+        assert_eq!(
+            create_value["result"]["runtimeCapabilities"]["parameters"],
+            false
+        );
+        assert_eq!(
+            create_value["result"]["runtimeCapabilities"]["controllerState"],
+            false
+        );
         assert_eq!(create_value["result"]["latencySamples"], 0);
         assert_eq!(create_value["result"]["tailSamples"], 0);
 
@@ -524,6 +545,14 @@ mod tests {
         assert_eq!(
             metrics_value["result"]["runtime"][0]["backend"],
             "passthrough"
+        );
+        assert_eq!(
+            metrics_value["result"]["runtime"][0]["runtimeCapabilities"]["binaryAudioProcess"],
+            true
+        );
+        assert_eq!(
+            metrics_value["result"]["runtime"][0]["runtimeCapabilities"]["componentState"],
+            false
         );
         assert_eq!(metrics_value["result"]["runtime"][0]["latencySamples"], 0);
         assert_eq!(metrics_value["result"]["runtime"][0]["tailSamples"], 0);

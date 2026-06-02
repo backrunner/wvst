@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime_capabilities::RuntimeCapabilities;
 use wvst_scanner::{MetadataSource, PluginFormat};
 
 #[test]
@@ -16,6 +17,7 @@ fn creates_multiple_records_for_same_plugin() {
     assert_eq!(first.stream_id, 1);
     assert_eq!(first.backend, None);
     assert_eq!(first.controller_class_id, None);
+    assert_eq!(first.runtime_capabilities, RuntimeCapabilities::default());
     assert_eq!(first.latency_samples, 0);
     assert_eq!(first.tail_samples, 0);
     assert_eq!(second.instance_id, 2);
@@ -71,6 +73,24 @@ fn records_worker_runtime_info() {
             WorkerRuntimeInfo {
                 backend: Some("vst3-runtime".to_string()),
                 controller_class_id: Some("2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a".to_string()),
+                runtime_capabilities: RuntimeCapabilities {
+                    binary_audio_process: true,
+                    component_state: true,
+                    controller: true,
+                    controller_state: true,
+                    parameters: true,
+                    parameter_automation: true,
+                    units: true,
+                    unit_program_data: true,
+                    program_list_data: true,
+                    unit_data: true,
+                    midi_mapping: true,
+                    output_events: true,
+                    output_parameter_changes: true,
+                    component_handler_events: true,
+                    connection_points: true,
+                    process_context: true,
+                },
                 latency_samples: 64,
                 tail_samples: 128,
             },
@@ -84,6 +104,8 @@ fn records_worker_runtime_info() {
     );
     assert_eq!(ready.latency_samples, 64);
     assert_eq!(ready.tail_samples, 128);
+    assert!(ready.runtime_capabilities.parameters);
+    assert!(ready.runtime_capabilities.midi_mapping);
     assert_eq!(registry.list()[0].latency_samples, 64);
 }
 
