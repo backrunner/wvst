@@ -19,6 +19,10 @@ pub struct BridgeMetrics {
     worker_failures: AtomicU64,
     worker_restarts: AtomicU64,
     worker_auto_restarts: AtomicU64,
+    worker_shutdowns: AtomicU64,
+    worker_kill_requests: AtomicU64,
+    worker_wait_successes: AtomicU64,
+    worker_wait_timeouts: AtomicU64,
     audio_sequence_gap_events: AtomicU64,
     audio_sequence_gap_frames: AtomicU64,
     audio_frames_duplicate: AtomicU64,
@@ -58,6 +62,10 @@ impl BridgeMetrics {
             worker_failures: AtomicU64::new(0),
             worker_restarts: AtomicU64::new(0),
             worker_auto_restarts: AtomicU64::new(0),
+            worker_shutdowns: AtomicU64::new(0),
+            worker_kill_requests: AtomicU64::new(0),
+            worker_wait_successes: AtomicU64::new(0),
+            worker_wait_timeouts: AtomicU64::new(0),
             audio_sequence_gap_events: AtomicU64::new(0),
             audio_sequence_gap_frames: AtomicU64::new(0),
             audio_frames_duplicate: AtomicU64::new(0),
@@ -109,6 +117,19 @@ impl BridgeMetrics {
         self.worker_auto_restarts.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn record_worker_shutdown(&self, audit: WorkerShutdownAudit) {
+        self.worker_shutdowns.fetch_add(1, Ordering::Relaxed);
+        if audit.kill_requested {
+            self.worker_kill_requests.fetch_add(1, Ordering::Relaxed);
+        }
+        if audit.wait_succeeded {
+            self.worker_wait_successes.fetch_add(1, Ordering::Relaxed);
+        }
+        if audit.wait_timed_out {
+            self.worker_wait_timeouts.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     pub fn record_audio_route_latency_us(&self, value: u64) {
         self.audio_route_latency.record(value);
     }
@@ -148,6 +169,10 @@ impl BridgeMetrics {
             worker_failures: self.worker_failures.load(Ordering::Relaxed),
             worker_restarts: self.worker_restarts.load(Ordering::Relaxed),
             worker_auto_restarts: self.worker_auto_restarts.load(Ordering::Relaxed),
+            worker_shutdowns: self.worker_shutdowns.load(Ordering::Relaxed),
+            worker_kill_requests: self.worker_kill_requests.load(Ordering::Relaxed),
+            worker_wait_successes: self.worker_wait_successes.load(Ordering::Relaxed),
+            worker_wait_timeouts: self.worker_wait_timeouts.load(Ordering::Relaxed),
             audio_sequence_gap_events: self.audio_sequence_gap_events.load(Ordering::Relaxed),
             audio_sequence_gap_frames: self.audio_sequence_gap_frames.load(Ordering::Relaxed),
             audio_frames_duplicate: self.audio_frames_duplicate.load(Ordering::Relaxed),
@@ -165,6 +190,13 @@ impl Default for BridgeMetrics {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WorkerShutdownAudit {
+    pub kill_requested: bool,
+    pub wait_succeeded: bool,
+    pub wait_timed_out: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BridgeMetricsSnapshot {
@@ -179,6 +211,10 @@ pub struct BridgeMetricsSnapshot {
     pub worker_failures: u64,
     pub worker_restarts: u64,
     pub worker_auto_restarts: u64,
+    pub worker_shutdowns: u64,
+    pub worker_kill_requests: u64,
+    pub worker_wait_successes: u64,
+    pub worker_wait_timeouts: u64,
     pub audio_sequence_gap_events: u64,
     pub audio_sequence_gap_frames: u64,
     pub audio_frames_duplicate: u64,
@@ -312,5 +348,27 @@ mod tests {
         assert_eq!(snapshot.audio_frames_late, 1);
         assert_eq!(snapshot.audio_interarrival_jitter.count, 1);
         assert_eq!(snapshot.audio_interarrival_jitter.p50_us, Some(2_000));
+    }
+
+    #[test]
+    fn reports_worker_shutdown_audit_counters() {
+        let metrics = BridgeMetrics::new();
+
+        metrics.record_worker_shutdown(WorkerShutdownAudit {
+            kill_requested: true,
+            wait_succeeded: true,
+            wait_timed_out: false,
+        });
+        metrics.record_worker_shutdown(WorkerShutdownAudit {
+            kill_requested: true,
+            wait_succeeded: false,
+            wait_timed_out: true,
+        });
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.worker_shutdowns, 2);
+        assert_eq!(snapshot.worker_kill_requests, 2);
+        assert_eq!(snapshot.worker_wait_successes, 1);
+        assert_eq!(snapshot.worker_wait_timeouts, 1);
     }
 }

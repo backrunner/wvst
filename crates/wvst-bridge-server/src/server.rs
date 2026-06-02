@@ -61,10 +61,12 @@ impl BridgeServer {
         let listener = TcpListener::bind(config.bind_addr()).await?;
 
         events.emit(BridgeEventKind::ServerStarting);
+        let metrics = Arc::new(BridgeMetrics::new());
         let workers = WorkerSupervisor::with_options(
             WorkerSupervisorOptions::new(host_worker.executable_path().to_path_buf())
                 .with_timeout(host_worker.timeout())
-                .with_max_instances(config.max_worker_instances()),
+                .with_max_instances(config.max_worker_instances())
+                .with_metrics(Arc::clone(&metrics)),
         );
         if let Ok(local_addr) = listener.local_addr() {
             events.emit(BridgeEventKind::ServerStarted { local_addr });
@@ -77,7 +79,7 @@ impl BridgeServer {
                 host_worker: Arc::new(host_worker),
                 instances: Arc::new(InstanceRegistry::new()),
                 events,
-                metrics: Arc::new(BridgeMetrics::new()),
+                metrics,
                 plugins: Arc::new(PluginRegistry::new()),
                 stream_tracker: Arc::new(AudioStreamTracker::new()),
                 workers: Arc::new(workers),

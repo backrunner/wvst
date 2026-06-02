@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::instance_registry::InstanceRecord;
+use crate::metrics::{BridgeMetrics, WorkerShutdownAudit};
 
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_QUARANTINE_DURATION: Duration = Duration::from_secs(60);
@@ -37,6 +38,7 @@ pub struct WorkerSupervisor {
     timeout: Duration,
     use_audio_ipc: bool,
     max_instances: usize,
+    metrics: Option<Arc<BridgeMetrics>>,
     failures: Mutex<BTreeMap<String, u32>>,
     processes: Mutex<BTreeMap<u64, Arc<Mutex<WorkerProcess>>>>,
     quarantine_duration: Duration,
@@ -50,6 +52,7 @@ pub struct WorkerSupervisorOptions {
     quarantine_duration: Duration,
     use_audio_ipc: bool,
     max_instances: usize,
+    metrics: Option<Arc<BridgeMetrics>>,
 }
 
 #[derive(Debug)]
@@ -145,6 +148,7 @@ impl WorkerSupervisor {
             timeout: options.timeout,
             use_audio_ipc: options.use_audio_ipc,
             max_instances: options.max_instances,
+            metrics: options.metrics,
             failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
             quarantine_duration: options.quarantine_duration,
@@ -192,7 +196,7 @@ impl WorkerSupervisor {
                 self.timeout,
             )
             .await;
-        process.shutdown().await;
+        self.record_shutdown(process.shutdown().await);
 
         result.map(Some)
     }
@@ -222,7 +226,8 @@ impl WorkerSupervisor {
         match result {
             Ok(result) => Ok(result),
             Err(error) => {
-                process.lock().await.shutdown().await;
+                let audit = process.lock().await.shutdown().await;
+                self.record_shutdown(audit);
                 self.remove_process_if_same(instance_id, &process).await;
                 Err(error)
             }
@@ -259,6 +264,7 @@ impl WorkerSupervisorOptions {
             quarantine_duration: DEFAULT_QUARANTINE_DURATION,
             use_audio_ipc: true,
             max_instances: DEFAULT_MAX_WORKER_INSTANCES,
+            metrics: None,
         }
     }
 
@@ -281,6 +287,11 @@ impl WorkerSupervisorOptions {
         self.max_instances = max_instances.max(1);
         self
     }
+
+    pub fn with_metrics(mut self, metrics: Arc<BridgeMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
 }
 
 impl WorkerProcess {
@@ -288,6 +299,7 @@ impl WorkerProcess {
         executable: PathBuf,
         timeout_duration: Duration,
         use_audio_ipc: bool,
+        metrics: Option<Arc<BridgeMetrics>>,
     ) -> Result<Self, WorkerSupervisorError> {
         let audio_listener = if use_audio_ipc {
             Some(
@@ -345,14 +357,14 @@ impl WorkerProcess {
             let accepted = match timeout(timeout_duration, listener.accept()).await {
                 Ok(Ok((stream, _))) => stream,
                 Ok(Err(error)) => {
-                    process.shutdown().await;
+                    record_worker_shutdown(metrics.as_ref(), process.shutdown().await);
                     return Err(WorkerSupervisorError::Io(error.to_string()));
                 }
                 Err(_) => {
                     let error = process
                         .timeout_error("audio.connect", timeout_duration)
                         .await;
-                    process.shutdown().await;
+                    record_worker_shutdown(metrics.as_ref(), process.shutdown().await);
                     return Err(error);
                 }
             };
@@ -384,7 +396,6 @@ impl WorkerProcess {
             Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
             Err(_) => {
                 let error = self.timeout_error(method, timeout_duration).await;
-                self.shutdown().await;
                 return Err(error);
             }
         }
@@ -393,7 +404,6 @@ impl WorkerProcess {
             Ok(Err(error)) => return Err(WorkerSupervisorError::Io(error.to_string())),
             Err(_) => {
                 let error = self.timeout_error(method, timeout_duration).await;
-                self.shutdown().await;
                 return Err(error);
             }
         }
@@ -404,7 +414,6 @@ impl WorkerProcess {
                 .ok_or_else(|| self.protocol_error("worker stdout closed".to_string()))?,
             Err(_) => {
                 let error = self.timeout_error(method, timeout_duration).await;
-                self.shutdown().await;
                 return Err(error);
             }
         };
@@ -428,9 +437,18 @@ impl WorkerProcess {
             .ok_or_else(|| self.protocol_error("missing result".to_string()))
     }
 
-    async fn shutdown(&mut self) {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
+    async fn shutdown(&mut self) -> WorkerShutdownAudit {
+        let mut audit = WorkerShutdownAudit {
+            kill_requested: true,
+            ..WorkerShutdownAudit::default()
+        };
+        let _ = self.child.start_kill();
+        match timeout(DEFAULT_IPC_TIMEOUT, self.child.wait()).await {
+            Ok(Ok(_)) => audit.wait_succeeded = true,
+            Ok(Err(_)) => {}
+            Err(_) => audit.wait_timed_out = true,
+        }
+        audit
     }
 
     async fn timeout_error(
@@ -458,15 +476,20 @@ impl WorkerSupervisor {
         &self,
         record: &InstanceRecord,
     ) -> Result<(Value, WorkerProcess), WorkerSupervisorError> {
-        let mut process =
-            WorkerProcess::spawn(self.executable.clone(), self.timeout, self.use_audio_ipc).await?;
+        let mut process = WorkerProcess::spawn(
+            self.executable.clone(),
+            self.timeout,
+            self.use_audio_ipc,
+            self.metrics.clone(),
+        )
+        .await?;
         let hello = match process
             .request("worker.hello", json!({}), self.timeout)
             .await
         {
             Ok(hello) => hello,
             Err(error) => {
-                process.shutdown().await;
+                self.record_shutdown(process.shutdown().await);
                 return Err(error);
             }
         };
@@ -474,7 +497,7 @@ impl WorkerSupervisor {
         if let Err(error) =
             worker_supervisor_hello::validate_worker_hello(&process.stderr, hello).await
         {
-            process.shutdown().await;
+            self.record_shutdown(process.shutdown().await);
             return Err(error);
         }
 
@@ -488,7 +511,7 @@ impl WorkerSupervisor {
         {
             Ok(ready) => Ok((ready, process)),
             Err(error) => {
-                process.shutdown().await;
+                self.record_shutdown(process.shutdown().await);
                 Err(error)
             }
         }
@@ -550,6 +573,10 @@ impl WorkerSupervisor {
         self.quarantined.lock().await.remove(plugin_id);
     }
 
+    fn record_shutdown(&self, audit: WorkerShutdownAudit) {
+        record_worker_shutdown(self.metrics.as_ref(), audit);
+    }
+
     async fn remove_process_if_same(&self, instance_id: u64, process: &Arc<Mutex<WorkerProcess>>) {
         let mut processes = self.processes.lock().await;
         if processes
@@ -565,7 +592,14 @@ impl WorkerSupervisor {
             return;
         };
 
-        process.lock().await.shutdown().await;
+        let audit = process.lock().await.shutdown().await;
+        self.record_shutdown(audit);
+    }
+}
+
+fn record_worker_shutdown(metrics: Option<&Arc<BridgeMetrics>>, audit: WorkerShutdownAudit) {
+    if let Some(metrics) = metrics {
+        metrics.record_worker_shutdown(audit);
     }
 }
 

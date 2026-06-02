@@ -1,5 +1,6 @@
 use super::*;
 use crate::instance_registry::{InstanceState, StreamState, WorkerState};
+use crate::metrics::BridgeMetrics;
 
 #[tokio::test]
 async fn quarantines_plugin_after_repeated_start_failures() {
@@ -94,6 +95,36 @@ async fn rejects_start_when_instance_limit_is_reached() {
     ));
 
     let _ = supervisor.destroy_instance(1).await;
+    let _ = std::fs::remove_dir_all(worker.parent().expect("worker parent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn records_worker_shutdown_audit_when_destroying_instance() {
+    let worker = ready_worker_script();
+    let metrics = Arc::new(BridgeMetrics::new());
+    let supervisor = WorkerSupervisor::with_options(
+        WorkerSupervisorOptions::new(worker.clone())
+            .with_timeout(Duration::from_secs(5))
+            .with_audio_ipc(false)
+            .with_metrics(Arc::clone(&metrics)),
+    );
+
+    supervisor
+        .start_instance(&record())
+        .await
+        .expect("instance starts");
+    supervisor
+        .destroy_instance(1)
+        .await
+        .expect("instance destroyed");
+
+    let snapshot = metrics.snapshot();
+    assert_eq!(snapshot.worker_shutdowns, 1);
+    assert_eq!(snapshot.worker_kill_requests, 1);
+    assert_eq!(snapshot.worker_wait_successes, 1);
+    assert_eq!(snapshot.worker_wait_timeouts, 0);
+
     let _ = std::fs::remove_dir_all(worker.parent().expect("worker parent"));
 }
 

@@ -47,7 +47,8 @@ impl WorkerSupervisor {
         match response {
             Ok(frame) => Ok(frame),
             Err(error) => {
-                process_guard.shutdown().await;
+                let audit = process_guard.shutdown().await;
+                self.record_shutdown(audit);
                 drop(process_guard);
                 self.remove_process_if_same(instance_id, &process).await;
                 Err(error)

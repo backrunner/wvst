@@ -272,7 +272,8 @@ impl WorkerSupervisor {
         match result {
             Ok(result) => Ok(result),
             Err(error) => {
-                process.lock().await.shutdown().await;
+                let audit = process.lock().await.shutdown().await;
+                self.record_shutdown(audit);
                 self.remove_process_if_same(instance_id, &process).await;
                 Err(error)
             }
