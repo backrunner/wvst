@@ -5,7 +5,8 @@ use std::slice;
 use crate::vst3_abi::{
     AudioBusBuffers, FUnknown, IAudioProcessor, IAudioProcessorVTable, IComponent,
     IComponentVTable, K_RESULT_OK, ProcessData, ProcessSetup, SpeakerArrangement, TUid,
-    VST3_SAMPLE_32,
+    VST3_BUS_DIRECTION_INPUT, VST3_BUS_DIRECTION_OUTPUT, VST3_MEDIA_TYPE_AUDIO, VST3_SAMPLE_32,
+    VST3_SPEAKER_STEREO,
 };
 
 use super::*;
@@ -33,11 +34,17 @@ fn drives_component_lifecycle_and_audio_process_path() {
 
     instance.setup_processing().expect("setup");
     assert_eq!(instance.state(), Vst3LifecycleState::SetupDone);
+    assert_eq!(processor.set_bus_arrangement_calls, 1);
+    assert_eq!(processor.last_input_arrangement, Some(VST3_SPEAKER_STEREO));
+    assert_eq!(processor.last_output_arrangement, Some(VST3_SPEAKER_STEREO));
     assert_eq!(processor.setup.expect("setup").max_samples_per_block, 128);
 
     instance.activate().expect("activate");
     assert_eq!(instance.state(), Vst3LifecycleState::Activated);
     assert!(component.active);
+    assert_eq!(component.activate_bus_calls, 2);
+    assert!(component.input_bus_active);
+    assert!(component.output_bus_active);
 
     instance.start_processing().expect("start");
     assert_eq!(instance.state(), Vst3LifecycleState::Processing);
@@ -59,6 +66,9 @@ fn drives_component_lifecycle_and_audio_process_path() {
     instance.terminate().expect("terminate");
     assert_eq!(instance.state(), Vst3LifecycleState::Terminated);
     assert!(!component.active);
+    assert_eq!(component.activate_bus_calls, 4);
+    assert!(!component.input_bus_active);
+    assert!(!component.output_bus_active);
     assert_eq!(component.terminate_calls, 1);
 
     drop(instance);
@@ -126,6 +136,38 @@ fn propagates_component_initialize_failure() {
 }
 
 #[test]
+fn deactivates_audio_buses_when_set_active_fails() {
+    let mut component = FakeComponent::new();
+    component.set_active_result = -12;
+    let mut processor = FakeProcessor::new();
+    let config = Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
+    let mut instance = unsafe {
+        Vst3ComponentInstance::from_raw_parts(
+            component.raw_component(),
+            processor.raw_processor(),
+            config,
+        )
+    }
+    .expect("instance");
+    instance.initialize().expect("initialize");
+    instance.setup_processing().expect("setup");
+
+    let error = instance.activate().expect_err("activate failed");
+
+    assert_eq!(
+        error,
+        HostError::ComponentCallFailed {
+            method: "setActive",
+            result: -12
+        }
+    );
+    assert_eq!(instance.state(), Vst3LifecycleState::SetupDone);
+    assert_eq!(component.activate_bus_calls, 4);
+    assert!(!component.input_bus_active);
+    assert!(!component.output_bus_active);
+}
+
+#[test]
 fn releases_component_when_processor_constructor_fails() {
     let mut component = FakeComponent::new();
     let config = Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
@@ -143,12 +185,16 @@ fn releases_component_when_processor_constructor_fails() {
 struct FakeComponent {
     component: IComponent,
     initialize_result: i32,
+    activate_bus_result: i32,
     set_active_result: i32,
     terminate_result: i32,
     initialize_calls: u32,
+    activate_bus_calls: u32,
     set_active_calls: u32,
     terminate_calls: u32,
     release_calls: u32,
+    input_bus_active: bool,
+    output_bus_active: bool,
     active: bool,
 }
 
@@ -159,12 +205,16 @@ impl FakeComponent {
                 vtable: &FAKE_COMPONENT_VTABLE,
             },
             initialize_result: K_RESULT_OK,
+            activate_bus_result: K_RESULT_OK,
             set_active_result: K_RESULT_OK,
             terminate_result: K_RESULT_OK,
             initialize_calls: 0,
+            activate_bus_calls: 0,
             set_active_calls: 0,
             terminate_calls: 0,
             release_calls: 0,
+            input_bus_active: false,
+            output_bus_active: false,
             active: false,
         }
     }
@@ -181,6 +231,9 @@ struct FakeProcessor {
     setup_result: i32,
     set_processing_result: i32,
     process_result: i32,
+    set_bus_arrangement_calls: u32,
+    last_input_arrangement: Option<SpeakerArrangement>,
+    last_output_arrangement: Option<SpeakerArrangement>,
     setup: Option<ProcessSetup>,
     processing: bool,
     set_processing_calls: u32,
@@ -200,6 +253,9 @@ impl FakeProcessor {
             setup_result: K_RESULT_OK,
             set_processing_result: K_RESULT_OK,
             process_result: K_RESULT_OK,
+            set_bus_arrangement_calls: 0,
+            last_input_arrangement: None,
+            last_output_arrangement: None,
             setup: None,
             processing: false,
             set_processing_calls: 0,
@@ -308,13 +364,25 @@ unsafe extern "system" fn fake_get_routing_info(
 }
 
 unsafe extern "system" fn fake_activate_bus(
-    _this: *mut IComponent,
-    _media_type: i32,
-    _direction: i32,
-    _index: i32,
-    _state: u8,
+    this: *mut IComponent,
+    media_type: i32,
+    direction: i32,
+    index: i32,
+    state: u8,
 ) -> i32 {
-    K_RESULT_OK
+    let fake = unsafe { fake_component_mut(this) };
+    fake.activate_bus_calls += 1;
+    if media_type != VST3_MEDIA_TYPE_AUDIO || index != 0 {
+        return -1;
+    }
+
+    match direction {
+        VST3_BUS_DIRECTION_INPUT => fake.input_bus_active = state != 0,
+        VST3_BUS_DIRECTION_OUTPUT => fake.output_bus_active = state != 0,
+        _ => return -1,
+    }
+
+    fake.activate_bus_result
 }
 
 unsafe extern "system" fn fake_set_active(this: *mut IComponent, state: u8) -> i32 {
@@ -365,12 +433,24 @@ unsafe extern "system" fn fake_processor_release(this: *mut IAudioProcessor) -> 
 }
 
 unsafe extern "system" fn fake_set_bus_arrangements(
-    _this: *mut IAudioProcessor,
-    _inputs: *mut SpeakerArrangement,
-    _input_count: i32,
-    _outputs: *mut SpeakerArrangement,
-    _output_count: i32,
+    this: *mut IAudioProcessor,
+    inputs: *mut SpeakerArrangement,
+    input_count: i32,
+    outputs: *mut SpeakerArrangement,
+    output_count: i32,
 ) -> i32 {
+    let fake = unsafe { fake_processor_mut(this) };
+    fake.set_bus_arrangement_calls += 1;
+    fake.last_input_arrangement = if input_count == 0 || inputs.is_null() {
+        None
+    } else {
+        Some(unsafe { *inputs })
+    };
+    fake.last_output_arrangement = if output_count == 0 || outputs.is_null() {
+        None
+    } else {
+        Some(unsafe { *outputs })
+    };
     K_RESULT_OK
 }
 

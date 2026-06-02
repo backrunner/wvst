@@ -36,6 +36,7 @@
 - `wvst-vst3-host` 已加入 `Vst3ProcessBuffers`，能预分配 planar input/output buffer，将 interleaved f32 输入转换为 VST3 channel buffers，并把 planar 输出复制回 interleaved f32；同时覆盖无输入音源 VST 的 buffer 路径。
 - `wvst-vst3-host` 已加入 `Vst3AudioProcessor` facade，能封装 owned `IAudioProcessor` 指针并调用 `canProcessSampleSize`、`setupProcessing`、`setProcessing`、`process`、latency/tail 查询；fake ABI fixture 已覆盖真实 `ProcessData` 指针链路。
 - `wvst-vst3-host` 已加入 `Vst3ComponentInstance` holder，能持有 owned `IComponent` + `Vst3AudioProcessor`，并将 initialize、setupProcessing、setActive、setProcessing、process、terminate 串入 `Vst3Lifecycle`；fake component/processor fixture 已覆盖完整生命周期和错误传播。
+- `wvst-vst3-host` 已接入基础 audio bus 配置：`setupProcessing` 前调用 `setBusArrangements` 设置 mono/stereo 或 zero-input instrument arrangement，`activate/terminate` 会开关主 audio input/output bus，并覆盖 `setActive` 失败后的 bus rollback。
 - macOS factory runtime 已提供 `create_vst3_component_instance()`，可通过 `IPluginFactory::createInstance(IComponent)` 和 `queryInterface(IAudioProcessor)` 创建 `Vst3LoadedComponent`，并保持 bundle 生命周期覆盖 component/processor holder。
 - `wvst-host-worker serve` 已接入首版 runtime backend：instance create 可持久保存 `Vst3LoadedComponent`，`instance.start/stop/destroy` 会驱动真实 VST3 lifecycle，worker audio IPC 可调用真实 `process()`；invalid class id 或非 bundle 路径仍回退 passthrough 以保持测试和开发路径可用。
 
@@ -66,7 +67,7 @@
 
 仍缺少：
 
-- 完整 host context、bus arrangement、active bus 策略；当前 holder 仍使用 null host context 且尚未调用 `setBusArrangements`。
+- 完整 host context、多 bus arrangement、bus 查询和 active bus 策略；当前 holder 仍使用 null host context，且仅支持主 mono/stereo audio bus 与 zero-input instrument。
 - controller 对象仍未接入，参数、state、program list、unit metadata 仍缺少。
 - 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、latency/tail 主要由 fake ABI fixture 和 worker passthrough 测试覆盖。
 
@@ -101,7 +102,7 @@
 
 ## 建议下一阶段
 
-1. 补齐 host context、bus activation 和 `setBusArrangements`，并用真实 macOS VST3 effect fixture 验证 2-in/2-out `process()`。
+1. 补齐 host context、bus 查询和多声道 `setBusArrangements` 策略，并用真实 macOS VST3 effect fixture 验证 2-in/2-out `process()`。
 2. 给 worker runtime backend 增加 latency/tail 上报、runtime backend 测试 fixture 和真实插件失败诊断。
 3. 给 Bridge worker supervisor 增加自动 restart policy、quarantine 解除策略和 worker crash 事件回传。
 4. 把 worker JSON-line 控制 IPC 抽象为可替换 framed control IPC，并扩展 capability negotiation。

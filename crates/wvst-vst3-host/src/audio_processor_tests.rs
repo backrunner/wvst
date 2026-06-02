@@ -4,7 +4,7 @@ use std::slice;
 
 use crate::vst3_abi::{
     AudioBusBuffers, IAudioProcessor, IAudioProcessorVTable, K_RESULT_OK, ProcessData,
-    ProcessSetup, SpeakerArrangement, VST3_SAMPLE_32,
+    ProcessSetup, SpeakerArrangement, VST3_SAMPLE_32, VST3_SPEAKER_STEREO,
 };
 
 use super::*;
@@ -19,6 +19,12 @@ fn sets_up_processes_and_releases_audio_processor() {
     let config = Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
 
     processor.setup_realtime_f32(config).expect("setup");
+    assert_eq!(fake.set_bus_arrangement_calls, 1);
+    assert_eq!(fake.last_input_count, 1);
+    assert_eq!(fake.last_output_count, 1);
+    assert_eq!(fake.last_input_arrangement, Some(VST3_SPEAKER_STEREO));
+    assert_eq!(fake.last_output_arrangement, Some(VST3_SPEAKER_STEREO));
+
     let setup = fake.setup.expect("setup captured");
     assert_eq!(setup.max_samples_per_block, 128);
     assert_eq!(setup.sample_rate, 48_000.0);
@@ -50,6 +56,22 @@ fn sets_up_processes_and_releases_audio_processor() {
 }
 
 #[test]
+fn sets_zero_input_bus_arrangement_for_instruments() {
+    let mut fake = FakeProcessor::new();
+    let mut processor =
+        unsafe { Vst3AudioProcessor::from_raw(fake.raw_processor()) }.expect("processor");
+    let config = Vst3ProcessingConfig::new(48_000, 128, 0, 2).expect("config");
+
+    processor.setup_realtime_f32(config).expect("setup");
+
+    assert_eq!(fake.set_bus_arrangement_calls, 1);
+    assert_eq!(fake.last_input_count, 0);
+    assert_eq!(fake.last_output_count, 1);
+    assert_eq!(fake.last_input_arrangement, None);
+    assert_eq!(fake.last_output_arrangement, Some(VST3_SPEAKER_STEREO));
+}
+
+#[test]
 fn rejects_unsupported_f32_sample_size() {
     let mut fake = FakeProcessor::new();
     fake.can_process_result = -10;
@@ -68,6 +90,42 @@ fn rejects_unsupported_f32_sample_size() {
             result: -10
         }
     );
+}
+
+#[test]
+fn rejects_failed_bus_arrangement_setup() {
+    let mut fake = FakeProcessor::new();
+    fake.set_bus_arrangement_result = -12;
+    let mut processor =
+        unsafe { Vst3AudioProcessor::from_raw(fake.raw_processor()) }.expect("processor");
+    let config = Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
+
+    let error = processor
+        .setup_realtime_f32(config)
+        .expect_err("bus arrangement failed");
+
+    assert_eq!(
+        error,
+        HostError::AudioProcessorCallFailed {
+            method: "setBusArrangements",
+            result: -12
+        }
+    );
+}
+
+#[test]
+fn rejects_unsupported_speaker_arrangement() {
+    let mut fake = FakeProcessor::new();
+    let mut processor =
+        unsafe { Vst3AudioProcessor::from_raw(fake.raw_processor()) }.expect("processor");
+    let config = Vst3ProcessingConfig::new(48_000, 128, 3, 2).expect("config");
+
+    let error = processor
+        .setup_realtime_f32(config)
+        .expect_err("unsupported arrangement");
+
+    assert_eq!(error, HostError::UnsupportedSpeakerArrangement(3));
+    assert_eq!(fake.set_bus_arrangement_calls, 0);
 }
 
 #[test]
@@ -107,10 +165,16 @@ struct FakeProcessor {
     processor: IAudioProcessor,
     can_process_result: i32,
     setup_result: i32,
+    set_bus_arrangement_result: i32,
     set_processing_result: i32,
     process_result: i32,
     setup: Option<ProcessSetup>,
     processing: bool,
+    set_bus_arrangement_calls: u32,
+    last_input_count: i32,
+    last_output_count: i32,
+    last_input_arrangement: Option<SpeakerArrangement>,
+    last_output_arrangement: Option<SpeakerArrangement>,
     process_calls: u32,
     release_calls: u32,
     last_num_samples: i32,
@@ -126,10 +190,16 @@ impl FakeProcessor {
             },
             can_process_result: K_RESULT_OK,
             setup_result: K_RESULT_OK,
+            set_bus_arrangement_result: K_RESULT_OK,
             set_processing_result: K_RESULT_OK,
             process_result: K_RESULT_OK,
             setup: None,
             processing: false,
+            set_bus_arrangement_calls: 0,
+            last_input_count: -1,
+            last_output_count: -1,
+            last_input_arrangement: None,
+            last_output_arrangement: None,
             process_calls: 0,
             release_calls: 0,
             last_num_samples: 0,
@@ -176,13 +246,27 @@ unsafe extern "system" fn fake_release(this: *mut IAudioProcessor) -> u32 {
 }
 
 unsafe extern "system" fn fake_set_bus_arrangements(
-    _this: *mut IAudioProcessor,
-    _inputs: *mut SpeakerArrangement,
-    _input_count: i32,
-    _outputs: *mut SpeakerArrangement,
-    _output_count: i32,
+    this: *mut IAudioProcessor,
+    inputs: *mut SpeakerArrangement,
+    input_count: i32,
+    outputs: *mut SpeakerArrangement,
+    output_count: i32,
 ) -> i32 {
-    K_RESULT_OK
+    let fake = unsafe { fake_mut(this) };
+    fake.set_bus_arrangement_calls += 1;
+    fake.last_input_count = input_count;
+    fake.last_output_count = output_count;
+    fake.last_input_arrangement = if input_count == 0 || inputs.is_null() {
+        None
+    } else {
+        Some(unsafe { *inputs })
+    };
+    fake.last_output_arrangement = if output_count == 0 || outputs.is_null() {
+        None
+    } else {
+        Some(unsafe { *outputs })
+    };
+    fake.set_bus_arrangement_result
 }
 
 unsafe extern "system" fn fake_get_bus_arrangement(

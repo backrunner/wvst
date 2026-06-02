@@ -2,7 +2,10 @@ use std::ffi::c_void;
 use std::ptr;
 use std::ptr::NonNull;
 
-use crate::vst3_abi::{FUnknown, IComponent, IComponentVTable, K_RESULT_OK};
+use crate::vst3_abi::{
+    FUnknown, IComponent, IComponentVTable, K_RESULT_OK, VST3_BUS_DIRECTION_INPUT,
+    VST3_BUS_DIRECTION_OUTPUT, VST3_MEDIA_TYPE_AUDIO,
+};
 use crate::{
     HostError, HostResult, Vst3AudioProcessor, Vst3Lifecycle, Vst3LifecycleState,
     Vst3ProcessBuffers, Vst3ProcessingConfig,
@@ -67,7 +70,14 @@ impl Vst3ComponentInstance {
 
     pub fn activate(&mut self) -> HostResult<()> {
         self.require_state("activate", &[Vst3LifecycleState::SetupDone])?;
-        self.component.set_active(true)?;
+        self.component
+            .activate_audio_buses(self.processing_config, true)?;
+        if let Err(error) = self.component.set_active(true) {
+            let _ = self
+                .component
+                .activate_audio_buses(self.processing_config, false);
+            return Err(error);
+        }
         self.lifecycle.activate()
     }
 
@@ -113,6 +123,8 @@ impl Vst3ComponentInstance {
             Vst3LifecycleState::Activated | Vst3LifecycleState::Stopped
         ) {
             self.component.set_active(false)?;
+            self.component
+                .activate_audio_buses(self.processing_config, false)?;
         }
         self.component.terminate()?;
         self.lifecycle.terminate()
@@ -176,6 +188,27 @@ impl Vst3ComponentHandle {
             // SAFETY: component and vtable were validated by from_raw; VST3
             // TBool accepts 0/1 state values.
             (vtable.set_active)(component, state)
+        })
+    }
+
+    fn activate_audio_buses(
+        &mut self,
+        config: Vst3ProcessingConfig,
+        active: bool,
+    ) -> HostResult<()> {
+        if config.input_channels > 0 {
+            self.activate_audio_bus(VST3_BUS_DIRECTION_INPUT, active)?;
+        }
+        self.activate_audio_bus(VST3_BUS_DIRECTION_OUTPUT, active)
+    }
+
+    fn activate_audio_bus(&mut self, direction: i32, active: bool) -> HostResult<()> {
+        let state = if active { 1 } else { 0 };
+        self.call_result("activateBus", |component, vtable| unsafe {
+            // SAFETY: component and vtable were validated by from_raw; WVST's
+            // MVP process buffers expose at most one main audio bus per
+            // direction, so index 0 is the only bus activated here.
+            (vtable.activate_bus)(component, VST3_MEDIA_TYPE_AUDIO, direction, 0, state)
         })
     }
 

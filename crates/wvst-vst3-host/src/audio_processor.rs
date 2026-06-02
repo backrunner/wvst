@@ -1,8 +1,10 @@
 use std::ffi::c_void;
+use std::ptr;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
     IAudioProcessor, IAudioProcessorVTable, K_RESULT_OK, ProcessSetup, VST3_SAMPLE_32,
+    VST3_SPEAKER_MONO, VST3_SPEAKER_STEREO,
 };
 use crate::{HostError, HostResult, Vst3ProcessBuffers, Vst3ProcessingConfig};
 
@@ -44,6 +46,7 @@ impl Vst3AudioProcessor {
             // sample-size value is a VST3 ABI constant.
             (vtable.can_process_sample_size)(processor, VST3_SAMPLE_32)
         })?;
+        self.set_bus_arrangements(config)?;
 
         let mut setup = ProcessSetup::realtime_f32(
             i32::from(config.max_block_frames),
@@ -66,6 +69,22 @@ impl Vst3AudioProcessor {
         self.processing = processing;
 
         Ok(())
+    }
+
+    fn set_bus_arrangements(&mut self, config: Vst3ProcessingConfig) -> HostResult<()> {
+        let mut input = optional_speaker_arrangement(config.input_channels)?;
+        let mut output = speaker_arrangement(config.output_channels)?;
+        let (inputs, input_count) = match input.as_mut() {
+            Some(arrangement) => (arrangement as *mut _, 1),
+            None => (ptr::null_mut(), 0),
+        };
+
+        self.call_result("setBusArrangements", |processor, vtable| unsafe {
+            // SAFETY: input/output arrangements point to stack values that live
+            // for this ABI call; zero-input instruments pass a null input
+            // pointer with count 0 as required by the VST3 API shape.
+            (vtable.set_bus_arrangements)(processor, inputs, input_count, &mut output, 1)
+        })
     }
 
     pub fn process(&mut self, buffers: &mut Vst3ProcessBuffers) -> HostResult<()> {
@@ -111,6 +130,24 @@ impl Vst3AudioProcessor {
         // SAFETY: from_raw validated both the object pointer and the vtable
         // pointer. The wrapper owns the reference until Drop calls release.
         unsafe { &*self.processor.as_ref().vtable }
+    }
+}
+
+fn optional_speaker_arrangement(
+    channels: u16,
+) -> HostResult<Option<crate::vst3_abi::SpeakerArrangement>> {
+    if channels == 0 {
+        Ok(None)
+    } else {
+        speaker_arrangement(channels).map(Some)
+    }
+}
+
+fn speaker_arrangement(channels: u16) -> HostResult<crate::vst3_abi::SpeakerArrangement> {
+    match channels {
+        1 => Ok(VST3_SPEAKER_MONO),
+        2 => Ok(VST3_SPEAKER_STEREO),
+        _ => Err(HostError::UnsupportedSpeakerArrangement(channels)),
     }
 }
 

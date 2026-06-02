@@ -10,6 +10,10 @@ pub const VST3_I_COMPONENT_IID: &str = "E831FF31F2D54301928EBBEE25697802";
 pub const VST3_I_AUDIO_PROCESSOR_IID: &str = "42043F99B7DA453CA569E79D9AAEC33D";
 pub const VST3_PROCESS_MODE_REALTIME: i32 = 0;
 pub const VST3_SAMPLE_32: i32 = 0;
+pub const VST3_MEDIA_TYPE_AUDIO: i32 = 0;
+pub const VST3_BUS_DIRECTION_INPUT: i32 = 0;
+pub const VST3_BUS_DIRECTION_OUTPUT: i32 = 1;
+pub const VST3_SPEAKER_MONO: SpeakerArrangement = 1 << 19;
 pub const VST3_SPEAKER_STEREO: SpeakerArrangement = 0x03;
 
 pub type TBool = u8;

@@ -46,6 +46,7 @@ pub enum HostError {
     },
     InvalidMaxBlockFrames(u16),
     InvalidSampleRate(u32),
+    UnsupportedSpeakerArrangement(u16),
     MissingSymbol(&'static str),
     ModuleLoadFailed(String),
     UnsupportedPlatform(&'static str),
@@ -140,6 +141,12 @@ impl Display for HostError {
             }
             Self::InvalidSampleRate(value) => {
                 write!(formatter, "invalid VST3 sample rate: {value}")
+            }
+            Self::UnsupportedSpeakerArrangement(channels) => {
+                write!(
+                    formatter,
+                    "unsupported VST3 speaker arrangement for channel count: {channels}"
+                )
             }
             Self::MissingSymbol(symbol) => write!(formatter, "missing VST3 symbol: {symbol}"),
             Self::ModuleLoadFailed(message) => write!(formatter, "module load failed: {message}"),
