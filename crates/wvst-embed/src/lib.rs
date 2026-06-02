@@ -7,7 +7,8 @@ use std::time::Duration;
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
 use wvst_bridge_server::{
-    BridgeConfig, BridgeError, BridgeEvent, BridgeEventBus, BridgeServer, HostWorkerClient,
+    BridgeConfig, BridgeError, BridgeEvent, BridgeEventBus, BridgeMetricsHandle,
+    BridgeMetricsSnapshot, BridgeServer, HostWorkerClient,
 };
 
 pub type EmbedResult<T> = Result<T, EmbedError>;
@@ -37,8 +38,16 @@ pub struct BridgeRuntimeBuilder {
 pub struct BridgeHandle {
     local_addr: SocketAddr,
     events: BridgeEventBus,
+    metrics: BridgeMetricsHandle,
     shutdown: Option<oneshot::Sender<()>>,
     join: JoinHandle<Result<(), BridgeError>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeRuntimeDiagnostics {
+    pub local_addr: SocketAddr,
+    pub metrics: BridgeMetricsSnapshot,
+    pub recent_events: Vec<BridgeEvent>,
 }
 
 #[derive(Debug)]
@@ -84,6 +93,7 @@ impl BridgeRuntime {
             }
         };
         let local_addr = server.local_addr()?;
+        let metrics = server.metrics_handle();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let join = tokio::spawn(async move {
@@ -97,6 +107,7 @@ impl BridgeRuntime {
         Ok(BridgeHandle {
             local_addr,
             events,
+            metrics,
             shutdown: Some(shutdown_tx),
             join,
         })
@@ -114,6 +125,18 @@ impl BridgeHandle {
 
     pub fn recent_events(&self, after_sequence: Option<u64>) -> Vec<BridgeEvent> {
         self.events.recent_since(after_sequence)
+    }
+
+    pub fn metrics_snapshot(&self) -> BridgeMetricsSnapshot {
+        self.metrics.snapshot()
+    }
+
+    pub fn diagnostics(&self, after_sequence: Option<u64>) -> BridgeRuntimeDiagnostics {
+        BridgeRuntimeDiagnostics {
+            local_addr: self.local_addr,
+            metrics: self.metrics_snapshot(),
+            recent_events: self.recent_events(after_sequence),
+        }
     }
 
     pub async fn shutdown(mut self) -> EmbedResult<()> {
@@ -227,6 +250,20 @@ mod tests {
             BridgeEventKind::ServerStarting | BridgeEventKind::ServerStarted { .. }
         ));
         assert!(!handle.recent_events(None).is_empty());
+
+        handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn exposes_handle_diagnostics() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("bind addr"));
+        let handle = BridgeRuntime::new(config).start().await.expect("runtime");
+
+        let diagnostics = handle.diagnostics(None);
+
+        assert_eq!(diagnostics.local_addr, handle.local_addr());
+        assert_eq!(diagnostics.metrics.websocket_connections, 0);
+        assert!(!diagnostics.recent_events.is_empty());
 
         handle.shutdown().await.expect("shutdown");
     }

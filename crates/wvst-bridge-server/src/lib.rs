@@ -16,4 +16,5 @@ pub use config::BridgeConfig;
 pub use error::{BridgeError, BridgeResult};
 pub use events::{BridgeEvent, BridgeEventBus, BridgeEventKind};
 pub use host_worker::HostWorkerClient;
+pub use metrics::{BridgeMetricsHandle, BridgeMetricsSnapshot};
 pub use server::BridgeServer;

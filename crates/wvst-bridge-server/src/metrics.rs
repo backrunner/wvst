@@ -1,4 +1,5 @@
 use std::array;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -209,6 +210,21 @@ impl BridgeMetrics {
 impl Default for BridgeMetrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeMetricsHandle {
+    metrics: Arc<BridgeMetrics>,
+}
+
+impl BridgeMetricsHandle {
+    pub(crate) fn new(metrics: Arc<BridgeMetrics>) -> Self {
+        Self { metrics }
+    }
+
+    pub fn snapshot(&self) -> BridgeMetricsSnapshot {
+        self.metrics.snapshot()
     }
 }
 

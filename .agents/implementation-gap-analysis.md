@@ -75,6 +75,7 @@
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
 - VST3 runtime process path 已将插件写回的 output note on/off、poly pressure 和 output parameter changes 规范化为 WVST 协议事件，并由 worker audio IPC 在响应 frame 中编码为 audio + MIDI event section + parameter automation section；未知或越界 VST3 output event 会被过滤，避免污染 Web 数据面。
 - Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址、主动 shutdown、runtime event subscription、最近事件快照、外部 worker executable 注入和 worker timeout 配置。
+- `wvst-embed` 的 `BridgeHandle` 已提供只读 metrics snapshot 和 runtime diagnostics 聚合，嵌入式宿主可直接读取本地地址、指标和 recent events 做健康检查/日志集成。
 - Workspace 已新增 `wvst-process-supervision` crate，将 worker 进程树终止的 Unix process group 与 Windows Job Object 平台 FFI 收敛到独立安全 API；`wvst-bridge-server` 继续保持 `unsafe_code = deny`，并已通过 macOS host、Linux GNU 和 Windows MSVC 编译检查。
 
 ## 距离完整能力的主要差距
@@ -134,7 +135,7 @@
 
 仍缺少：
 
-- `wvst-embed` 已有 runtime builder、事件订阅、事件快照、外部 worker executable 注入和 timeout 配置；仍缺少应用生命周期集成示例、日志/诊断集成和打包脚本。
+- `wvst-embed` 已有 runtime builder、事件订阅、事件快照、只读 metrics diagnostics、外部 worker executable 注入和 timeout 配置；仍缺少应用生命周期集成示例、日志管线示例和打包脚本。
 - macOS 安装、启动、授权、日志和诊断命令。
 - Windows 真实运行验证、Linux 资源限制 backend 和发布打包脚本。
 

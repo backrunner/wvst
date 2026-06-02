@@ -22,7 +22,7 @@ use crate::error::BridgeResult;
 use crate::events::{BridgeEvent, BridgeEventBus, BridgeEventKind, bridge_event_notification};
 use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::{InstanceRecord, InstanceRegistry, InstanceState, StreamState};
-use crate::metrics::BridgeMetrics;
+use crate::metrics::{BridgeMetrics, BridgeMetricsHandle};
 use crate::plugin_registry::PluginRegistry;
 use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorOptions};
 
@@ -103,6 +103,10 @@ impl BridgeServer {
 
     pub fn recent_events(&self, after_sequence: Option<u64>) -> Vec<BridgeEvent> {
         self.state.events.recent_since(after_sequence)
+    }
+
+    pub fn metrics_handle(&self) -> BridgeMetricsHandle {
+        BridgeMetricsHandle::new(Arc::clone(&self.state.metrics))
     }
 
     pub async fn serve(self) -> BridgeResult<()> {
