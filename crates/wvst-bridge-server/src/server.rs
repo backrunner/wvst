@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -15,6 +14,7 @@ use wvst_core::ChannelCount;
 use wvst_process_supervision::WorkerResourceLimits;
 use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameFlags, AudioFrameHeader};
 
+use crate::audio_in_flight::AudioInFlightLimiter;
 use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::component_handler_events::ComponentHandlerEventPublisher;
 use crate::config::BridgeConfig;
@@ -243,6 +243,7 @@ where
                     metrics: &state.metrics,
                     plugins: &state.plugins,
                     stream_tracker: &state.stream_tracker,
+                    audio_in_flight: &state.audio_in_flight,
                     origin,
                     session_authorized,
                     workers: &state.workers,
@@ -464,45 +465,6 @@ fn encode_silence_frame(
         .map_err(|error| error.to_string())?;
 
     Ok(frame)
-}
-
-#[derive(Debug, Default)]
-struct AudioInFlightLimiter {
-    streams: Mutex<BTreeSet<u64>>,
-}
-
-impl AudioInFlightLimiter {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn try_acquire(&self, stream_id: u64) -> Option<AudioInFlightGuard<'_>> {
-        let mut streams = self.streams.lock().ok()?;
-        if !streams.insert(stream_id) {
-            return None;
-        }
-        Some(AudioInFlightGuard {
-            limiter: self,
-            stream_id,
-        })
-    }
-
-    fn release(&self, stream_id: u64) {
-        if let Ok(mut streams) = self.streams.lock() {
-            streams.remove(&stream_id);
-        }
-    }
-}
-
-struct AudioInFlightGuard<'a> {
-    limiter: &'a AudioInFlightLimiter,
-    stream_id: u64,
-}
-
-impl Drop for AudioInFlightGuard<'_> {
-    fn drop(&mut self) {
-        self.limiter.release(self.stream_id);
-    }
 }
 
 enum AudioRouteResult {

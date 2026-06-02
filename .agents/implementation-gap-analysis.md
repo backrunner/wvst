@@ -36,7 +36,7 @@
 - Bridge 已加入按 stream 的音频序号诊断 tracker，能统计 sequence gap 事件/缺失帧估算、重复帧、乱序帧、late flag 和 interarrival jitter 分位数；stream close/open/destroy 会重置 tracker，避免 Web 端重开流后的误报。
 - Bridge 音频路由已加入每 stream in-flight limiter：同一 stream 的上一块音频仍在 worker 处理时，新 block 会被判定为 backpressure drop，并返回带 `silence` / `late` flag 的诊断静音帧；Bridge/Web metrics 已暴露 `audioBackpressureDrops`。
 - Bridge/Web SDK 已提供 `stream.open` / `stream.close` 控制 API，实例记录包含 `streamState`，Bridge 只将 open stream 的音频帧路由到 worker。
-- 对于已知 stream 的关闭或处理失败场景，Bridge 会返回带 `silence` / `end-of-stream` / `process-error` flag 的诊断静音音频帧，避免把异常伪装成正常 echo。
+- 对于已知 stream 的关闭或处理失败场景，Bridge 会返回带 `silence` / `end-of-stream` / `process-error` flag 的诊断静音音频帧，避免把异常伪装成正常 echo；`stream.close` 控制面会等待同 stream 的在途音频块释放或超时后再返回，避免 close 与最后一个 block 竞争。
 - Web `bridge-worker` 已具备从 SAB input ring 读取 quantum、编码 WVST binary audio frame、发送 Bridge 并写回 output ring 的基础 audio pump；AudioWorklet processor 已支持通过 SAB ring 和计数器交换音频块。
 - Web SDK 已提供 `WVSTBridgeWorkerClient`，封装 bridge worker 的 connect/request/sendBinary/startAudioStream/stopAudioStream 命令，避免应用侧手写 worker message protocol。
 - Web SDK 已提供音频设备选择 helper：可枚举 `audioinput`/`audiooutput`，按 `deviceId` 请求输入 `MediaStream`，创建 `MediaStreamAudioSourceNode`，并通过 `AudioContext.setSinkId()` 或 `MediaStreamAudioDestinationNode + HTMLMediaElement.setSinkId()` 指定输出设备。
@@ -117,7 +117,7 @@
 
 仍缺少：
 
-- stream open/close 已有首版控制 API；仍缺少 end-of-stream 帧语义、close 后 drain 策略和 WebAudio 端自动重开策略。
+- stream open/close 已有首版控制 API、end-of-stream 诊断帧和 close 后 in-flight drain；仍缺少 WebAudio 端自动重开策略。
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
 - Web 设备选择已有底层 helper、高层 session graph helper、capability API、device watcher、sample-rate guard、手动 stream restart 和基础 loopback metrics；仍缺少 sample-rate change 后的自动重建策略和真实端到端设备切换测量。
 - Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge/Web 二进制诊断帧已有基础 flags，每 stream backpressure drop 会返回 `silence` / `late` 诊断帧并计数；仍缺少共享内存/预分配 buffer、Web worker 侧主动 drop 策略和端到端背压协调。

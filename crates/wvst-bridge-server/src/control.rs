@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use wvst_core::ProtocolVersion;
 use wvst_protocol::{AUDIO_FRAME_VERSION, negotiate_protocol};
 
+use crate::audio_in_flight::AudioInFlightLimiter;
 use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::component_handler_events::ComponentHandlerEventPublisher;
 use crate::config::BridgeConfig;
@@ -13,24 +14,25 @@ use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorError};
 
-pub struct ControlContext<'a> {
-    pub config: &'a BridgeConfig,
-    pub host_worker: &'a HostWorkerClient,
-    pub instances: &'a InstanceRegistry,
-    pub component_handler_events: &'a ComponentHandlerEventPublisher,
-    pub events: &'a BridgeEventBus,
-    pub metrics: &'a BridgeMetrics,
-    pub plugins: &'a PluginRegistry,
-    pub stream_tracker: &'a AudioStreamTracker,
-    pub origin: Option<&'a str>,
-    pub session_authorized: bool,
-    pub workers: &'a WorkerSupervisor,
+pub(crate) struct ControlContext<'a> {
+    pub(crate) config: &'a BridgeConfig,
+    pub(crate) host_worker: &'a HostWorkerClient,
+    pub(crate) instances: &'a InstanceRegistry,
+    pub(crate) component_handler_events: &'a ComponentHandlerEventPublisher,
+    pub(crate) events: &'a BridgeEventBus,
+    pub(crate) metrics: &'a BridgeMetrics,
+    pub(crate) plugins: &'a PluginRegistry,
+    pub(crate) stream_tracker: &'a AudioStreamTracker,
+    pub(crate) audio_in_flight: &'a AudioInFlightLimiter,
+    pub(crate) origin: Option<&'a str>,
+    pub(crate) session_authorized: bool,
+    pub(crate) workers: &'a WorkerSupervisor,
 }
 
 #[derive(Debug, Clone)]
-pub struct ControlResponse {
-    pub text: String,
-    pub session_authorized: bool,
+pub(crate) struct ControlResponse {
+    pub(crate) text: String,
+    pub(crate) session_authorized: bool,
 }
 
 impl ControlResponse {
@@ -115,7 +117,10 @@ impl From<ProtocolVersion> for WireProtocolVersion {
     }
 }
 
-pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> ControlResponse {
+pub(crate) async fn handle_control_text(
+    text: &str,
+    context: ControlContext<'_>,
+) -> ControlResponse {
     context.metrics.increment_control_messages();
 
     let request = match serde_json::from_str::<RpcRequest>(text) {
@@ -367,7 +372,7 @@ pub async fn handle_control_text(text: &str, context: ControlContext<'_>) -> Con
             session_authorized,
         ),
         "stream.close" => ControlResponse::new(
-            control_instances::handle_stream_close(request.id, request.params, context),
+            control_instances::handle_stream_close(request.id, request.params, context).await,
             session_authorized,
         ),
         _ => ControlResponse::new(

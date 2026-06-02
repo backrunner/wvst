@@ -1,3 +1,4 @@
+pub(crate) mod audio_in_flight;
 pub mod audio_stream_tracker;
 pub mod component_handler_events;
 pub mod config;

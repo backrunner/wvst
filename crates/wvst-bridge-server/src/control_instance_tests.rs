@@ -3,11 +3,14 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::audio_in_flight::AudioInFlightLimiter;
 use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::component_handler_events::ComponentHandlerEventPublisher;
 use crate::events::BridgeEventBus;
 use crate::host_worker::HostWorkerClient;
-use crate::instance_registry::{InstanceRegistry, InstanceState, WorkerState};
+use crate::instance_registry::{
+    InstanceCreateParams, InstanceRegistry, InstanceState, WorkerState,
+};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::worker_supervisor::WorkerSupervisor;
@@ -24,6 +27,7 @@ struct RequestContext<'a> {
     metrics: &'a BridgeMetrics,
     plugins: &'a PluginRegistry,
     stream_tracker: &'a AudioStreamTracker,
+    audio_in_flight: &'a AudioInFlightLimiter,
     workers: &'a WorkerSupervisor,
 }
 
@@ -38,6 +42,7 @@ async fn creates_lists_and_destroys_instance() {
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let worker_path = serve_worker_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -49,6 +54,7 @@ async fn creates_lists_and_destroys_instance() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         workers: &workers,
     };
 
@@ -459,6 +465,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -470,6 +477,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         workers: &workers,
     };
 
@@ -507,6 +515,7 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let worker_path = serve_worker_script();
     let workers = WorkerSupervisor::with_options(
         crate::worker_supervisor::WorkerSupervisorOptions::new(worker_path.clone())
@@ -524,6 +533,7 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         workers: &workers,
     };
 
@@ -560,6 +570,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -571,6 +582,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         workers: &workers,
     };
 
@@ -638,6 +650,7 @@ async fn restarts_failed_instance_with_same_stream() {
     let metrics = BridgeMetrics::new();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -649,6 +662,7 @@ async fn restarts_failed_instance_with_same_stream() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         workers: &workers,
     };
 
@@ -702,6 +716,77 @@ async fn restarts_failed_instance_with_same_stream() {
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
 }
 
+#[tokio::test]
+async fn stream_close_waits_for_in_flight_audio_to_drain() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
+    let events = BridgeEventBus::new();
+    let metrics = BridgeMetrics::new();
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let plugin = plugins.find(&plugin_id).expect("plugin");
+    let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
+    let workers = WorkerSupervisor::new_for_test(
+        PathBuf::from("missing-wvst-host-worker"),
+        Duration::from_secs(5),
+    );
+    let record = instances
+        .create(
+            InstanceCreateParams {
+                plugin_id,
+                class_id: Some("class-a".to_string()),
+                sample_rate: 48_000,
+                max_block_frames: 128,
+                input_channels: 2,
+                output_channels: 2,
+            },
+            &plugin,
+        )
+        .expect("instance");
+    let guard = audio_in_flight
+        .try_acquire(record.stream_id)
+        .expect("in-flight stream");
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        component_handler_events: &component_handler_events,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
+        workers: &workers,
+    };
+    let close_request = serde_json::json!({
+        "id": 1,
+        "method": "stream.close",
+        "params": { "instanceId": record.instance_id }
+    })
+    .to_string();
+    let mut close = Box::pin(request_json(&close_request, context));
+
+    tokio::select! {
+        _ = &mut close => panic!("stream.close returned before in-flight audio drained"),
+        _ = tokio::time::sleep(Duration::from_millis(25)) => {}
+    }
+    drop(guard);
+    let close_value = close.await;
+
+    assert_eq!(close_value["result"]["streamState"], "closed");
+    assert_eq!(
+        instances
+            .get(record.instance_id)
+            .expect("instance")
+            .stream_state,
+        crate::instance_registry::StreamState::Closed
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
     let response = handle_control_text(
         text,
@@ -715,6 +800,7 @@ async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
             plugins: context.plugins,
             origin: None,
             stream_tracker: context.stream_tracker,
+            audio_in_flight: context.audio_in_flight,
             session_authorized: true,
             workers: context.workers,
         },

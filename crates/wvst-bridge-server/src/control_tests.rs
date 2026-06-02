@@ -2,6 +2,7 @@ use super::*;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::audio_in_flight::AudioInFlightLimiter;
 use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::component_handler_events::ComponentHandlerEventPublisher;
 use crate::events::{BridgeEventBus, BridgeEventKind};
@@ -20,6 +21,7 @@ async fn responds_to_hello() {
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -30,6 +32,7 @@ async fn responds_to_hello() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         origin: Some("http://localhost:5173"),
         session_authorized: false,
         workers: &workers,
@@ -57,6 +60,7 @@ async fn rejects_denied_origin() {
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -67,6 +71,7 @@ async fn rejects_denied_origin() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         origin: Some("https://example.com"),
         session_authorized: false,
         workers: &workers,
@@ -93,6 +98,7 @@ async fn rejects_plugin_list_before_hello() {
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -103,6 +109,7 @@ async fn rejects_plugin_list_before_hello() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         origin: None,
         session_authorized: false,
         workers: &workers,
@@ -125,6 +132,7 @@ async fn lists_cached_plugins_after_hello() {
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -135,6 +143,7 @@ async fn lists_cached_plugins_after_hello() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         origin: None,
         session_authorized: true,
         workers: &workers,
@@ -163,6 +172,7 @@ async fn returns_recent_bridge_events() {
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let workers = test_workers();
     events.emit(BridgeEventKind::ServerStarting);
     events.emit(BridgeEventKind::ServerStopped);
@@ -175,6 +185,7 @@ async fn returns_recent_bridge_events() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         origin: None,
         session_authorized: true,
         workers: &workers,
@@ -210,6 +221,7 @@ async fn routes_factory_info_to_host_worker() {
     let metrics = BridgeMetrics::new();
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
     let workers = test_workers();
     let context = ControlContext {
         config: &config,
@@ -220,6 +232,7 @@ async fn routes_factory_info_to_host_worker() {
         metrics: &metrics,
         plugins: &plugins,
         stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
         origin: None,
         session_authorized: true,
         workers: &workers,

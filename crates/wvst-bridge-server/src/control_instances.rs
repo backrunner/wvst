@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde_json::{Value, json};
 
 use super::{
@@ -13,6 +15,8 @@ use crate::instance_registry::{
     StreamLifecycleParams, WorkerRuntimeInfo,
 };
 use crate::worker_supervisor::WorkerSupervisorError;
+
+const STREAM_CLOSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub async fn handle_instance_create(
     id: Value,
@@ -935,7 +939,7 @@ pub fn handle_stream_open(id: Value, params: Value, context: ControlContext<'_>)
     }
 }
 
-pub fn handle_stream_close(id: Value, params: Value, context: ControlContext<'_>) -> String {
+pub async fn handle_stream_close(id: Value, params: Value, context: ControlContext<'_>) -> String {
     let params = match serde_json::from_value::<StreamLifecycleParams>(params) {
         Ok(params) => params,
         Err(error) => {
@@ -945,6 +949,10 @@ pub fn handle_stream_close(id: Value, params: Value, context: ControlContext<'_>
 
     match context.instances.close_stream(params) {
         Ok(record) => {
+            context
+                .audio_in_flight
+                .wait_until_idle(record.stream_id, STREAM_CLOSE_DRAIN_TIMEOUT)
+                .await;
             context.stream_tracker.reset(record.stream_id);
             response_result(id, json!(record))
         }
