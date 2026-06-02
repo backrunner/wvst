@@ -70,6 +70,9 @@ async fn creates_lists_and_destroys_instance() {
     let instance_id = create_value["result"]["instanceId"]
         .as_u64()
         .expect("instance id");
+    let stream_id = create_value["result"]["streamId"]
+        .as_u64()
+        .expect("stream id");
 
     assert_eq!(create_value["result"]["state"], "ready");
     assert_eq!(create_value["result"]["workerState"], "ready");
@@ -383,7 +386,9 @@ async fn creates_lists_and_destroys_instance() {
         .collect::<Vec<_>>();
     assert!(event_types.contains(&"worker-starting"));
     assert!(event_types.contains(&"worker-ready"));
+    assert!(event_types.contains(&"worker-processing-starting"));
     assert!(event_types.contains(&"worker-processing"));
+    assert!(event_types.contains(&"worker-processing-stopping"));
     assert!(event_types.contains(&"worker-stopped"));
 
     let destroy_request = serde_json::json!({
@@ -395,6 +400,44 @@ async fn creates_lists_and_destroys_instance() {
     let destroy_value = request_json(&destroy_request, context).await;
     assert_eq!(destroy_value["result"]["state"], "destroyed");
     assert!(instances.list().is_empty());
+    let destroy_events_value =
+        request_json(r#"{"id":74,"method":"bridge.events","params":{}}"#, context).await;
+    let destroy_events = destroy_events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| {
+            matches!(
+                event["kind"]["type"].as_str(),
+                Some("worker-destroying" | "worker-destroyed")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(destroy_events.len(), 2);
+    assert_eq!(
+        destroy_events[0]["kind"]["instanceId"].as_u64(),
+        Some(instance_id)
+    );
+    assert_eq!(
+        destroy_events[0]["kind"]["streamId"].as_u64(),
+        Some(stream_id)
+    );
+    assert_eq!(
+        destroy_events[0]["kind"]["pluginId"].as_str(),
+        Some(plugin_id.as_str())
+    );
+    assert_eq!(
+        destroy_events[1]["kind"]["instanceId"].as_u64(),
+        Some(instance_id)
+    );
+    assert_eq!(
+        destroy_events[1]["kind"]["streamId"].as_u64(),
+        Some(stream_id)
+    );
+    assert_eq!(
+        destroy_events[1]["kind"]["pluginId"].as_str(),
+        Some(plugin_id.as_str())
+    );
 
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));

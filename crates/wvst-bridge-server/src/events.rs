@@ -53,8 +53,26 @@ pub enum BridgeEventKind {
     WorkerProcessing {
         instance_id: u64,
     },
+    WorkerProcessingStarting {
+        instance_id: u64,
+        plugin_id: String,
+    },
+    WorkerProcessingStopping {
+        instance_id: u64,
+        plugin_id: String,
+    },
     WorkerStopped {
         instance_id: u64,
+    },
+    WorkerDestroying {
+        instance_id: u64,
+        plugin_id: String,
+        stream_id: u64,
+    },
+    WorkerDestroyed {
+        instance_id: u64,
+        plugin_id: String,
+        stream_id: u64,
     },
     WorkerFailed {
         instance_id: u64,

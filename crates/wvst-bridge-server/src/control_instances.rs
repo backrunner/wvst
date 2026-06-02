@@ -108,11 +108,14 @@ pub async fn handle_instance_destroy(
         }
     };
 
-    let stream_id = context
-        .instances
-        .get(params.instance_id)
-        .ok()
-        .map(|record| record.stream_id);
+    let existing = context.instances.get(params.instance_id).ok();
+    if let Some(record) = &existing {
+        context.events.emit(BridgeEventKind::WorkerDestroying {
+            instance_id: record.instance_id,
+            plugin_id: record.plugin_id.clone(),
+            stream_id: record.stream_id,
+        });
+    }
     context
         .component_handler_events
         .reset_instance(params.instance_id);
@@ -120,8 +123,14 @@ pub async fn handle_instance_destroy(
 
     match context.instances.destroy(params) {
         Ok(result) => {
-            if let Some(stream_id) = stream_id {
+            if let Some(record) = existing {
+                let stream_id = record.stream_id;
                 context.stream_tracker.reset(stream_id);
+                context.events.emit(BridgeEventKind::WorkerDestroyed {
+                    instance_id: record.instance_id,
+                    plugin_id: record.plugin_id,
+                    stream_id,
+                });
             }
             response_result(id, json!(result))
         }
@@ -193,7 +202,15 @@ pub async fn handle_instance_start(
         Ok(record) => record,
         Err(error) => return response_instance_error(id, error),
     };
-    let _ = context.instances.mark_worker_starting(params.instance_id);
+    if let Err(error) = context.instances.mark_worker_starting(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+    context
+        .events
+        .emit(BridgeEventKind::WorkerProcessingStarting {
+            instance_id: record.instance_id,
+            plugin_id: record.plugin_id.clone(),
+        });
 
     match context.workers.start_processing(params.instance_id).await {
         Ok(worker) => match context.instances.mark_processing(params.instance_id) {
@@ -226,7 +243,15 @@ pub async fn handle_instance_stop(id: Value, params: Value, context: ControlCont
         Ok(record) => record,
         Err(error) => return response_instance_error(id, error),
     };
-    let _ = context.instances.mark_stopping(params.instance_id);
+    if let Err(error) = context.instances.mark_stopping(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+    context
+        .events
+        .emit(BridgeEventKind::WorkerProcessingStopping {
+            instance_id: record.instance_id,
+            plugin_id: record.plugin_id.clone(),
+        });
 
     match context.workers.stop_processing(params.instance_id).await {
         Ok(worker) => match context.instances.mark_stopped(params.instance_id) {
