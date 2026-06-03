@@ -18,7 +18,7 @@ fn main() -> ExitCode {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
-        Ok(CliResult::Report(report)) => write_report(report),
+        Ok(CliResult::Report(report)) => write_report(*report),
         Err(message) => {
             eprintln!("{message}\n\n{USAGE}");
             ExitCode::from(2)
@@ -57,7 +57,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<CliResult, String> {
             let matrix = manifest
                 .to_matrix(options.worker_executable)
                 .map_err(|error| error.to_string())?;
-            Ok(CliResult::Report(matrix.run()))
+            Ok(CliResult::Report(Box::new(matrix.run())))
         }
     }
 }
@@ -115,7 +115,7 @@ struct CliOptions {
 
 enum CliResult {
     Help,
-    Report(RuntimeProbeMatrixReport),
+    Report(Box<RuntimeProbeMatrixReport>),
 }
 
 #[cfg(test)]

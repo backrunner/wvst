@@ -92,6 +92,7 @@ fn summarizes_failed_and_launch_failed_cases() {
     assert_eq!(report.passed, 0);
     assert_eq!(report.failed, 1);
     assert_eq!(report.launch_failed, 1);
+    assert_eq!(report.expectation_failed, 0);
     assert_eq!(report.results[0].case_name, "broken");
     assert_eq!(report.results[1].class_id, "class-b");
 }
@@ -158,6 +159,130 @@ fn summarizes_probe_audio_health() {
     assert_eq!(value["audioHealth"]["reportedCases"], 2);
     assert_eq!(value["audioHealth"]["fullySilentCases"], 1);
     assert_eq!(value["audioHealth"]["maxOutputPeakCase"], "hot-synth");
+}
+
+#[test]
+fn marks_audio_expectation_failures() {
+    let mut executor = RecordingExecutor {
+        results: vec![RuntimeProbeResult {
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": true,
+                "process": {
+                    "totalBlocks": 2,
+                    "silentOutputBlocks": 2,
+                    "nonZeroOutputBlocks": 0,
+                    "nonFiniteOutputSamples": 1,
+                    "clippedOutputSamples": 2,
+                    "maxOutputPeak": 1.25,
+                    "outputRms": 0.0
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        }],
+        ..RecordingExecutor::default()
+    };
+    let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
+        RuntimeProbeCase::new("strict-synth", "/tmp/Synth.vst3", "class-a").with_expectations(
+            RuntimeProbeExpectations::default()
+                .require_non_zero_output()
+                .max_non_finite_output_samples(0)
+                .max_clipped_output_samples(0)
+                .max_output_peak_milli(1_000),
+        ),
+    );
+
+    let report = matrix.run_with(&mut executor);
+
+    assert!(!report.all_passed());
+    assert_eq!(report.expectation_failed, 1);
+    assert_eq!(
+        report.results[0].status,
+        RuntimeProbeStatus::ExpectationFailed
+    );
+    assert_eq!(
+        report.results[0].probe_status,
+        Some(RuntimeProbeStatus::Passed)
+    );
+    assert!(
+        report.results[0]
+            .expectation_failures
+            .iter()
+            .any(|failure| failure.contains("non-zero output"))
+    );
+    assert!(
+        report.results[0]
+            .expectation_failures
+            .iter()
+            .any(|failure| failure.contains("clipped output samples"))
+    );
+}
+
+#[test]
+fn expected_failed_probe_can_pass_with_matching_diagnostics() {
+    let mut executor = RecordingExecutor {
+        results: vec![RuntimeProbeResult {
+            status: RuntimeProbeStatus::Failed,
+            exit_code: Some(1),
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": false,
+                "data": {
+                    "kind": "vst3-runtime-init",
+                    "compatibility": {
+                        "schemaVersion": 1,
+                        "category": "processing-configuration"
+                    },
+                    "workerData": {
+                        "classification": {
+                            "schemaVersion": 1,
+                            "category": "worker-rejection"
+                        }
+                    }
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        }],
+        ..RecordingExecutor::default()
+    };
+    let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
+        RuntimeProbeCase::new("bad-config", "/tmp/Effect.vst3", "class-a").with_expectations(
+            RuntimeProbeExpectations::default()
+                .expected_status(RuntimeProbeStatus::Failed)
+                .expected_compatibility_category("processing-configuration")
+                .expected_classification_category("worker-rejection"),
+        ),
+    );
+
+    let report = matrix.run_with(&mut executor);
+
+    assert!(report.all_passed());
+    assert_eq!(report.passed, 1);
+    assert_eq!(report.failed, 0);
+    assert_eq!(report.expectation_failed, 0);
+    assert_eq!(report.results[0].status, RuntimeProbeStatus::Passed);
+    assert_eq!(
+        report.results[0].probe_status,
+        Some(RuntimeProbeStatus::Failed)
+    );
+    assert_eq!(
+        report
+            .diagnostics
+            .compatibility_categories
+            .get("processing-configuration"),
+        Some(&1)
+    );
+    assert_eq!(
+        report
+            .diagnostics
+            .classification_categories
+            .get("worker-rejection"),
+        Some(&1)
+    );
+    assert_eq!(
+        report.diagnostics.failure_kinds.get("vst3-runtime-init"),
+        Some(&1)
+    );
 }
 
 #[test]

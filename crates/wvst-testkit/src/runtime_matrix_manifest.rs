@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::runtime_matrix::{
-    RuntimeProbeCase, RuntimeProbeMatrix, RuntimeProbeNote, RuntimeProbeParameterChange,
+    RuntimeProbeCase, RuntimeProbeExpectations, RuntimeProbeMatrix, RuntimeProbeNote,
+    RuntimeProbeParameterChange, RuntimeProbeStatus,
 };
 
 const RUNTIME_PROBE_MATRIX_SCHEMA_VERSION: u16 = 1;
@@ -90,6 +91,8 @@ pub struct RuntimeProbeCaseManifest {
     pub note: Option<RuntimeProbeNoteManifest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parameter_changes: Vec<RuntimeProbeParameterChangeManifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expectations: Option<RuntimeProbeExpectations>,
 }
 
 impl RuntimeProbeCaseManifest {
@@ -120,6 +123,9 @@ impl RuntimeProbeCaseManifest {
                 change.value_milli,
                 change.sample_offset,
             ));
+        }
+        if let Some(expectations) = &self.expectations {
+            case = case.with_expectations(expectations.clone());
         }
         case
     }
@@ -164,6 +170,9 @@ impl RuntimeProbeCaseManifest {
         }
         for change in &self.parameter_changes {
             change.validate(&case_name, self.frames)?;
+        }
+        if let Some(expectations) = &self.expectations {
+            validate_expectations(&case_name, expectations)?;
         }
         Ok(())
     }
@@ -257,6 +266,51 @@ impl std::fmt::Display for RuntimeProbeMatrixManifestError {
 
 impl std::error::Error for RuntimeProbeMatrixManifestError {}
 
+fn validate_expectations(
+    case_name: &str,
+    expectations: &RuntimeProbeExpectations,
+) -> Result<(), RuntimeProbeMatrixManifestError> {
+    if expectations.expected_status == Some(RuntimeProbeStatus::ExpectationFailed) {
+        return Err(invalid_case(
+            case_name,
+            "expectations.expectedStatus cannot be expectation-failed",
+        ));
+    }
+    if expectations.require_non_zero_output && expectations.require_silent_output {
+        return Err(invalid_case(
+            case_name,
+            "expectations cannot require both non-zero and silent output",
+        ));
+    }
+    if let (Some(min_rms), Some(max_peak)) = (
+        expectations.min_output_rms_milli,
+        expectations.max_output_peak_milli,
+    ) && min_rms > max_peak
+    {
+        return Err(invalid_case(
+            case_name,
+            "expectations.minOutputRmsMilli must be <= maxOutputPeakMilli",
+        ));
+    }
+    if let Some(category) = &expectations.expected_compatibility_category
+        && category.trim().is_empty()
+    {
+        return Err(invalid_case(
+            case_name,
+            "expectations.expectedCompatibilityCategory must not be empty",
+        ));
+    }
+    if let Some(category) = &expectations.expected_classification_category
+        && category.trim().is_empty()
+    {
+        return Err(invalid_case(
+            case_name,
+            "expectations.expectedClassificationCategory must not be empty",
+        ));
+    }
+    Ok(())
+}
+
 fn invalid_case(
     case_name: impl Into<String>,
     message: impl Into<String>,
@@ -303,6 +357,7 @@ const fn default_parameter_sample_offset() -> u16 {
 mod tests {
     use super::*;
     use crate::runtime_matrix::{RuntimeProbeExecutor, RuntimeProbeInvocation, RuntimeProbeResult};
+    use serde_json::json;
 
     #[derive(Default)]
     struct RecordingExecutor {
@@ -312,14 +367,29 @@ mod tests {
     impl RuntimeProbeExecutor for RecordingExecutor {
         fn run(&mut self, invocation: RuntimeProbeInvocation) -> RuntimeProbeResult {
             self.invocations.push(invocation);
-            RuntimeProbeResult::default()
+            RuntimeProbeResult {
+                probe_report: Some(json!({
+                    "schemaVersion": 1,
+                    "ok": true,
+                    "process": {
+                        "totalBlocks": 1,
+                        "silentOutputBlocks": 0,
+                        "nonZeroOutputBlocks": 1,
+                        "nonFiniteOutputSamples": 0,
+                        "clippedOutputSamples": 0,
+                        "maxOutputPeak": 0.75,
+                        "outputRms": 0.25
+                    }
+                })),
+                ..RuntimeProbeResult::default()
+            }
         }
     }
 
     #[test]
     fn parses_manifest_and_builds_matrix() {
         let manifest = RuntimeProbeMatrixManifest::from_json_str(
-            r#"{"schemaVersion":1,"description":"local third-party VST3 smoke matrix","cases":[{"name":"instrument-note","pluginPath":"/Library/Audio/Plug-Ins/VST3/Synth.vst3","classId":"class-a","inputChannels":0,"outputChannels":2,"frames":128,"blocks":8,"note":{"pitch":60,"velocityMilli":750,"channel":1},"parameterChanges":[{"parameterId":42,"valueMilli":500,"sampleOffset":64}]}]}"#,
+            r#"{"schemaVersion":1,"description":"local third-party VST3 smoke matrix","cases":[{"name":"instrument-note","pluginPath":"/Library/Audio/Plug-Ins/VST3/Synth.vst3","classId":"class-a","inputChannels":0,"outputChannels":2,"frames":128,"blocks":8,"note":{"pitch":60,"velocityMilli":750,"channel":1},"parameterChanges":[{"parameterId":42,"valueMilli":500,"sampleOffset":64}],"expectations":{"requireNonZeroOutput":true,"maxNonFiniteOutputSamples":0,"maxClippedOutputSamples":0,"minOutputRmsMilli":1,"maxOutputPeakMilli":1000}}]}"#,
         )
         .expect("manifest");
 
@@ -329,6 +399,13 @@ mod tests {
         assert_eq!(matrix.cases().len(), 1);
         assert_eq!(matrix.cases()[0].name, "instrument-note");
         assert_eq!(matrix.cases()[0].input_channels, 0);
+        assert!(
+            matrix.cases()[0]
+                .expectations
+                .as_ref()
+                .expect("expectations")
+                .require_non_zero_output
+        );
         let mut executor = RecordingExecutor::default();
         let report = matrix.run_with(&mut executor);
         assert_eq!(
@@ -350,7 +427,7 @@ mod tests {
             manifest
                 .to_json_string_pretty()
                 .expect("pretty json")
-                .contains("\"schemaVersion\": 1")
+                .contains("\"requireNonZeroOutput\": true")
         );
     }
 
@@ -376,6 +453,16 @@ mod tests {
             case_error,
             RuntimeProbeMatrixManifestError::InvalidCase { case_name, message }
                 if case_name == "bad-offset" && message.contains("valueMilli")
+        ));
+
+        let expectation_error = RuntimeProbeMatrixManifest::from_json_str(
+            r#"{"schemaVersion":1,"cases":[{"name":"bad-expectations","pluginPath":"/tmp/X.vst3","classId":"a","expectations":{"requireNonZeroOutput":true,"requireSilentOutput":true}}]}"#,
+        )
+        .expect_err("invalid expectations");
+        assert!(matches!(
+            expectation_error,
+            RuntimeProbeMatrixManifestError::InvalidCase { case_name, message }
+                if case_name == "bad-expectations" && message.contains("non-zero and silent")
         ));
     }
 }

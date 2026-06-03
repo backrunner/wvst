@@ -18,7 +18,13 @@
           "valueMilli": 500,
           "sampleOffset": 64
         }
-      ]
+      ],
+      "expectations": {
+        "expectedStatus": "passed",
+        "maxNonFiniteOutputSamples": 0,
+        "maxClippedOutputSamples": 0,
+        "maxOutputPeakMilli": 1000
+      }
     },
     {
       "name": "instrument-zero-input-note",
@@ -34,6 +40,14 @@
         "pitch": 60,
         "velocityMilli": 750,
         "channel": 0
+      },
+      "expectations": {
+        "expectedStatus": "passed",
+        "requireNonZeroOutput": true,
+        "maxNonFiniteOutputSamples": 0,
+        "maxClippedOutputSamples": 0,
+        "minOutputRmsMilli": 1,
+        "maxOutputPeakMilli": 1000
       }
     }
   ]
