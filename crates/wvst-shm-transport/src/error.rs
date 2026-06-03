@@ -7,6 +7,9 @@ pub enum SharedAudioLayoutError {
     ZeroBlockFrames,
     ZeroCapacityBlocks,
     ChannelCountTooLarge { channels: u16, max: u16 },
+    CursorOrderInvalid { read_frame: u64, write_frame: u64 },
+    InsufficientReadableFrames { requested: u64, available: u64 },
+    InsufficientWritableFrames { requested: u64, available: u64 },
     LayoutOverflow,
 }
 
@@ -25,6 +28,27 @@ impl Display for SharedAudioLayoutError {
             Self::ChannelCountTooLarge { channels, max } => write!(
                 formatter,
                 "shared audio channel count {channels} exceeds max {max}"
+            ),
+            Self::CursorOrderInvalid {
+                read_frame,
+                write_frame,
+            } => write!(
+                formatter,
+                "shared audio cursor read frame {read_frame} is ahead of write frame {write_frame}"
+            ),
+            Self::InsufficientReadableFrames {
+                requested,
+                available,
+            } => write!(
+                formatter,
+                "shared audio read requested {requested} frames but only {available} are available"
+            ),
+            Self::InsufficientWritableFrames {
+                requested,
+                available,
+            } => write!(
+                formatter,
+                "shared audio write requested {requested} frames but only {available} are available"
             ),
             Self::LayoutOverflow => formatter.write_str("shared audio layout size overflowed"),
         }

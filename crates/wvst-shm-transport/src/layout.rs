@@ -154,6 +154,88 @@ impl SharedAudioRingLayout {
         self.audio_offset.saturating_add(self.audio_bytes)
     }
 
+    pub fn readable_frames(
+        self,
+        cursor: SharedAudioRingCursor,
+    ) -> Result<u64, SharedAudioLayoutError> {
+        cursor
+            .pending_frames()
+            .map(|pending| pending.min(self.capacity_frames))
+    }
+
+    pub fn writable_frames(
+        self,
+        cursor: SharedAudioRingCursor,
+    ) -> Result<u64, SharedAudioLayoutError> {
+        let pending = cursor.pending_frames()?.min(self.capacity_frames);
+        Ok(self.capacity_frames.saturating_sub(pending))
+    }
+
+    pub fn read_plan(
+        self,
+        cursor: SharedAudioRingCursor,
+        frames: u64,
+    ) -> Result<SharedAudioRingSpanPlan, SharedAudioLayoutError> {
+        let available = self.readable_frames(cursor)?;
+        if frames > available {
+            return Err(SharedAudioLayoutError::InsufficientReadableFrames {
+                requested: frames,
+                available,
+            });
+        }
+        self.plan(cursor.read_frame, frames)
+    }
+
+    pub fn write_plan(
+        self,
+        cursor: SharedAudioRingCursor,
+        frames: u64,
+    ) -> Result<SharedAudioRingSpanPlan, SharedAudioLayoutError> {
+        let available = self.writable_frames(cursor)?;
+        if frames > available {
+            return Err(SharedAudioLayoutError::InsufficientWritableFrames {
+                requested: frames,
+                available,
+            });
+        }
+        self.plan(cursor.write_frame, frames)
+    }
+
+    fn plan(
+        self,
+        start_frame: u64,
+        frames: u64,
+    ) -> Result<SharedAudioRingSpanPlan, SharedAudioLayoutError> {
+        let frame_offset = start_frame % self.capacity_frames;
+        let first_frames = frames.min(self.capacity_frames - frame_offset);
+        let second_frames = frames.saturating_sub(first_frames);
+        let first_sample_offset = checked_mul(frame_offset, u64::from(self.channels))?;
+        let second_sample_offset = 0;
+        let first_samples = checked_mul(first_frames, u64::from(self.channels))?;
+        let second_samples = checked_mul(second_frames, u64::from(self.channels))?;
+        let first_byte_offset = checked_add(
+            self.audio_offset,
+            checked_mul(first_sample_offset, F32_SAMPLE_BYTES)?,
+        )?;
+        let second_byte_offset = checked_add(
+            self.audio_offset,
+            checked_mul(second_sample_offset, F32_SAMPLE_BYTES)?,
+        )?;
+
+        Ok(SharedAudioRingSpanPlan {
+            start_frame,
+            frame_offset,
+            frames,
+            channels: self.channels,
+            first_frames,
+            second_frames,
+            first_byte_offset,
+            first_bytes: checked_mul(first_samples, F32_SAMPLE_BYTES)?,
+            second_byte_offset,
+            second_bytes: checked_mul(second_samples, F32_SAMPLE_BYTES)?,
+        })
+    }
+
     fn encode_descriptor(self, output: &mut [u8], offset: usize) {
         put_u16(output, offset, self.role as u16);
         put_u16(output, offset + 2, self.channels);
@@ -174,6 +256,46 @@ impl SharedAudioRingLayout {
 pub enum SharedAudioRingRole {
     Input = 1,
     Output = 2,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedAudioRingCursor {
+    pub read_frame: u64,
+    pub write_frame: u64,
+}
+
+impl SharedAudioRingCursor {
+    pub const fn new(read_frame: u64, write_frame: u64) -> Self {
+        Self {
+            read_frame,
+            write_frame,
+        }
+    }
+
+    fn pending_frames(self) -> Result<u64, SharedAudioLayoutError> {
+        self.write_frame.checked_sub(self.read_frame).ok_or(
+            SharedAudioLayoutError::CursorOrderInvalid {
+                read_frame: self.read_frame,
+                write_frame: self.write_frame,
+            },
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedAudioRingSpanPlan {
+    pub start_frame: u64,
+    pub frame_offset: u64,
+    pub frames: u64,
+    pub channels: u16,
+    pub first_frames: u64,
+    pub second_frames: u64,
+    pub first_byte_offset: u64,
+    pub first_bytes: u64,
+    pub second_byte_offset: u64,
+    pub second_bytes: u64,
 }
 
 fn validate_config(config: SharedAudioTransportConfig) -> Result<(), SharedAudioLayoutError> {
@@ -313,6 +435,104 @@ mod tests {
                 max: MAX_SHARED_AUDIO_CHANNELS,
             })
         );
+    }
+
+    #[test]
+    fn plans_contiguous_read_and_write_spans() {
+        let layout = SharedAudioTransportConfig::new(48_000, 128, 4, 2, 2)
+            .layout()
+            .expect("layout");
+        let cursor = SharedAudioRingCursor::new(0, 128);
+
+        assert_eq!(layout.input.readable_frames(cursor), Ok(128));
+        assert_eq!(layout.input.writable_frames(cursor), Ok(384));
+
+        let read = layout.input.read_plan(cursor, 128).expect("read");
+        assert_eq!(read.first_byte_offset, layout.input.audio_offset);
+        assert_eq!(read.first_bytes, 128 * 2 * F32_SAMPLE_BYTES);
+        assert_eq!(read.second_bytes, 0);
+
+        let write = layout.input.write_plan(cursor, 128).expect("write");
+        assert_eq!(
+            write.first_byte_offset,
+            layout.input.audio_offset + 128 * 2 * F32_SAMPLE_BYTES
+        );
+        assert_eq!(write.first_frames, 128);
+        assert_eq!(write.second_frames, 0);
+    }
+
+    #[test]
+    fn plans_wrapped_write_spans() {
+        let layout = SharedAudioTransportConfig::new(48_000, 128, 4, 2, 2)
+            .layout()
+            .expect("layout");
+        let cursor = SharedAudioRingCursor::new(64, 448);
+
+        let plan = layout.input.write_plan(cursor, 128).expect("write");
+
+        assert_eq!(plan.frame_offset, 448);
+        assert_eq!(plan.first_frames, 64);
+        assert_eq!(plan.second_frames, 64);
+        assert_eq!(
+            plan.first_byte_offset,
+            layout.input.audio_offset + 448 * 2 * F32_SAMPLE_BYTES
+        );
+        assert_eq!(plan.first_bytes, 64 * 2 * F32_SAMPLE_BYTES);
+        assert_eq!(plan.second_byte_offset, layout.input.audio_offset);
+        assert_eq!(plan.second_bytes, 64 * 2 * F32_SAMPLE_BYTES);
+    }
+
+    #[test]
+    fn rejects_invalid_cursor_and_backpressure() {
+        let layout = SharedAudioTransportConfig::new(48_000, 128, 2, 2, 2)
+            .layout()
+            .expect("layout");
+
+        assert_eq!(
+            layout
+                .input
+                .readable_frames(SharedAudioRingCursor::new(10, 4)),
+            Err(SharedAudioLayoutError::CursorOrderInvalid {
+                read_frame: 10,
+                write_frame: 4,
+            })
+        );
+        assert_eq!(
+            layout
+                .input
+                .write_plan(SharedAudioRingCursor::new(0, 256), 128),
+            Err(SharedAudioLayoutError::InsufficientWritableFrames {
+                requested: 128,
+                available: 0,
+            })
+        );
+        assert_eq!(
+            layout
+                .input
+                .read_plan(SharedAudioRingCursor::new(0, 64), 128),
+            Err(SharedAudioLayoutError::InsufficientReadableFrames {
+                requested: 128,
+                available: 64,
+            })
+        );
+    }
+
+    #[test]
+    fn zero_channel_plan_keeps_frame_span_without_sample_bytes() {
+        let layout = SharedAudioTransportConfig::new(48_000, 128, 2, 0, 2)
+            .layout()
+            .expect("layout");
+        let cursor = SharedAudioRingCursor::new(0, 0);
+
+        let plan = layout.input.write_plan(cursor, 128).expect("write");
+
+        assert_eq!(plan.frames, 128);
+        assert_eq!(plan.channels, 0);
+        assert_eq!(plan.first_frames, 128);
+        assert_eq!(plan.second_frames, 0);
+        assert_eq!(plan.first_bytes, 0);
+        assert_eq!(plan.second_bytes, 0);
+        assert_eq!(plan.first_byte_offset, layout.input.audio_offset);
     }
 
     fn read_u16(input: &[u8], offset: usize) -> u16 {
