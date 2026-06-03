@@ -1,0 +1,18 @@
+[package]
+name = "wvst-shm-mmap"
+description = "File-backed mmap bindings for WVST shared audio transport."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+memmap2 = "0.9"
+wvst-shm-transport = { path = "../wvst-shm-transport" }
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+unsafe_code = "allow"

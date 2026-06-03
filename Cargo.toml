@@ -9,6 +9,7 @@ members = [
     "crates/wvst-protocol",
     "crates/wvst-ringbuf",
     "crates/wvst-scanner",
+    "crates/wvst-shm-mmap",
     "crates/wvst-shm-transport",
     "crates/wvst-testkit",
     "crates/wvst-vst3-host",
