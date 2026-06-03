@@ -23,9 +23,11 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.json && rollup -c",
     "check": "tsc -p tsconfig.json --noEmit",
+    "smoke:browser": "node scripts/browser-smoke.mjs",
     "test": "vitest run"
   },
   "devDependencies": {
+    "playwright": "^1.60.0",
     "vitest": "^4.1.8"
   }
 }

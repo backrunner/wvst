@@ -1,5 +1,6 @@
 /target/
 /node_modules/
+/output/
 /packages/*/node_modules/
 /packages/*/dist/
 /packages/*/.rollup.cache/

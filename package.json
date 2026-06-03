@@ -12,6 +12,7 @@
     "check": "cargo test --all && npm run check:wasm && npm run check:web && npm run test:web",
     "check:wasm": "RUSTC=\"$(rustup which rustc)\" cargo check -p wvst-web-wasm --target wasm32-unknown-unknown",
     "check:web": "npm --workspace @wvst/web run check",
+    "smoke:browser:web": "npm run build:web && npm --workspace @wvst/web run smoke:browser",
     "test:web": "npm --workspace @wvst/web run test",
     "docs:dev": "npm run build:web && npm --workspace @wvst/docs run dev",
     "docs:build": "npm run build:web && npm --workspace @wvst/docs run build --",
