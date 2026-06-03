@@ -8,6 +8,32 @@ mod input;
 #[serde(rename_all = "camelCase")]
 pub struct BridgeStabilityMetrics {
     #[serde(default)]
+    pub audio_frames_routed: u64,
+    #[serde(default)]
+    pub audio_backpressure_drops: u64,
+    #[serde(default)]
+    pub audio_frame_route_failures: u64,
+    #[serde(default)]
+    pub audio_frame_invalid_headers: u64,
+    #[serde(default)]
+    pub audio_frame_invalid_lengths: u64,
+    #[serde(default)]
+    pub audio_frame_unmatched_streams: u64,
+    #[serde(default)]
+    pub audio_sequence_gap_events: u64,
+    #[serde(default)]
+    pub audio_sequence_gap_frames: u64,
+    #[serde(default)]
+    pub audio_frames_duplicate: u64,
+    #[serde(default)]
+    pub audio_frames_out_of_order: u64,
+    #[serde(default)]
+    pub audio_frames_late: u64,
+    #[serde(default)]
+    pub audio_route_latency: BridgeLatencyPercentiles,
+    #[serde(default)]
+    pub audio_interarrival_jitter: BridgeLatencyPercentiles,
+    #[serde(default)]
     pub shared_memory_pump_preflight_skips: u64,
     #[serde(default)]
     pub shared_memory_pump_overruns: u64,
@@ -51,6 +77,81 @@ pub struct BridgeLatencyPercentiles {
 }
 
 impl StabilityBudget {
+    pub const fn min_bridge_audio_frames_routed(mut self, frames: u64) -> Self {
+        self.min_bridge_audio_frames_routed = Some(frames);
+        self
+    }
+
+    pub const fn max_bridge_audio_backpressure_drops(mut self, drops: u64) -> Self {
+        self.max_bridge_audio_backpressure_drops = Some(drops);
+        self
+    }
+
+    pub const fn max_bridge_audio_frame_route_failures(mut self, failures: u64) -> Self {
+        self.max_bridge_audio_frame_route_failures = Some(failures);
+        self
+    }
+
+    pub const fn max_bridge_audio_frame_invalid_headers(mut self, frames: u64) -> Self {
+        self.max_bridge_audio_frame_invalid_headers = Some(frames);
+        self
+    }
+
+    pub const fn max_bridge_audio_frame_invalid_lengths(mut self, frames: u64) -> Self {
+        self.max_bridge_audio_frame_invalid_lengths = Some(frames);
+        self
+    }
+
+    pub const fn max_bridge_audio_frame_unmatched_streams(mut self, frames: u64) -> Self {
+        self.max_bridge_audio_frame_unmatched_streams = Some(frames);
+        self
+    }
+
+    pub const fn max_bridge_audio_sequence_gap_events(mut self, events: u64) -> Self {
+        self.max_bridge_audio_sequence_gap_events = Some(events);
+        self
+    }
+
+    pub const fn max_bridge_audio_sequence_gap_frames(mut self, frames: u64) -> Self {
+        self.max_bridge_audio_sequence_gap_frames = Some(frames);
+        self
+    }
+
+    pub const fn max_bridge_audio_frames_duplicate(mut self, frames: u64) -> Self {
+        self.max_bridge_audio_frames_duplicate = Some(frames);
+        self
+    }
+
+    pub const fn max_bridge_audio_frames_out_of_order(mut self, frames: u64) -> Self {
+        self.max_bridge_audio_frames_out_of_order = Some(frames);
+        self
+    }
+
+    pub const fn max_bridge_audio_frames_late(mut self, frames: u64) -> Self {
+        self.max_bridge_audio_frames_late = Some(frames);
+        self
+    }
+
+    pub const fn max_bridge_audio_route_latency_p95_us(mut self, micros: u64) -> Self {
+        self.max_bridge_audio_route_latency_p95_us = Some(micros);
+        self
+    }
+
+    pub const fn max_bridge_audio_route_latency_p99_us(mut self, micros: u64) -> Self {
+        self.max_bridge_audio_route_latency_p99_us = Some(micros);
+        self
+    }
+
+    pub const fn max_bridge_audio_interarrival_jitter_p95_us(mut self, micros: u64) -> Self {
+        self.max_bridge_audio_interarrival_jitter_p95_us = Some(micros);
+        self
+    }
+
+    pub const fn max_bridge_audio_interarrival_jitter_p99_us(mut self, micros: u64) -> Self {
+        self.max_bridge_audio_interarrival_jitter_p99_us = Some(micros);
+        self
+    }
+
     pub const fn max_shared_memory_pump_preflight_skips(mut self, skips: u64) -> Self {
         self.max_shared_memory_pump_preflight_skips = Some(skips);
         self
@@ -127,7 +228,22 @@ impl StabilityBudget {
     }
 
     fn has_bridge_expectations(self) -> bool {
-        self.max_shared_memory_pump_preflight_skips.is_some()
+        self.min_bridge_audio_frames_routed.is_some()
+            || self.max_bridge_audio_backpressure_drops.is_some()
+            || self.max_bridge_audio_frame_route_failures.is_some()
+            || self.max_bridge_audio_frame_invalid_headers.is_some()
+            || self.max_bridge_audio_frame_invalid_lengths.is_some()
+            || self.max_bridge_audio_frame_unmatched_streams.is_some()
+            || self.max_bridge_audio_sequence_gap_events.is_some()
+            || self.max_bridge_audio_sequence_gap_frames.is_some()
+            || self.max_bridge_audio_frames_duplicate.is_some()
+            || self.max_bridge_audio_frames_out_of_order.is_some()
+            || self.max_bridge_audio_frames_late.is_some()
+            || self.max_bridge_audio_route_latency_p95_us.is_some()
+            || self.max_bridge_audio_route_latency_p99_us.is_some()
+            || self.max_bridge_audio_interarrival_jitter_p95_us.is_some()
+            || self.max_bridge_audio_interarrival_jitter_p99_us.is_some()
+            || self.max_shared_memory_pump_preflight_skips.is_some()
             || self.max_shared_memory_pump_overruns.is_some()
             || self.max_shared_memory_pump_input_underruns.is_some()
             || self.max_shared_memory_pump_output_backpressure.is_some()
@@ -160,6 +276,96 @@ pub(super) fn push_bridge_violations(
         return;
     };
 
+    push_min(
+        violations,
+        "bridge.audioFramesRouted",
+        bridge.audio_frames_routed,
+        budget.min_bridge_audio_frames_routed,
+    );
+    push_max(
+        violations,
+        "bridge.audioBackpressureDrops",
+        bridge.audio_backpressure_drops,
+        budget.max_bridge_audio_backpressure_drops,
+    );
+    push_max(
+        violations,
+        "bridge.audioFrameRouteFailures",
+        bridge.audio_frame_route_failures,
+        budget.max_bridge_audio_frame_route_failures,
+    );
+    push_max(
+        violations,
+        "bridge.audioFrameInvalidHeaders",
+        bridge.audio_frame_invalid_headers,
+        budget.max_bridge_audio_frame_invalid_headers,
+    );
+    push_max(
+        violations,
+        "bridge.audioFrameInvalidLengths",
+        bridge.audio_frame_invalid_lengths,
+        budget.max_bridge_audio_frame_invalid_lengths,
+    );
+    push_max(
+        violations,
+        "bridge.audioFrameUnmatchedStreams",
+        bridge.audio_frame_unmatched_streams,
+        budget.max_bridge_audio_frame_unmatched_streams,
+    );
+    push_max(
+        violations,
+        "bridge.audioSequenceGapEvents",
+        bridge.audio_sequence_gap_events,
+        budget.max_bridge_audio_sequence_gap_events,
+    );
+    push_max(
+        violations,
+        "bridge.audioSequenceGapFrames",
+        bridge.audio_sequence_gap_frames,
+        budget.max_bridge_audio_sequence_gap_frames,
+    );
+    push_max(
+        violations,
+        "bridge.audioFramesDuplicate",
+        bridge.audio_frames_duplicate,
+        budget.max_bridge_audio_frames_duplicate,
+    );
+    push_max(
+        violations,
+        "bridge.audioFramesOutOfOrder",
+        bridge.audio_frames_out_of_order,
+        budget.max_bridge_audio_frames_out_of_order,
+    );
+    push_max(
+        violations,
+        "bridge.audioFramesLate",
+        bridge.audio_frames_late,
+        budget.max_bridge_audio_frames_late,
+    );
+    push_optional_percentile_max(
+        violations,
+        "bridge.audioRouteLatency.p95",
+        bridge.audio_route_latency.p95_us,
+        budget.max_bridge_audio_route_latency_p95_us,
+    );
+    push_optional_percentile_max(
+        violations,
+        "bridge.audioRouteLatency.p99",
+        bridge.audio_route_latency.p99_us,
+        budget.max_bridge_audio_route_latency_p99_us,
+    );
+    push_optional_percentile_max(
+        violations,
+        "bridge.audioInterarrivalJitter.p95",
+        bridge.audio_interarrival_jitter.p95_us,
+        budget.max_bridge_audio_interarrival_jitter_p95_us,
+    );
+    push_optional_percentile_max(
+        violations,
+        "bridge.audioInterarrivalJitter.p99",
+        bridge.audio_interarrival_jitter.p99_us,
+        budget.max_bridge_audio_interarrival_jitter_p99_us,
+    );
     push_max(
         violations,
         "bridge.sharedMemoryPumpPreflightSkips",

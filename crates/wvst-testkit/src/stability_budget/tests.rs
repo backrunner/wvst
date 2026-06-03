@@ -397,6 +397,7 @@ fn evaluates_bridge_metrics_with_native_budget() {
         shared_memory_pump_last_process_micros: Some(1_500),
         shared_memory_pump_max_process_micros: Some(5_000),
         shared_memory_pump_last_overrun_micros: Some(750),
+        ..BridgeStabilityMetrics::default()
     };
     let budget = StabilityBudget::default()
         .max_shared_memory_pump_preflight_skips(0)
@@ -475,6 +476,77 @@ fn evaluates_bridge_metrics_with_native_budget() {
 }
 
 #[test]
+fn evaluates_bridge_binary_audio_metrics_with_native_budget() {
+    let report = passing_report();
+    let bridge = BridgeStabilityMetrics {
+        audio_frames_routed: 3,
+        audio_backpressure_drops: 1,
+        audio_frame_route_failures: 1,
+        audio_sequence_gap_events: 1,
+        audio_route_latency: BridgeLatencyPercentiles {
+            count: 3,
+            p50_us: Some(500),
+            p95_us: Some(2_000),
+            p99_us: Some(4_000),
+        },
+        audio_interarrival_jitter: BridgeLatencyPercentiles {
+            count: 3,
+            p50_us: Some(250),
+            p95_us: Some(1_500),
+            p99_us: Some(3_000),
+        },
+        ..BridgeStabilityMetrics::default()
+    };
+    let budget = StabilityBudget::default()
+        .min_bridge_audio_frames_routed(4)
+        .max_bridge_audio_backpressure_drops(0)
+        .max_bridge_audio_frame_route_failures(0)
+        .max_bridge_audio_sequence_gap_events(0)
+        .max_bridge_audio_route_latency_p95_us(1_000)
+        .max_bridge_audio_interarrival_jitter_p99_us(2_000);
+
+    let budget_report = report.evaluate_budget_with_metrics(budget, None, Some(bridge));
+
+    assert!(!budget_report.passed);
+    assert!(
+        budget_report
+            .violations
+            .contains(&StabilityBudgetViolation::MinimumNotMet {
+                metric: "bridge.audioFramesRouted",
+                min: 4,
+                actual: 3,
+            })
+    );
+    assert!(
+        budget_report
+            .violations
+            .contains(&StabilityBudgetViolation::MaximumExceeded {
+                metric: "bridge.audioBackpressureDrops",
+                max: 0,
+                actual: 1,
+            })
+    );
+    assert!(
+        budget_report
+            .violations
+            .contains(&StabilityBudgetViolation::MaximumExceeded {
+                metric: "bridge.audioRouteLatency.p95",
+                max: 1_000,
+                actual: 2_000,
+            })
+    );
+    assert!(
+        budget_report
+            .violations
+            .contains(&StabilityBudgetViolation::MaximumExceeded {
+                metric: "bridge.audioInterarrivalJitter.p99",
+                max: 2_000,
+                actual: 3_000,
+            })
+    );
+}
+
+#[test]
 fn normalizes_bridge_metrics_from_json_rpc_and_pump_status() {
     let bridge = json!({
         "jsonrpc": "2.0",
@@ -537,6 +609,21 @@ fn normalizes_bridge_metrics_from_web_bridge_smoke_report() {
             "overflows": 0
         },
         "bridgeMetrics": {
+            "audioFramesRouted": 6,
+            "audioBackpressureDrops": 1,
+            "audioFrameRouteFailures": 0,
+            "audioRouteLatency": {
+                "count": 6,
+                "p50Us": 250,
+                "p95Us": 500,
+                "p99Us": 1000
+            },
+            "audioInterarrivalJitter": {
+                "count": 5,
+                "p50Us": 750,
+                "p95Us": 1500,
+                "p99Us": 2000
+            },
             "sharedMemoryPumpEventsEnqueued": 4,
             "sharedMemoryPumpEventsDrained": 3,
             "sharedMemoryProcessLatency": {
@@ -551,6 +638,10 @@ fn normalizes_bridge_metrics_from_web_bridge_smoke_report() {
     let metrics = BridgeStabilityMetrics::from_json_str(&report.to_string())
         .expect("web bridge smoke report");
 
+    assert_eq!(metrics.audio_frames_routed, 6);
+    assert_eq!(metrics.audio_backpressure_drops, 1);
+    assert_eq!(metrics.audio_route_latency.p95_us, Some(500));
+    assert_eq!(metrics.audio_interarrival_jitter.p99_us, Some(2_000));
     assert_eq!(metrics.shared_memory_pump_events_enqueued, 4);
     assert_eq!(metrics.shared_memory_pump_events_drained, 3);
     assert_eq!(metrics.shared_memory_process_latency.p95_us, Some(700));
