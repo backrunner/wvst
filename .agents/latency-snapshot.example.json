@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "config": {
+    "sampleRateHz": 48000,
+    "blockFrames": 128
+  },
+  "startSequence": 0,
+  "startFrameTime": 0,
+  "observations": [
+    {
+      "roundTripFrames": 128,
+      "routeLatencyUs": 420
+    },
+    {
+      "roundTripFrames": 128,
+      "routeLatencyUs": 460
+    },
+    {
+      "roundTripFrames": 256,
+      "routeLatencyUs": 930,
+      "late": true
+    },
+    {
+      "outcome": "dropped"
+    },
+    {
+      "outcome": "timedOut"
+    }
+  ]
+}

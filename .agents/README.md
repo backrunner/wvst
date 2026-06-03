@@ -14,6 +14,7 @@
 - [development-standards.md](development-standards.md)：Rust/TS 实时音频、高性能、测试、代码规模和提交规范。
 - [implementation-gap-analysis.md](implementation-gap-analysis.md)：当前实现状态、完整能力差距和下一阶段顺序。
 - [runtime-probe-matrix.example.json](runtime-probe-matrix.example.json)：`wvst-testkit` runtime-probe 固定矩阵 manifest 示例，包含 case-level expectations，可配合 `cargo run -p wvst-testkit --bin wvst-runtime-matrix -- --worker <wvst-host-worker> --manifest <matrix.json>` 接入本机真实 VST3 fixture。
+- [latency-snapshot.example.json](latency-snapshot.example.json)：`wvst-testkit` latency snapshot 输入示例，可配合 `cargo run -p wvst-testkit --bin wvst-latency-snapshot -- --input <observations.json>` 生成 `wvst-stability-budget` 可消费的 `LatencySnapshot` JSON。
 - [skills/wvst-engineering/SKILL.md](skills/wvst-engineering/SKILL.md)：后续 WVST 开发时应加载的本地 skill。
 
 ## 当前结论
