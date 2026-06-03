@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,8 @@ pub struct RuntimeProbeMatrixManifest {
     pub schema_version: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixture_root: Option<PathBuf>,
     pub cases: Vec<RuntimeProbeCaseManifest>,
 }
 
@@ -45,9 +47,14 @@ impl RuntimeProbeMatrixManifest {
         worker_executable: impl Into<PathBuf>,
     ) -> Result<RuntimeProbeMatrix, RuntimeProbeMatrixManifestError> {
         self.validate()?;
+        let fixture_root = self
+            .fixture_root
+            .as_ref()
+            .map(|path| expand_path(path, "<matrix>"))
+            .transpose()?;
         let mut matrix = RuntimeProbeMatrix::new(worker_executable);
         for case in &self.cases {
-            matrix.push_case(case.to_probe_case());
+            matrix.push_case(case.to_probe_case(fixture_root.as_deref())?);
         }
         Ok(matrix)
     }
@@ -96,20 +103,20 @@ pub struct RuntimeProbeCaseManifest {
 }
 
 impl RuntimeProbeCaseManifest {
-    fn to_probe_case(&self) -> RuntimeProbeCase {
-        let mut case = RuntimeProbeCase::new(
-            self.name.clone(),
-            self.plugin_path.clone(),
-            self.class_id.clone(),
-        )
-        .with_processing(
-            self.sample_rate_hz,
-            self.max_block_frames,
-            self.input_channels,
-            self.output_channels,
-            self.frames,
-            self.blocks,
-        );
+    fn to_probe_case(
+        &self,
+        fixture_root: Option<&Path>,
+    ) -> Result<RuntimeProbeCase, RuntimeProbeMatrixManifestError> {
+        let plugin_path = resolve_plugin_path(&self.plugin_path, fixture_root, &self.name)?;
+        let mut case = RuntimeProbeCase::new(self.name.clone(), plugin_path, self.class_id.clone())
+            .with_processing(
+                self.sample_rate_hz,
+                self.max_block_frames,
+                self.input_channels,
+                self.output_channels,
+                self.frames,
+                self.blocks,
+            );
         if let Some(note) = self.note {
             case = case.with_note(RuntimeProbeNote::new(
                 note.pitch,
@@ -127,7 +134,7 @@ impl RuntimeProbeCaseManifest {
         if let Some(expectations) = &self.expectations {
             case = case.with_expectations(expectations.clone());
         }
-        case
+        Ok(case)
     }
 
     fn validate(&self) -> Result<(), RuntimeProbeMatrixManifestError> {
@@ -311,6 +318,74 @@ fn validate_expectations(
     Ok(())
 }
 
+fn resolve_plugin_path(
+    plugin_path: &Path,
+    fixture_root: Option<&Path>,
+    case_name: &str,
+) -> Result<PathBuf, RuntimeProbeMatrixManifestError> {
+    let expanded = expand_path(plugin_path, case_name)?;
+    if expanded.is_absolute() {
+        return Ok(expanded);
+    }
+
+    Ok(fixture_root
+        .map(|root| root.join(&expanded))
+        .unwrap_or(expanded))
+}
+
+fn expand_path(path: &Path, case_name: &str) -> Result<PathBuf, RuntimeProbeMatrixManifestError> {
+    let Some(text) = path.to_str() else {
+        return Ok(path.to_path_buf());
+    };
+    let expanded_home = expand_home(text, case_name)?;
+    expand_env_vars(&expanded_home, case_name).map(PathBuf::from)
+}
+
+fn expand_home(text: &str, case_name: &str) -> Result<String, RuntimeProbeMatrixManifestError> {
+    if text == "~" || text.starts_with("~/") {
+        let home = std::env::var("HOME").map_err(|_| {
+            invalid_case(
+                case_name,
+                "path uses ~/ but HOME environment variable is not set",
+            )
+        })?;
+        return Ok(format!("{home}{}", &text[1..]));
+    }
+    Ok(text.to_string())
+}
+
+fn expand_env_vars(text: &str, case_name: &str) -> Result<String, RuntimeProbeMatrixManifestError> {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("${") {
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find('}') else {
+            return Err(invalid_case(
+                case_name,
+                "path contains an unterminated ${VAR}",
+            ));
+        };
+        let variable = &after_start[..end];
+        if variable.is_empty() {
+            return Err(invalid_case(
+                case_name,
+                "path contains an empty ${} variable",
+            ));
+        }
+        let value = std::env::var(variable).map_err(|_| {
+            invalid_case(
+                case_name,
+                format!("path references unset environment variable {variable:?}"),
+            )
+        })?;
+        output.push_str(&value);
+        rest = &after_start[end + 1..];
+    }
+    output.push_str(rest);
+    Ok(output)
+}
+
 fn invalid_case(
     case_name: impl Into<String>,
     message: impl Into<String>,
@@ -389,15 +464,22 @@ mod tests {
     #[test]
     fn parses_manifest_and_builds_matrix() {
         let manifest = RuntimeProbeMatrixManifest::from_json_str(
-            r#"{"schemaVersion":1,"description":"local third-party VST3 smoke matrix","cases":[{"name":"instrument-note","pluginPath":"/Library/Audio/Plug-Ins/VST3/Synth.vst3","classId":"class-a","inputChannels":0,"outputChannels":2,"frames":128,"blocks":8,"note":{"pitch":60,"velocityMilli":750,"channel":1},"parameterChanges":[{"parameterId":42,"valueMilli":500,"sampleOffset":64}],"expectations":{"requireNonZeroOutput":true,"maxNonFiniteOutputSamples":0,"maxClippedOutputSamples":0,"minOutputRmsMilli":1,"maxOutputPeakMilli":1000}}]}"#,
+            r#"{"schemaVersion":1,"description":"local third-party VST3 smoke matrix","fixtureRoot":"${CARGO_MANIFEST_DIR}/fixtures","cases":[{"name":"instrument-note","pluginPath":"Synth.vst3","classId":"class-a","inputChannels":0,"outputChannels":2,"frames":128,"blocks":8,"note":{"pitch":60,"velocityMilli":750,"channel":1},"parameterChanges":[{"parameterId":42,"valueMilli":500,"sampleOffset":64}],"expectations":{"requireNonZeroOutput":true,"maxNonFiniteOutputSamples":0,"maxClippedOutputSamples":0,"minOutputRmsMilli":1,"maxOutputPeakMilli":1000}}]}"#,
         )
         .expect("manifest");
 
         let matrix = manifest.to_matrix("/tmp/wvst-host-worker").expect("matrix");
+        let expected_fixture_root =
+            PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("manifest dir"))
+                .join("fixtures");
 
         assert_eq!(manifest.cases[0].sample_rate_hz, DEFAULT_SAMPLE_RATE_HZ);
         assert_eq!(matrix.cases().len(), 1);
         assert_eq!(matrix.cases()[0].name, "instrument-note");
+        assert_eq!(
+            matrix.cases()[0].plugin_path,
+            expected_fixture_root.join("Synth.vst3")
+        );
         assert_eq!(matrix.cases()[0].input_channels, 0);
         assert!(
             matrix.cases()[0]
@@ -463,6 +545,18 @@ mod tests {
             expectation_error,
             RuntimeProbeMatrixManifestError::InvalidCase { case_name, message }
                 if case_name == "bad-expectations" && message.contains("non-zero and silent")
+        ));
+
+        let missing_env = RuntimeProbeMatrixManifest::from_json_str(
+            r#"{"schemaVersion":1,"cases":[{"name":"missing-env","pluginPath":"${WVST_TESTKIT_UNSET_FIXTURE_ROOT}/X.vst3","classId":"a"}]}"#,
+        )
+        .expect("manifest parses")
+        .to_matrix("/tmp/wvst-host-worker")
+        .expect_err("missing env");
+        assert!(matches!(
+            missing_env,
+            RuntimeProbeMatrixManifestError::InvalidCase { case_name, message }
+                if case_name == "missing-env" && message.contains("unset environment variable")
         ));
     }
 }

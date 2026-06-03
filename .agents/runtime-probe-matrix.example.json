@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
-  "description": "Example WVST runtime-probe matrix. Replace pluginPath/classId with local third-party VST3 fixtures before running.",
+  "description": "Example WVST runtime-probe matrix. Set WVST_VST3_FIXTURE_ROOT to a directory containing local third-party VST3 fixtures, then replace classId values before running.",
+  "fixtureRoot": "${WVST_VST3_FIXTURE_ROOT}",
   "cases": [
     {
       "name": "effect-stereo-automation",
-      "pluginPath": "/Library/Audio/Plug-Ins/VST3/ExampleEffect.vst3",
+      "pluginPath": "ExampleEffect.vst3",
       "classId": "00000000000000000000000000000000",
       "sampleRateHz": 48000,
       "maxBlockFrames": 128,
@@ -28,7 +29,7 @@
     },
     {
       "name": "instrument-zero-input-note",
-      "pluginPath": "/Library/Audio/Plug-Ins/VST3/ExampleInstrument.vst3",
+      "pluginPath": "ExampleInstrument.vst3",
       "classId": "00000000000000000000000000000000",
       "sampleRateHz": 48000,
       "maxBlockFrames": 128,
