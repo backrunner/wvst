@@ -3,10 +3,15 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod linux;
+mod windows;
 
 pub use linux::{
     DEFAULT_SYSTEMD_SERVICE_NAME, LinuxPackageConfig, LinuxPackageManifest, build_linux_package,
     default_linux_install_prefix, default_systemd_user_unit_path,
+};
+pub use windows::{
+    DEFAULT_SCHEDULED_TASK_NAME, WindowsPackageConfig, WindowsPackageManifest,
+    build_windows_package, default_windows_install_prefix,
 };
 
 pub const DEFAULT_LAUNCHD_LABEL: &str = "top.backrunner.wvst.bridge";
@@ -276,6 +281,7 @@ fn shell_quote(value: &str) -> String {
 fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
         .filter(|home| !home.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|home| !home.is_empty()))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
 }
