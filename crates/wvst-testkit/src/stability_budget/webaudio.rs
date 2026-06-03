@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::latency::LatencyPercentiles;
 
@@ -33,6 +34,78 @@ pub struct WebAudioLoopbackMetrics {
     pub output_consumed_sequence: u64,
     pub pending_input_quanta: u64,
     pub pending_output_quanta: u64,
+}
+
+impl WebAudioLoopbackMetrics {
+    pub fn from_json_str(text: &str) -> Result<Self, WebAudioLoopbackMetricsParseError> {
+        serde_json::from_str::<WebAudioLoopbackMetricsInput>(text)
+            .map_err(|error| WebAudioLoopbackMetricsParseError::InvalidJson(error.to_string()))?
+            .into_metrics()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum WebAudioLoopbackMetricsParseError {
+    InvalidJson(String),
+    BrowserSmokeFailed { error: Option<String> },
+    MissingBrowserSmokeMetrics,
+}
+
+impl fmt::Display for WebAudioLoopbackMetricsParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidJson(error) => write!(formatter, "{error}"),
+            Self::BrowserSmokeFailed { error } => {
+                write!(formatter, "browser smoke report did not pass")?;
+                if let Some(error) = error {
+                    write!(formatter, ": {error}")?;
+                }
+                Ok(())
+            }
+            Self::MissingBrowserSmokeMetrics => {
+                write!(formatter, "browser smoke report did not include metrics")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WebAudioLoopbackMetricsParseError {}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum WebAudioLoopbackMetricsInput {
+    Metrics(WebAudioLoopbackMetrics),
+    BrowserSmoke(BrowserSmokeReport),
+}
+
+impl WebAudioLoopbackMetricsInput {
+    fn into_metrics(self) -> Result<WebAudioLoopbackMetrics, WebAudioLoopbackMetricsParseError> {
+        match self {
+            Self::Metrics(metrics) => Ok(metrics),
+            Self::BrowserSmoke(report) => report.into_metrics(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserSmokeReport {
+    ok: bool,
+    #[serde(default)]
+    error: Option<String>,
+    metrics: Option<WebAudioLoopbackMetrics>,
+}
+
+impl BrowserSmokeReport {
+    fn into_metrics(self) -> Result<WebAudioLoopbackMetrics, WebAudioLoopbackMetricsParseError> {
+        if !self.ok {
+            return Err(WebAudioLoopbackMetricsParseError::BrowserSmokeFailed {
+                error: self.error,
+            });
+        }
+        self.metrics
+            .ok_or(WebAudioLoopbackMetricsParseError::MissingBrowserSmokeMetrics)
+    }
 }
 
 impl StabilityBudget {

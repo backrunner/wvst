@@ -282,6 +282,64 @@ fn evaluates_webaudio_loopback_metrics_with_native_budget() {
 }
 
 #[test]
+fn parses_browser_smoke_report_as_webaudio_metrics() {
+    let report = json!({
+        "ok": true,
+        "crossOriginIsolated": true,
+        "sharedArrayBuffer": true,
+        "audioWorklet": true,
+        "sampleRate": 48_000,
+        "metrics": {
+            "inputFrames": 512,
+            "outputFrames": 256,
+            "underflows": 0,
+            "overflows": 0,
+            "droppedInputQuanta": 0,
+            "droppedOutputQuanta": 0,
+            "droppedMidiEvents": 0,
+            "droppedParameterEvents": 0,
+            "lateMidiEvents": 0,
+            "lateParameterEvents": 0,
+            "transportFailures": 0,
+            "endToEndRoundTripUs": {
+                "count": 4,
+                "p50": 3_000,
+                "p95": 4_000,
+                "p99": 5_000
+            },
+            "inputSequence": 4,
+            "inputConsumedSequence": 4,
+            "outputSequence": 4,
+            "outputConsumedSequence": 4,
+            "pendingInputQuanta": 0,
+            "pendingOutputQuanta": 0
+        }
+    });
+
+    let metrics =
+        WebAudioLoopbackMetrics::from_json_str(&report.to_string()).expect("browser metrics");
+
+    assert_eq!(metrics.input_frames, 512);
+    assert_eq!(metrics.end_to_end_round_trip_us.p95, Some(4_000));
+}
+
+#[test]
+fn rejects_failed_browser_smoke_report_as_webaudio_metrics() {
+    let report = json!({
+        "ok": false,
+        "error": "SharedArrayBuffer requires cross-origin isolation"
+    });
+
+    let error = WebAudioLoopbackMetrics::from_json_str(&report.to_string())
+        .expect_err("failed browser smoke");
+
+    assert_eq!(
+        error.to_string(),
+        "browser smoke report did not pass: SharedArrayBuffer requires cross-origin isolation"
+    );
+}
+
+#[test]
 fn reports_missing_webaudio_metrics_when_budget_requires_them() {
     let report = passing_report();
     let budget = StabilityBudget::default().max_webaudio_underflows(0);

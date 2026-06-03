@@ -9,7 +9,7 @@ use wvst_testkit::stability_budget::{
 };
 
 const USAGE: &str = "\
-usage: wvst-stability-budget --snapshot <latency-snapshot.json> --budget <budget.json> [--webaudio <loopback-metrics.json>] [--bridge <bridge-metrics.json>]
+usage: wvst-stability-budget --snapshot <latency-snapshot.json> --budget <budget.json> [--webaudio <loopback-metrics-or-browser-smoke.json>] [--bridge <bridge-metrics.json>]
 
 Evaluates a WVST latency/stability snapshot against a JSON stability budget and writes a JSON report to stdout.
 ";
@@ -83,7 +83,7 @@ fn evaluate_json(
         .map_err(|error| format!("invalid budget json: {error}"))?;
     let webaudio = webaudio_text
         .map(|text| {
-            serde_json::from_str::<WebAudioLoopbackMetrics>(text)
+            WebAudioLoopbackMetrics::from_json_str(text)
                 .map_err(|error| format!("invalid webaudio json: {error}"))
         })
         .transpose()?;
@@ -290,6 +290,88 @@ mod tests {
 
         assert!(!report.passed);
         assert_eq!(report.violations.len(), 9);
+    }
+
+    #[test]
+    fn evaluates_browser_smoke_payloads() {
+        let snapshot = json!({
+            "config": {
+                "sampleRateHz": 48000,
+                "blockFrames": 128
+            },
+            "observations": 1,
+            "droppedFrames": 0,
+            "sequenceGapEvents": 0,
+            "sequenceGapFrames": 0,
+            "duplicateFrames": 0,
+            "outOfOrderFrames": 0,
+            "lateFrames": 0,
+            "timeoutFrames": 0,
+            "silenceFrames": 0,
+            "processErrorFrames": 0,
+            "routeLatencyUs": {
+                "count": 1,
+                "p50": 400,
+                "p95": 400,
+                "p99": 400
+            },
+            "roundTripFrames": {
+                "count": 1,
+                "p50": 128,
+                "p95": 128,
+                "p99": 128
+            },
+            "roundTripUs": {
+                "count": 1,
+                "p50": 2666,
+                "p95": 2666,
+                "p99": 2666
+            }
+        });
+        let budget = json!({
+            "minObservations": 1,
+            "maxWebAudioUnderflows": 0,
+            "maxWebAudioEndToEndRoundTripP95Us": 4000
+        });
+        let browser_smoke = json!({
+            "ok": true,
+            "metrics": {
+                "inputFrames": 128,
+                "outputFrames": 128,
+                "underflows": 0,
+                "overflows": 0,
+                "endToEndRoundTripUs": {
+                    "count": 2,
+                    "p50": 3000,
+                    "p95": 5000,
+                    "p99": 5000
+                },
+                "inputSequence": 1,
+                "inputConsumedSequence": 1,
+                "outputSequence": 1,
+                "outputConsumedSequence": 1,
+                "pendingInputQuanta": 0,
+                "pendingOutputQuanta": 0
+            }
+        });
+
+        let report = evaluate_json(
+            &snapshot.to_string(),
+            &budget.to_string(),
+            Some(&browser_smoke.to_string()),
+            None,
+        )
+        .expect("budget report");
+
+        assert_eq!(report.violations.len(), 1);
+        assert_eq!(
+            report.violations[0],
+            wvst_testkit::stability_budget::StabilityBudgetViolation::MaximumExceeded {
+                metric: "webAudio.endToEndRoundTripUs.p95",
+                max: 4000,
+                actual: 5000,
+            }
+        );
     }
 
     #[test]

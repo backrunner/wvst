@@ -120,8 +120,12 @@ jobs:
               exit 2
             fi
             args=(--snapshot "${LATENCY_SNAPSHOT}" --budget "${STABILITY_BUDGET}")
-            if [ -n "${WEBAUDIO_METRICS}" ]; then
-              args+=(--webaudio "${WEBAUDIO_METRICS}")
+            webaudio_metrics="${WEBAUDIO_METRICS}"
+            if [ -z "${webaudio_metrics}" ] && [ "${BROWSER_SMOKE}" = "true" ]; then
+              webaudio_metrics="evidence/browser-smoke.json"
+            fi
+            if [ -n "${webaudio_metrics}" ]; then
+              args+=(--webaudio "${webaudio_metrics}")
             fi
             if [ -n "${BRIDGE_METRICS}" ]; then
               args+=(--bridge "${BRIDGE_METRICS}")
