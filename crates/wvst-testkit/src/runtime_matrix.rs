@@ -8,9 +8,12 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::runtime_matrix_manifest::RuntimeProbeEvidenceRequirements;
+
 mod audio_bus_expectations;
 mod audio_bus_summary;
 mod controller_expectations;
+mod coverage_audit;
 mod expectations;
 mod note_timing;
 mod output_expectations;
@@ -22,6 +25,7 @@ mod runtime_characteristics_expectations;
 mod runtime_characteristics_summary;
 
 pub use audio_bus_summary::RuntimeProbeAudioBusSummary;
+pub use coverage_audit::{RuntimeProbeCoverageAudit, RuntimeProbeCoverageObserved};
 pub use expectations::RuntimeProbeExpectations;
 pub use note_timing::RuntimeProbeNoteTimingHealthSummary;
 pub use process_output_summary::RuntimeProbeProcessOutputSummary;
@@ -308,6 +312,7 @@ impl RuntimeProbeParameterChange {
 pub struct RuntimeProbeMatrix {
     worker_executable: PathBuf,
     cases: Vec<RuntimeProbeCase>,
+    coverage_requirements: Option<RuntimeProbeEvidenceRequirements>,
 }
 
 impl RuntimeProbeMatrix {
@@ -315,6 +320,7 @@ impl RuntimeProbeMatrix {
         Self {
             worker_executable: worker_executable.into(),
             cases: Vec::new(),
+            coverage_requirements: None,
         }
     }
 
@@ -329,6 +335,14 @@ impl RuntimeProbeMatrix {
 
     pub fn cases(&self) -> &[RuntimeProbeCase] {
         &self.cases
+    }
+
+    pub fn with_coverage_requirements(
+        mut self,
+        requirements: RuntimeProbeEvidenceRequirements,
+    ) -> Self {
+        self.coverage_requirements = Some(requirements);
+        self
     }
 
     pub fn run(&self) -> RuntimeProbeMatrixReport {
@@ -360,7 +374,10 @@ impl RuntimeProbeMatrix {
             })
             .collect::<Vec<_>>();
 
-        RuntimeProbeMatrixReport::new(results)
+        RuntimeProbeMatrixReport::new_with_coverage_requirements(
+            results,
+            self.coverage_requirements.as_ref(),
+        )
     }
 }
 

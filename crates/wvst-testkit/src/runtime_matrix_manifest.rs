@@ -74,6 +74,9 @@ impl RuntimeProbeMatrixManifest {
             .map(|path| expand_path(path, "<matrix>"))
             .transpose()?;
         let mut matrix = RuntimeProbeMatrix::new(worker_executable);
+        if let Some(requirements) = &self.evidence_requirements {
+            matrix = matrix.with_coverage_requirements(requirements.clone());
+        }
         for case in &self.cases {
             matrix.push_case(case.to_probe_case(fixture_root.as_deref())?);
         }

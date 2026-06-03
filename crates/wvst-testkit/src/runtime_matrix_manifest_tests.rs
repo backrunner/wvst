@@ -695,7 +695,7 @@ fn parses_manifest_with_controller_edit_probe_disabled() {
 #[test]
 fn validates_manifest_evidence_requirements() {
     let manifest = RuntimeProbeMatrixManifest::from_json_str(
-        r#"{"schemaVersion":1,"evidenceRequirements":{"requireAllCasesEvidence":true,"minReportedCases":1,"minThirdPartyCases":1,"minThirdPartyInstrumentCases":1,"minThirdPartyBlocks":1,"minThirdPartyProcessFrames":128,"minThirdPartyTimeoutMillis":1000,"requireThirdPartyExpectations":true,"requiredTags":["instrument","note-response"],"requiredTagCounts":{"instrument":1,"note-response":1},"requiredThirdPartyTagCounts":{"note-response":1}},"cases":[{"name":"instrument-note","pluginPath":"/tmp/Synth.vst3","classId":"class-a","note":{"pitch":60},"expectations":{"requireNonZeroOutput":true,"requireNoteResponse":true},"evidence":{"pluginName":"Example Synth","vendor":"Example Audio","pluginKind":"instrument","thirdParty":true,"tags":["instrument","note-response"]}}]}"#,
+        r#"{"schemaVersion":1,"evidenceRequirements":{"requireAllCasesEvidence":true,"minReportedCases":1,"minThirdPartyCases":1,"minThirdPartyInstrumentCases":1,"minThirdPartyNonSilentCases":1,"minThirdPartyNoteResponseCases":1,"minThirdPartyBlocks":1,"minThirdPartyProcessFrames":128,"minThirdPartyTimeoutMillis":1000,"requireThirdPartyExpectations":true,"requiredTags":["instrument","note-response"],"requiredTagCounts":{"instrument":1,"note-response":1},"requiredThirdPartyTagCounts":{"note-response":1}},"cases":[{"name":"instrument-note","pluginPath":"/tmp/Synth.vst3","classId":"class-a","note":{"pitch":60},"expectations":{"requireNonZeroOutput":true,"requireNoteResponse":true},"evidence":{"pluginName":"Example Synth","vendor":"Example Audio","pluginKind":"instrument","thirdParty":true,"tags":["instrument","note-response"]}}]}"#,
     )
     .expect("manifest");
 
@@ -705,6 +705,8 @@ fn validates_manifest_evidence_requirements() {
         .expect("evidence requirements");
     assert!(requirements.require_all_cases_evidence);
     assert_eq!(requirements.min_third_party_instrument_cases, Some(1));
+    assert_eq!(requirements.min_third_party_non_silent_cases, Some(1));
+    assert_eq!(requirements.min_third_party_note_response_cases, Some(1));
     assert_eq!(requirements.min_third_party_blocks, Some(1));
     assert_eq!(requirements.min_third_party_process_frames, Some(128));
     assert_eq!(requirements.min_third_party_timeout_millis, Some(1_000));
@@ -714,6 +716,12 @@ fn validates_manifest_evidence_requirements() {
             .to_json_string_pretty()
             .expect("pretty json")
             .contains("\"minThirdPartyInstrumentCases\": 1")
+    );
+    assert!(
+        manifest
+            .to_json_string_pretty()
+            .expect("pretty json")
+            .contains("\"minThirdPartyNonSilentCases\": 1")
     );
     assert!(
         manifest
@@ -809,6 +817,16 @@ fn validates_manifest_evidence_requirements() {
         too_short_timeout,
         RuntimeProbeMatrixManifestError::InvalidEvidenceRequirements { message }
             if message.contains("minThirdPartyTimeoutMillis") && message.contains("short-timeout")
+    ));
+
+    let impossible_runtime_coverage = RuntimeProbeMatrixManifest::from_json_str(
+        r#"{"schemaVersion":1,"evidenceRequirements":{"minThirdPartyControllerRichCases":2},"cases":[{"name":"effect","pluginPath":"/tmp/Fx.vst3","classId":"class-a","evidence":{"pluginName":"Example FX","vendor":"Example Audio","pluginKind":"effect","thirdParty":true,"tags":["effect"]}}]}"#,
+    )
+    .expect_err("impossible runtime coverage");
+    assert!(matches!(
+        impossible_runtime_coverage,
+        RuntimeProbeMatrixManifestError::InvalidEvidenceRequirements { message }
+            if message.contains("minThirdPartyControllerRichCases")
     ));
 
     let zero_quality_gate = RuntimeProbeMatrixManifest::from_json_str(

@@ -1,6 +1,7 @@
 use super::*;
 
 mod audio_bus_summary;
+mod coverage_audit;
 mod expectations;
 mod output_expectations;
 mod process_output_summary;

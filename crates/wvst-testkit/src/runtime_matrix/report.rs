@@ -3,9 +3,11 @@ use std::{collections::BTreeMap, path::PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::runtime_matrix_manifest::RuntimeProbeEvidenceRequirements;
+
 use super::{
     RUNTIME_PROBE_MATRIX_REPORT_SCHEMA_VERSION, RuntimeProbeCaseEvidence, RuntimeProbePluginKind,
-    audio_bus_summary::RuntimeProbeAudioBusSummary,
+    audio_bus_summary::RuntimeProbeAudioBusSummary, coverage_audit::RuntimeProbeCoverageAudit,
     note_timing::RuntimeProbeNoteTimingHealthSummary,
     process_output_summary::RuntimeProbeProcessOutputSummary,
     process_timing_summary::RuntimeProbeProcessTimingSummary,
@@ -74,10 +76,19 @@ pub struct RuntimeProbeMatrixReport {
     pub controller_health: RuntimeProbeControllerHealthSummary,
     pub diagnostics: RuntimeProbeDiagnosticsSummary,
     pub evidence: RuntimeProbeEvidenceSummary,
+    pub coverage_audit: RuntimeProbeCoverageAudit,
 }
 
 impl RuntimeProbeMatrixReport {
+    #[cfg(test)]
     pub(crate) fn new(results: Vec<RuntimeProbeResult>) -> Self {
+        Self::new_with_coverage_requirements(results, None)
+    }
+
+    pub(crate) fn new_with_coverage_requirements(
+        results: Vec<RuntimeProbeResult>,
+        coverage_requirements: Option<&RuntimeProbeEvidenceRequirements>,
+    ) -> Self {
         let passed = results.iter().filter(|result| result.passed()).count();
         let failed = count_status(&results, RuntimeProbeStatus::Failed);
         let launch_failed = count_status(&results, RuntimeProbeStatus::LaunchFailed);
@@ -93,6 +104,8 @@ impl RuntimeProbeMatrixReport {
         let controller_health = RuntimeProbeControllerHealthSummary::from_results(&results);
         let diagnostics = RuntimeProbeDiagnosticsSummary::from_results(&results);
         let evidence = RuntimeProbeEvidenceSummary::from_results(&results);
+        let coverage_audit =
+            RuntimeProbeCoverageAudit::from_results(&results, coverage_requirements);
 
         Self {
             schema_version: RUNTIME_PROBE_MATRIX_REPORT_SCHEMA_VERSION,
@@ -111,6 +124,7 @@ impl RuntimeProbeMatrixReport {
             controller_health,
             diagnostics,
             evidence,
+            coverage_audit,
         }
     }
 
@@ -119,6 +133,7 @@ impl RuntimeProbeMatrixReport {
             && self.launch_failed == 0
             && self.timed_out == 0
             && self.expectation_failed == 0
+            && self.coverage_audit.passed
     }
 }
 

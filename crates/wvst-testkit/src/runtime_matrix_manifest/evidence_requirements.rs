@@ -27,6 +27,14 @@ pub struct RuntimeProbeEvidenceRequirements {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_third_party_hybrid_cases: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_third_party_non_silent_cases: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_third_party_note_response_cases: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_third_party_controller_rich_cases: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_third_party_output_event_cases: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_third_party_blocks: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_third_party_process_frames: Option<u64>,
@@ -106,6 +114,26 @@ pub(super) fn validate_evidence_requirements(
         "minThirdPartyHybridCases",
         requirements.min_third_party_hybrid_cases,
         counts.third_party_hybrid_cases,
+    )?;
+    validate_runtime_coverage_target(
+        "minThirdPartyNonSilentCases",
+        requirements.min_third_party_non_silent_cases,
+        counts.third_party_cases,
+    )?;
+    validate_runtime_coverage_target(
+        "minThirdPartyNoteResponseCases",
+        requirements.min_third_party_note_response_cases,
+        counts.third_party_cases,
+    )?;
+    validate_runtime_coverage_target(
+        "minThirdPartyControllerRichCases",
+        requirements.min_third_party_controller_rich_cases,
+        counts.third_party_cases,
+    )?;
+    validate_runtime_coverage_target(
+        "minThirdPartyOutputEventCases",
+        requirements.min_third_party_output_event_cases,
+        counts.third_party_cases,
     )?;
 
     for tag in &requirements.required_tags {
@@ -321,6 +349,27 @@ fn require_min_count(
     {
         return Err(invalid_evidence_requirements(format!(
             "{field_name} expected at least {expected}, got {actual}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_runtime_coverage_target(
+    field_name: &'static str,
+    expected: Option<usize>,
+    third_party_cases: usize,
+) -> Result<(), RuntimeProbeMatrixManifestError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    if expected == 0 {
+        return Err(invalid_evidence_requirements(format!(
+            "{field_name} must be greater than 0"
+        )));
+    }
+    if expected > third_party_cases {
+        return Err(invalid_evidence_requirements(format!(
+            "{field_name} expected at most {third_party_cases} third-party cases declared in the manifest, got {expected}"
         )));
     }
     Ok(())
