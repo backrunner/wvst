@@ -53,6 +53,14 @@ pub struct StreamSharedMemoryDestroyParams {
     pub instance_id: u64,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamSharedMemoryProcessParams {
+    pub instance_id: u64,
+    #[serde(default)]
+    pub frames: Option<u16>,
+}
+
 #[derive(Debug)]
 pub enum SharedMemoryStreamError {
     InvalidCapacityBlocks,

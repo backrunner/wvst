@@ -13,6 +13,44 @@ impl WorkerSupervisor {
             .await
     }
 
+    pub async fn attach_shared_memory(
+        &self,
+        instance_id: u64,
+        path: String,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.instance_request(
+            instance_id,
+            "stream.sharedMemory.attach",
+            json!({ "instanceId": instance_id, "path": path }),
+        )
+        .await
+    }
+
+    pub async fn detach_shared_memory(
+        &self,
+        instance_id: u64,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.instance_request(
+            instance_id,
+            "stream.sharedMemory.detach",
+            json!({ "instanceId": instance_id }),
+        )
+        .await
+    }
+
+    pub async fn process_shared_memory(
+        &self,
+        instance_id: u64,
+        frames: Option<u16>,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.instance_request(
+            instance_id,
+            "stream.sharedMemory.process",
+            json!({ "instanceId": instance_id, "frames": frames }),
+        )
+        .await
+    }
+
     pub async fn parameters(&self, instance_id: u64) -> Result<Value, WorkerSupervisorError> {
         self.instance_request(
             instance_id,

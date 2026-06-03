@@ -778,6 +778,8 @@ dependencies = [
  "wvst-core",
  "wvst-protocol",
  "wvst-scanner",
+ "wvst-shm-mmap",
+ "wvst-shm-transport",
  "wvst-vst3-host",
 ]
 

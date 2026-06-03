@@ -2,12 +2,14 @@ use serde_json::{Value, json};
 
 use super::{
     ControlContext, response_error, response_error_data, response_instance_error, response_result,
+    response_worker_supervisor_error,
 };
 use crate::stream_shared_memory::{
     SharedMemoryStreamError, StreamSharedMemoryCreateParams, StreamSharedMemoryDestroyParams,
+    StreamSharedMemoryProcessParams,
 };
 
-pub fn handle_stream_shared_memory_create(
+pub async fn handle_stream_shared_memory_create(
     id: Value,
     params: Value,
     context: ControlContext<'_>,
@@ -27,16 +29,35 @@ pub fn handle_stream_shared_memory_create(
         Err(error) => return response_instance_error(id, error),
     };
 
-    match context
+    let _ = context
+        .workers
+        .detach_shared_memory(params.instance_id)
+        .await;
+    let descriptor = match context
         .shared_memory
         .create_for_instance(&record, params.capacity_blocks)
     {
-        Ok(descriptor) => response_result(id, json!(descriptor)),
-        Err(error) => response_shared_memory_error(id, error),
-    }
+        Ok(descriptor) => descriptor,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
+    let worker = match context
+        .workers
+        .attach_shared_memory(params.instance_id, descriptor.path.clone())
+        .await
+    {
+        Ok(worker) => worker,
+        Err(error) => {
+            let _ = context
+                .shared_memory
+                .destroy_by_instance(params.instance_id);
+            return response_worker_supervisor_error(id, error);
+        }
+    };
+
+    response_result(id, descriptor_with_worker(descriptor, worker))
 }
 
-pub fn handle_stream_shared_memory_destroy(
+pub async fn handle_stream_shared_memory_destroy(
     id: Value,
     params: Value,
     context: ControlContext<'_>,
@@ -55,6 +76,20 @@ pub fn handle_stream_shared_memory_destroy(
         return response_instance_error(id, error);
     }
 
+    let worker = context
+        .workers
+        .detach_shared_memory(params.instance_id)
+        .await
+        .map(|worker| json!({ "ok": true, "result": worker }))
+        .unwrap_or_else(|error| {
+            json!({
+                "ok": false,
+                "code": error.rpc_code(),
+                "message": error.rpc_message(),
+                "data": error.rpc_data(),
+            })
+        });
+
     match context
         .shared_memory
         .destroy_by_instance(params.instance_id)
@@ -64,12 +99,53 @@ pub fn handle_stream_shared_memory_destroy(
             json!({
                 "destroyed": descriptor.is_some(),
                 "descriptor": descriptor,
+                "worker": worker,
             }),
         ),
         Err(error) => response_shared_memory_error(id, error),
     }
 }
 
+pub async fn handle_stream_shared_memory_process(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<StreamSharedMemoryProcessParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid stream shared memory process params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .process_shared_memory(params.instance_id, params.frames)
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
 fn response_shared_memory_error(id: Value, error: SharedMemoryStreamError) -> String {
     response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
+}
+
+fn descriptor_with_worker(
+    descriptor: crate::stream_shared_memory::SharedMemoryStreamDescriptor,
+    worker: Value,
+) -> Value {
+    let mut value = json!(descriptor);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("worker".to_string(), worker);
+    }
+    value
 }

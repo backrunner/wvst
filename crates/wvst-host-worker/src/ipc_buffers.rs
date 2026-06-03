@@ -68,6 +68,33 @@ impl AudioScratchBuffers {
 
         Ok((&self.input[..input_len], &mut self.output[..output_len]))
     }
+
+    pub(super) fn prepare_process_samples<'a>(
+        &'a mut self,
+        frames: usize,
+        samples: &[f32],
+    ) -> Result<(&'a [f32], &'a mut [f32]), String> {
+        if frames > self.max_frames {
+            return Err(format!(
+                "frame count exceeds max block size: max {}, got {frames}",
+                self.max_frames
+            ));
+        }
+
+        let input_len = checked_sample_len(frames, self.input_channels)?;
+        let output_len = checked_sample_len(frames, self.output_channels)?;
+        if samples.len() != input_len {
+            return Err(format!(
+                "f32 sample length mismatch: expected {input_len}, got {}",
+                samples.len()
+            ));
+        }
+
+        self.input[..input_len].copy_from_slice(samples);
+        self.output[..output_len].fill(0.0);
+
+        Ok((&self.input[..input_len], &mut self.output[..output_len]))
+    }
 }
 
 fn validate_channel_count(
@@ -126,6 +153,18 @@ mod tests {
             .expect_err("payload mismatch");
 
         assert!(error.contains("payload length mismatch"));
+    }
+
+    #[test]
+    fn prepares_from_interleaved_samples() {
+        let mut buffers = AudioScratchBuffers::new(128, 2, 2).expect("buffers");
+
+        let (input, output) = buffers
+            .prepare_process_samples(2, &[0.1, 0.2, 0.3, 0.4])
+            .expect("prepared samples");
+
+        assert_eq!(input, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(output, [0.0, 0.0, 0.0, 0.0]);
     }
 
     fn f32_payload<const N: usize>(samples: [f32; N]) -> Vec<u8> {

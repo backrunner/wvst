@@ -37,6 +37,8 @@ mod ipc_parameter_events;
 mod ipc_parameters;
 #[path = "ipc_payload.rs"]
 mod ipc_payload;
+#[path = "ipc_shared_memory.rs"]
+mod ipc_shared_memory;
 #[path = "ipc_state.rs"]
 mod ipc_state;
 #[path = "ipc_unit_data.rs"]
@@ -48,6 +50,7 @@ use ipc_backend::{WorkerBackend, WorkerBackendKind};
 use ipc_backend_error::WorkerBackendError;
 use ipc_buffers::AudioScratchBuffers;
 use ipc_capabilities::WorkerRuntimeCapabilities;
+use ipc_shared_memory::WorkerSharedMemoryStream;
 
 const WORKER_IPC_VERSION: u16 = 1;
 
@@ -69,6 +72,7 @@ struct WorkerInstance {
     events: Vec<Vst3InputEvent>,
     parameter_changes: Vec<Vst3ParameterChange>,
     process_output: Vst3ProcessOutput,
+    shared_memory: Option<WorkerSharedMemoryStream>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -376,6 +380,17 @@ pub fn handle_ipc_line(line: &str, state: &mut WorkerIpcState) -> String {
         "instance.stopProcessing" => {
             handle_instance_processing(request.id, request.params, state, false)
         }
+        "stream.sharedMemory.attach" => {
+            ipc_shared_memory::handle_stream_shared_memory_attach(request.id, request.params, state)
+        }
+        "stream.sharedMemory.detach" => {
+            ipc_shared_memory::handle_stream_shared_memory_detach(request.id, request.params, state)
+        }
+        "stream.sharedMemory.process" => ipc_shared_memory::handle_stream_shared_memory_process(
+            request.id,
+            request.params,
+            state,
+        ),
         "instance.parameters" => {
             ipc_parameters::handle_instance_parameters(request.id, request.params, state)
         }
@@ -534,6 +549,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
                 DEFAULT_MAX_VST3_EVENTS_PER_BLOCK,
                 DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
             ),
+            shared_memory: None,
         },
     );
 
@@ -655,6 +671,7 @@ fn worker_hello() -> Value {
             "framedControlBatching": true,
             "vst3ControlErrors": true,
             "vst3ControlPayloadLimits": true,
+            "sharedMemoryAudio": true,
             "maxVst3StateBytes": DEFAULT_MAX_VST3_STATE_BYTES
         }
     })
@@ -689,6 +706,11 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
                     "runtimeCapabilities": instance.capabilities,
                     "latencySamples": instance.backend.latency_samples(),
                     "tailSamples": instance.backend.tail_samples(),
+                    "sharedMemory": instance
+                        .shared_memory
+                        .as_ref()
+                        .map(|shared_memory| shared_memory.diagnostics())
+                        .unwrap_or(Value::Null),
                     "diagnostics": instance
                         .backend
                         .diagnostics_with_process_output(Some(&instance.process_output)),

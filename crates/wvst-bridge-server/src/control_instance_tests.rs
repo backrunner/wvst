@@ -589,6 +589,7 @@ async fn creates_lists_and_destroys_instance() {
         shared_memory_value["result"]["layout"]["config"]["capacityBlocks"],
         3
     );
+    assert_eq!(shared_memory_value["result"]["worker"]["attached"], true);
     assert_eq!(
         shared_memory_value["result"]["descriptorBytes"]
             .as_array()
@@ -611,6 +612,11 @@ async fn creates_lists_and_destroys_instance() {
     .to_string();
     let destroy_shared_memory_value = request_json(&destroy_shared_memory_request, context).await;
     assert_eq!(destroy_shared_memory_value["result"]["destroyed"], true);
+    assert_eq!(destroy_shared_memory_value["result"]["worker"]["ok"], true);
+    assert_eq!(
+        destroy_shared_memory_value["result"]["worker"]["result"]["detached"],
+        true
+    );
     assert!(!first_shared_memory_path.exists());
 
     let shared_memory_again_value = request_json(&shared_memory_request, context).await;
@@ -630,6 +636,19 @@ async fn creates_lists_and_destroys_instance() {
     let start_value = request_json(&start_request, context).await;
     assert_eq!(start_value["result"]["instance"]["state"], "processing");
     assert_eq!(start_value["result"]["worker"]["workerState"], "processing");
+
+    let process_shared_memory_request = serde_json::json!({
+        "id": 77,
+        "method": "stream.sharedMemory.process",
+        "params": { "instanceId": instance_id, "frames": 2 }
+    })
+    .to_string();
+    let process_shared_memory_value = request_json(&process_shared_memory_request, context).await;
+    assert_eq!(process_shared_memory_value["result"]["frames"], 2);
+    assert_eq!(
+        process_shared_memory_value["result"]["transport"],
+        "file-backed-mmap"
+    );
 
     let stop_request = serde_json::json!({
         "id": 7,
@@ -1349,6 +1368,9 @@ while IFS= read -r line; do
   case "$line" in
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
     *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough",%s,"latencySamples":0,"tailSamples":0}}\n' "$id" "$runtime_capabilities" ;;
+    *stream.sharedMemory.attach*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"attached":true,"sharedMemory":{"schemaVersion":1,"transport":"file-backed-mmap"}}}\n' "$id" ;;
+    *stream.sharedMemory.detach*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"detached":true}}\n' "$id" ;;
+    *stream.sharedMemory.process*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"transport":"file-backed-mmap","frames":2}}\n' "$id" ;;
     *instance.parameters*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameters":[{"id":42,"title":"Gain","shortTitle":"Gain","units":"dB","stepCount":0,"defaultNormalizedValue":0.5,"unitId":0,"flags":{"raw":1,"canAutomate":true,"readOnly":false,"wrapAround":false,"list":false,"hidden":false,"programChange":false,"bypass":false}}]}}\n' "$id" ;;
     *instance.units*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"unitInfo":null}}\n' "$id" ;;
     *instance.parameter.info*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.25,"valuePlain":25.0,"valueString":"25 dB"}}\n' "$id" ;;
