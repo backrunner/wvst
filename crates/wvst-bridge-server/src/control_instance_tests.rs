@@ -440,6 +440,71 @@ async fn creates_lists_and_destroys_instance() {
         1
     );
 
+    let set_unit_program_data_refresh_request = serde_json::json!({
+        "id": 43,
+        "method": "instance.setUnitProgramDataAndRefresh",
+        "params": {
+            "instanceId": instance_id,
+            "listOrUnitId": 1,
+            "programIndex": 2,
+            "dataBase64": "AQID"
+        }
+    })
+    .to_string();
+    let set_unit_program_data_refresh_value =
+        request_json(&set_unit_program_data_refresh_request, context).await;
+    assert_eq!(
+        set_unit_program_data_refresh_value["result"]["setUnitProgramData"]["dataBytes"],
+        3
+    );
+    assert_eq!(
+        set_unit_program_data_refresh_value["result"]["metadata"]["parameters"][0]["id"],
+        42
+    );
+
+    let set_program_data_refresh_request = serde_json::json!({
+        "id": 44,
+        "method": "instance.programData.setAndRefresh",
+        "params": {
+            "instanceId": instance_id,
+            "listId": 1,
+            "programIndex": 2,
+            "dataBase64": "AQID"
+        }
+    })
+    .to_string();
+    let set_program_data_refresh_value =
+        request_json(&set_program_data_refresh_request, context).await;
+    assert_eq!(
+        set_program_data_refresh_value["result"]["setProgramData"]["dataBytes"],
+        3
+    );
+    assert_eq!(
+        set_program_data_refresh_value["result"]["metadata"]["worker"]["instances"],
+        1
+    );
+
+    let set_unit_data_refresh_request = serde_json::json!({
+        "id": 45,
+        "method": "instance.unitData.setAndRefresh",
+        "params": {
+            "instanceId": instance_id,
+            "unitId": 1,
+            "dataBase64": "AQID",
+            "includeWorkerMetrics": false
+        }
+    })
+    .to_string();
+    let set_unit_data_refresh_value = request_json(&set_unit_data_refresh_request, context).await;
+    assert_eq!(
+        set_unit_data_refresh_value["result"]["setUnitData"]["dataBytes"],
+        3
+    );
+    assert_eq!(
+        set_unit_data_refresh_value["result"]["metadata"]["worker"],
+        Value::Null
+    );
+
     let close_stream_request = serde_json::json!({
         "id": 4,
         "method": "stream.close",
@@ -1176,6 +1241,9 @@ while IFS= read -r line; do
     *instance.parameter.endEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"end-edit","valueNormalized":null}}\n' "$id" ;;
     *instance.getState*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"componentStateBase64":null,"controllerStateBase64":"AQID","stateBase64":"AQID"}}\n' "$id" ;;
     *instance.setState*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"componentStateBytes":null,"controllerStateBytes":3,"stateBytes":3}}\n' "$id" ;;
+    *instance.setUnitProgramData*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"listOrUnitId":1,"programIndex":2,"dataBytes":3}}\n' "$id" ;;
+    *instance.programData.set*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"listId":1,"programIndex":2,"dataBytes":3}}\n' "$id" ;;
+    *instance.unitData.set*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"unitId":1,"dataBytes":3}}\n' "$id" ;;
     *instance.connection.notifyComponent*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"component","messageId":"TextMessage","attributeCount":2,"notified":true}}\n' "$id" ;;
     *instance.connection.notifyController*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"controller","messageId":"TextMessage","attributeCount":0,"notified":true}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;

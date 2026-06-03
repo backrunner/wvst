@@ -289,7 +289,8 @@ impl WorkerSupervisor {
         include_state: bool,
         include_worker_metrics: bool,
     ) -> Result<Value, WorkerSupervisorError> {
-        let mut requests = vec![
+        self.write_then_refresh(
+            instance_id,
             WorkerBatchRequest::new(
                 "instance.setState",
                 json!({
@@ -299,36 +300,11 @@ impl WorkerSupervisor {
                     "controllerStateBase64": controller_state_base64,
                 }),
             ),
-            WorkerBatchRequest::new("instance.parameters", json!({ "instanceId": instance_id })),
-            WorkerBatchRequest::new("instance.units", json!({ "instanceId": instance_id })),
-        ];
-        let state_index = if include_state {
-            let index = requests.len();
-            requests.push(WorkerBatchRequest::new(
-                "instance.getState",
-                json!({ "instanceId": instance_id }),
-            ));
-            Some(index)
-        } else {
-            None
-        };
-        let worker_index = if include_worker_metrics {
-            let index = requests.len();
-            requests.push(WorkerBatchRequest::new("worker.metrics", json!({})));
-            Some(index)
-        } else {
-            None
-        };
-
-        let results = self.instance_batch_request(instance_id, requests).await?;
-        let metadata =
-            metadata_refresh_value(instance_id, &results, 1, 2, state_index, worker_index);
-
-        Ok(json!({
-            "instanceId": instance_id,
-            "setState": results.first().cloned().unwrap_or(Value::Null),
-            "metadata": metadata,
-        }))
+            "setState",
+            include_state,
+            include_worker_metrics,
+        )
+        .await
     }
 
     pub async fn notify_component(
@@ -412,6 +388,33 @@ impl WorkerSupervisor {
         .await
     }
 
+    pub async fn set_unit_program_data_and_refresh(
+        &self,
+        instance_id: u64,
+        list_or_unit_id: i32,
+        program_index: i32,
+        data_base64: String,
+        include_state: bool,
+        include_worker_metrics: bool,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.write_then_refresh(
+            instance_id,
+            WorkerBatchRequest::new(
+                "instance.setUnitProgramData",
+                json!({
+                    "instanceId": instance_id,
+                    "listOrUnitId": list_or_unit_id,
+                    "programIndex": program_index,
+                    "dataBase64": data_base64,
+                }),
+            ),
+            "setUnitProgramData",
+            include_state,
+            include_worker_metrics,
+        )
+        .await
+    }
+
     pub async fn program_data_supported(
         &self,
         instance_id: u64,
@@ -468,6 +471,33 @@ impl WorkerSupervisor {
         .await
     }
 
+    pub async fn set_program_data_and_refresh(
+        &self,
+        instance_id: u64,
+        list_id: i32,
+        program_index: i32,
+        data_base64: String,
+        include_state: bool,
+        include_worker_metrics: bool,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.write_then_refresh(
+            instance_id,
+            WorkerBatchRequest::new(
+                "instance.programData.set",
+                json!({
+                    "instanceId": instance_id,
+                    "listId": list_id,
+                    "programIndex": program_index,
+                    "dataBase64": data_base64,
+                }),
+            ),
+            "setProgramData",
+            include_state,
+            include_worker_metrics,
+        )
+        .await
+    }
+
     pub async fn unit_data_supported(
         &self,
         instance_id: u64,
@@ -510,6 +540,76 @@ impl WorkerSupervisor {
             }),
         )
         .await
+    }
+
+    pub async fn set_unit_data_and_refresh(
+        &self,
+        instance_id: u64,
+        unit_id: i32,
+        data_base64: String,
+        include_state: bool,
+        include_worker_metrics: bool,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.write_then_refresh(
+            instance_id,
+            WorkerBatchRequest::new(
+                "instance.unitData.set",
+                json!({
+                    "instanceId": instance_id,
+                    "unitId": unit_id,
+                    "dataBase64": data_base64,
+                }),
+            ),
+            "setUnitData",
+            include_state,
+            include_worker_metrics,
+        )
+        .await
+    }
+
+    async fn write_then_refresh(
+        &self,
+        instance_id: u64,
+        write_request: WorkerBatchRequest,
+        write_result_key: &'static str,
+        include_state: bool,
+        include_worker_metrics: bool,
+    ) -> Result<Value, WorkerSupervisorError> {
+        let mut requests = vec![
+            write_request,
+            WorkerBatchRequest::new("instance.parameters", json!({ "instanceId": instance_id })),
+            WorkerBatchRequest::new("instance.units", json!({ "instanceId": instance_id })),
+        ];
+        let state_index = if include_state {
+            let index = requests.len();
+            requests.push(WorkerBatchRequest::new(
+                "instance.getState",
+                json!({ "instanceId": instance_id }),
+            ));
+            Some(index)
+        } else {
+            None
+        };
+        let worker_index = if include_worker_metrics {
+            let index = requests.len();
+            requests.push(WorkerBatchRequest::new("worker.metrics", json!({})));
+            Some(index)
+        } else {
+            None
+        };
+
+        let results = self.instance_batch_request(instance_id, requests).await?;
+        let metadata =
+            metadata_refresh_value(instance_id, &results, 1, 2, state_index, worker_index);
+        let mut output = serde_json::Map::new();
+        output.insert("instanceId".to_string(), json!(instance_id));
+        output.insert(
+            write_result_key.to_string(),
+            results.first().cloned().unwrap_or(Value::Null),
+        );
+        output.insert("metadata".to_string(), metadata);
+
+        Ok(Value::Object(output))
     }
 
     async fn processing_request(

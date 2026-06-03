@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
@@ -9,6 +10,48 @@ use crate::instance_registry::{
     InstanceSetUnitDataParams, InstanceUnitByBusParams, InstanceUnitDataParams,
     InstanceUnitProgramDataParams,
 };
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceUnitProgramDataSetAndRefreshParams {
+    instance_id: u64,
+    list_or_unit_id: i32,
+    program_index: i32,
+    data_base64: String,
+    #[serde(default)]
+    include_state: bool,
+    #[serde(default = "default_include_worker_metrics")]
+    include_worker_metrics: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceProgramDataSetAndRefreshParams {
+    instance_id: u64,
+    list_id: i32,
+    program_index: i32,
+    data_base64: String,
+    #[serde(default)]
+    include_state: bool,
+    #[serde(default = "default_include_worker_metrics")]
+    include_worker_metrics: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceUnitDataSetAndRefreshParams {
+    instance_id: u64,
+    unit_id: i32,
+    data_base64: String,
+    #[serde(default)]
+    include_state: bool,
+    #[serde(default = "default_include_worker_metrics")]
+    include_worker_metrics: bool,
+}
+
+const fn default_include_worker_metrics() -> bool {
+    true
+}
 
 pub async fn handle_instance_select_unit(
     id: Value,
@@ -91,6 +134,43 @@ pub async fn handle_instance_set_unit_program_data(
             params.list_or_unit_id,
             params.program_index,
             params.data_base64,
+        )
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_set_unit_program_data_and_refresh(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceUnitProgramDataSetAndRefreshParams>(params)
+    {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid unit program data set-and-refresh params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .set_unit_program_data_and_refresh(
+            params.instance_id,
+            params.list_or_unit_id,
+            params.program_index,
+            params.data_base64,
+            params.include_state,
+            params.include_worker_metrics,
         )
         .await
     {
@@ -187,6 +267,42 @@ pub async fn handle_instance_set_program_data(
     }
 }
 
+pub async fn handle_instance_set_program_data_and_refresh(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceProgramDataSetAndRefreshParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid set program data set-and-refresh params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .set_program_data_and_refresh(
+            params.instance_id,
+            params.list_id,
+            params.program_index,
+            params.data_base64,
+            params.include_state,
+            params.include_worker_metrics,
+        )
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
 pub async fn handle_instance_unit_data_supported(
     id: Value,
     params: Value,
@@ -205,6 +321,41 @@ pub async fn handle_instance_unit_data_supported(
     match context
         .workers
         .unit_data_supported(params.instance_id, params.unit_id)
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_set_unit_data_and_refresh(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceUnitDataSetAndRefreshParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid set unit data set-and-refresh params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .set_unit_data_and_refresh(
+            params.instance_id,
+            params.unit_id,
+            params.data_base64,
+            params.include_state,
+            params.include_worker_metrics,
+        )
         .await
     {
         Ok(result) => response_result(id, result),

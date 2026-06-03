@@ -241,6 +241,15 @@ pub(crate) async fn handle_control_text(
             .await,
             session_authorized,
         ),
+        "instance.setUnitProgramDataAndRefresh" => ControlResponse::new(
+            control_instance_units::handle_instance_set_unit_program_data_and_refresh(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.programData.supported" => ControlResponse::new(
             control_instance_units::handle_instance_program_data_supported(
                 request.id,
@@ -268,6 +277,15 @@ pub(crate) async fn handle_control_text(
             .await,
             session_authorized,
         ),
+        "instance.programData.setAndRefresh" => ControlResponse::new(
+            control_instance_units::handle_instance_set_program_data_and_refresh(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.unitData.supported" => ControlResponse::new(
             control_instance_units::handle_instance_unit_data_supported(
                 request.id,
@@ -288,6 +306,15 @@ pub(crate) async fn handle_control_text(
         ),
         "instance.unitData.set" => ControlResponse::new(
             control_instance_units::handle_instance_set_unit_data(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.unitData.setAndRefresh" => ControlResponse::new(
+            control_instance_units::handle_instance_set_unit_data_and_refresh(
                 request.id,
                 request.params,
                 context,
