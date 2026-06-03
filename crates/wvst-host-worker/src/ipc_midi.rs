@@ -1,8 +1,14 @@
 use wvst_protocol::{AudioFrameHeader, MIDI_EVENT_LEN, MidiEvent, MidiEventKind};
 use wvst_vst3_host::{
-    DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, VST3_MIDI_CONTROLLER_AFTERTOUCH,
-    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3InputEvent, Vst3NoteEvent, Vst3OutputEvent,
-    Vst3ParameterChange, Vst3PolyPressureEvent,
+    DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, VST3_MIDI_CONTROLLER_ACTIVE_SENSING,
+    VST3_MIDI_CONTROLLER_AFTERTOUCH, VST3_MIDI_CONTROLLER_CABLE_SELECT,
+    VST3_MIDI_CONTROLLER_CLOCK_CONTINUE, VST3_MIDI_CONTROLLER_CLOCK_START,
+    VST3_MIDI_CONTROLLER_CLOCK_STOP, VST3_MIDI_CONTROLLER_PITCH_BEND,
+    VST3_MIDI_CONTROLLER_POLY_PRESSURE, VST3_MIDI_CONTROLLER_PROGRAM_CHANGE,
+    VST3_MIDI_CONTROLLER_QUARTER_FRAME, VST3_MIDI_CONTROLLER_SONG_POINTER,
+    VST3_MIDI_CONTROLLER_SONG_SELECT, VST3_MIDI_CONTROLLER_TUNE_REQUEST, Vst3InputEvent,
+    Vst3LegacyMidiCcOutEvent, Vst3NoteEvent, Vst3OutputEvent, Vst3ParameterChange,
+    Vst3PolyPressureEvent,
 };
 
 use super::ipc_event_ordering::{
@@ -38,21 +44,37 @@ pub(super) fn decode_midi_events_into(
     destination.clear();
     for chunk in event_payload.chunks_exact(MIDI_EVENT_LEN) {
         let event = MidiEvent::decode(chunk).map_err(|error| error.to_string())?;
-        if usize::from(event.sample_offset) >= frames {
-            return Err(format!(
-                "MIDI event sample offset is outside block: frames {frames}, offset {}",
-                event.sample_offset
-            ));
-        }
-        if let Some(event) = midi_event_to_vst3(event) {
-            destination.push(event);
-        }
-        midi_event_to_parameter_change(frames, event, parameter_changes, &parameter_id_for_midi)?;
+        push_midi_event_into(
+            event,
+            frames,
+            destination,
+            parameter_changes,
+            &parameter_id_for_midi,
+        )?;
     }
     sort_input_events_by_sample_offset(destination);
     sort_parameter_changes_by_sample_offset(parameter_changes);
 
     Ok(())
+}
+
+pub(super) fn push_midi_event_into(
+    event: MidiEvent,
+    frames: usize,
+    destination: &mut Vec<Vst3InputEvent>,
+    parameter_changes: &mut Vec<Vst3ParameterChange>,
+    parameter_id_for_midi: &impl Fn(u8, i16) -> Option<u32>,
+) -> Result<(), String> {
+    if usize::from(event.sample_offset) >= frames {
+        return Err(format!(
+            "MIDI event sample offset is outside block: frames {frames}, offset {}",
+            event.sample_offset
+        ));
+    }
+    if let Some(event) = midi_event_to_vst3(event) {
+        destination.push(event);
+    }
+    midi_event_to_parameter_change(frames, event, parameter_changes, parameter_id_for_midi)
 }
 
 pub(super) fn encode_midi_events_into(
@@ -96,7 +118,89 @@ fn vst3_output_event_to_midi_event(event: Vst3OutputEvent) -> Result<MidiEvent, 
             midi_event.note_id = midi_note_id(event.note_id);
             Ok(midi_event)
         }
+        Vst3OutputEvent::LegacyMidiCcOut(event) => legacy_midi_cc_out_event(event),
     }
+}
+
+fn legacy_midi_cc_out_event(event: Vst3LegacyMidiCcOutEvent) -> Result<MidiEvent, String> {
+    match i16::from(event.control_number) {
+        0..=127 => MidiEvent::new(
+            event.sample_offset,
+            MidiEventKind::ControlChange,
+            event.channel,
+            event.control_number,
+            event.value,
+        )
+        .map_err(|error| error.to_string()),
+        VST3_MIDI_CONTROLLER_AFTERTOUCH => MidiEvent::new(
+            event.sample_offset,
+            MidiEventKind::ChannelAftertouch,
+            event.channel,
+            event.value,
+            0,
+        )
+        .map_err(|error| error.to_string()),
+        VST3_MIDI_CONTROLLER_PITCH_BEND => MidiEvent::new(
+            event.sample_offset,
+            MidiEventKind::PitchBend,
+            event.channel,
+            event.value,
+            event.value2,
+        )
+        .map_err(|error| error.to_string()),
+        VST3_MIDI_CONTROLLER_PROGRAM_CHANGE => raw_channel_event(event, 0xc0, 2),
+        VST3_MIDI_CONTROLLER_POLY_PRESSURE => MidiEvent::new(
+            event.sample_offset,
+            MidiEventKind::PolyAftertouch,
+            event.channel,
+            event.value,
+            event.value2,
+        )
+        .map_err(|error| error.to_string()),
+        VST3_MIDI_CONTROLLER_QUARTER_FRAME => raw_system_event(event, 0xf1, 2),
+        VST3_MIDI_CONTROLLER_SONG_SELECT => raw_system_event(event, 0xf3, 2),
+        VST3_MIDI_CONTROLLER_SONG_POINTER => raw_system_event(event, 0xf2, 3),
+        VST3_MIDI_CONTROLLER_CABLE_SELECT => raw_system_event(event, 0xf5, 2),
+        VST3_MIDI_CONTROLLER_TUNE_REQUEST => raw_system_event(event, 0xf6, 1),
+        VST3_MIDI_CONTROLLER_CLOCK_START => raw_system_event(event, 0xfa, 1),
+        VST3_MIDI_CONTROLLER_CLOCK_CONTINUE => raw_system_event(event, 0xfb, 1),
+        VST3_MIDI_CONTROLLER_CLOCK_STOP => raw_system_event(event, 0xfc, 1),
+        VST3_MIDI_CONTROLLER_ACTIVE_SENSING => raw_system_event(event, 0xfe, 1),
+        _ => Err(format!(
+            "unsupported VST3 legacy MIDI control number {}",
+            event.control_number
+        )),
+    }
+}
+
+fn raw_channel_event(
+    event: Vst3LegacyMidiCcOutEvent,
+    status_base: u8,
+    data_len: u8,
+) -> Result<MidiEvent, String> {
+    MidiEvent::raw_midi(
+        event.sample_offset,
+        status_base | event.channel,
+        event.value,
+        event.value2,
+        data_len,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn raw_system_event(
+    event: Vst3LegacyMidiCcOutEvent,
+    status: u8,
+    data_len: u8,
+) -> Result<MidiEvent, String> {
+    MidiEvent::raw_midi(
+        event.sample_offset,
+        status,
+        event.value,
+        event.value2,
+        data_len,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn midi_note_event(kind: MidiEventKind, event: Vst3NoteEvent) -> Result<MidiEvent, String> {

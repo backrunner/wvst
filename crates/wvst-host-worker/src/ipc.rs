@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, Read, Write};
+use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,6 @@ use wvst_protocol::{
     WORKER_CONTROL_IPC_SCHEMA_VERSION, WorkerControlIpcBatch, WorkerControlIpcBatchRole,
     WorkerControlIpcHeader, WorkerControlIpcMessage, WorkerControlMessageKind,
 };
-use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
 use wvst_vst3_host::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
     DEFAULT_MAX_VST3_STATE_BYTES, Vst3InputEvent, Vst3ParameterChange, Vst3ProcessOutput,
@@ -19,6 +18,8 @@ use wvst_vst3_host::{
 mod ipc_audio;
 #[path = "ipc_backend.rs"]
 mod ipc_backend;
+#[path = "ipc_backend_audio_bus.rs"]
+mod ipc_backend_audio_bus;
 #[path = "ipc_backend_error.rs"]
 mod ipc_backend_error;
 #[path = "ipc_buffers.rs"]
@@ -45,6 +46,8 @@ mod ipc_state;
 mod ipc_unit_data;
 #[path = "ipc_units.rs"]
 mod ipc_units;
+#[path = "ipc_vst3_events.rs"]
+mod ipc_vst3_events;
 
 use ipc_backend::{WorkerBackend, WorkerBackendKind};
 use ipc_backend_error::WorkerBackendError;
@@ -89,12 +92,9 @@ struct IpcRequest {
 struct InstanceCreateParams {
     instance_id: u64,
     stream_id: u64,
-    plugin_id: String,
     plugin_path: String,
     #[serde(default)]
     class_id: Option<String>,
-    #[serde(default)]
-    class_name: Option<String>,
     sample_rate: u32,
     max_block_frames: u16,
     input_channels: usize,
@@ -125,6 +125,7 @@ struct InstanceReady {
     runtime_capabilities: WorkerRuntimeCapabilities,
     latency_samples: u32,
     tail_samples: u32,
+    tail_info: wvst_vst3_host::Vst3TailSamples,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,13 +148,6 @@ enum FramedControlRequest {
     },
 }
 
-pub fn serve_stdio(audio_connect: Option<String>) -> Result<(), String> {
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-
-    serve_with_audio(stdin.lock(), stdout.lock(), audio_connect)
-}
-
 pub fn serve_framed_stdio(audio_connect: Option<String>) -> Result<(), String> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -162,42 +156,8 @@ pub fn serve_framed_stdio(audio_connect: Option<String>) -> Result<(), String> {
 }
 
 #[cfg(test)]
-pub fn serve(reader: impl BufRead, mut writer: impl Write) -> Result<(), String> {
-    serve_with_audio(reader, &mut writer, None)
-}
-
-#[cfg(test)]
 pub fn serve_framed(reader: impl Read, writer: impl Write) -> Result<(), String> {
     serve_framed_with_audio(reader, writer, None)
-}
-
-fn serve_with_audio(
-    reader: impl BufRead,
-    mut writer: impl Write,
-    audio_connect: Option<String>,
-) -> Result<(), String> {
-    let state = Arc::new(Mutex::new(WorkerIpcState::default()));
-    if let Some(address) = audio_connect {
-        ipc_audio::spawn_audio_thread(address, Arc::clone(&state));
-    }
-
-    for line in reader.lines() {
-        let line = line.map_err(|error| error.to_string())?;
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let response = {
-            let mut state = state
-                .lock()
-                .map_err(|_| "worker state mutex poisoned".to_string())?;
-            handle_ipc_line(&line, &mut state)
-        };
-        writeln!(writer, "{response}").map_err(|error| error.to_string())?;
-        writer.flush().map_err(|error| error.to_string())?;
-    }
-
-    Ok(())
 }
 
 fn serve_framed_with_audio(
@@ -501,8 +461,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
         return response_error(id, 4220, "invalid maxBlockFrames: 0");
     }
 
-    let descriptor = descriptor_from_params(&params);
-    let backend = match WorkerBackend::from_create_params(&params, &descriptor) {
+    let backend = match WorkerBackend::from_create_params(&params) {
         Ok(backend) => backend,
         Err(error) => {
             return match error.data() {
@@ -529,6 +488,7 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
         runtime_capabilities: backend.capabilities(),
         latency_samples: backend.latency_samples(),
         tail_samples: backend.tail_samples(),
+        tail_info: backend.tail_info(),
     };
     let capabilities = backend.capabilities();
     state.instances.insert(
@@ -554,6 +514,40 @@ fn handle_instance_create(id: Value, params: Value, state: &mut WorkerIpcState) 
     );
 
     response_result(id, json!(ready))
+}
+
+#[cfg(test)]
+fn insert_test_audio_instance(
+    state: &mut WorkerIpcState,
+    input_channels: usize,
+    output_channels: usize,
+) {
+    let backend = WorkerBackend::test_audio_runtime(input_channels, output_channels);
+    let capabilities = backend.capabilities();
+    let buffers =
+        AudioScratchBuffers::new(128, input_channels, output_channels).expect("test audio buffers");
+
+    state.instances.insert(
+        7,
+        WorkerInstance {
+            stream_id: 9,
+            sample_rate: 48_000,
+            max_block_frames: 128,
+            input_channels,
+            output_channels,
+            processing: false,
+            backend,
+            capabilities,
+            buffers,
+            events: Vec::with_capacity(DEFAULT_MAX_VST3_EVENTS_PER_BLOCK),
+            parameter_changes: Vec::with_capacity(DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK),
+            process_output: Vst3ProcessOutput::with_capacities(
+                DEFAULT_MAX_VST3_EVENTS_PER_BLOCK,
+                DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
+            ),
+            shared_memory: None,
+        },
+    );
 }
 
 fn handle_instance_destroy(id: Value, params: Value, state: &mut WorkerIpcState) -> String {
@@ -648,7 +642,6 @@ fn worker_hello() -> Value {
         "capabilities": {
             "factoryInfo": true,
             "instanceLifecycle": true,
-            "fakePassthrough": true,
             "binaryAudioProcess": true,
             "vst3CreateInstance": true,
             "vst3AudioProcessorProbe": true,
@@ -686,11 +679,6 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
             .values()
             .filter(|instance| instance.processing)
             .count(),
-        "passthroughInstances": state
-            .instances
-            .values()
-            .filter(|instance| instance.backend.kind() == WorkerBackendKind::Passthrough)
-            .count(),
         "vst3RuntimeInstances": state
             .instances
             .values()
@@ -703,9 +691,10 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
                 json!({
                     "streamId": instance.stream_id,
                     "backend": instance.backend.kind(),
-                    "runtimeCapabilities": instance.capabilities,
+                    "runtimeCapabilities": &instance.capabilities,
                     "latencySamples": instance.backend.latency_samples(),
                     "tailSamples": instance.backend.tail_samples(),
+                    "tailInfo": instance.backend.tail_info(),
                     "sharedMemory": instance
                         .shared_memory
                         .as_ref()
@@ -718,29 +707,6 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
             })
             .collect::<Vec<_>>(),
     })
-}
-
-fn descriptor_from_params(params: &InstanceCreateParams) -> PluginDescriptor {
-    let class_name = params
-        .class_name
-        .clone()
-        .unwrap_or_else(|| "WVST Worker Passthrough".to_string());
-
-    PluginDescriptor {
-        plugin_id: params.plugin_id.clone(),
-        format: PluginFormat::Vst3,
-        name: class_name.clone(),
-        vendor: Some("WVST".to_string()),
-        version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        path: params.plugin_path.clone(),
-        classes: vec![PluginClass {
-            class_id: params.class_id.clone(),
-            name: class_name,
-            category: Some("Fx".to_string()),
-            subcategories: vec!["Stereo".to_string()],
-        }],
-        metadata_source: MetadataSource::BundleName,
-    }
 }
 
 fn response_result(id: Value, result: Value) -> String {
@@ -834,241 +800,42 @@ mod tests {
     }
 
     #[test]
-    fn creates_processes_and_destroys_passthrough_instance() {
+    fn rejects_instance_create_when_plugin_path_is_not_bundle_directory() {
         let mut state = WorkerIpcState::default();
         let create = handle_ipc_line(
             r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":2,"outputChannels":2}}"#,
             &mut state,
         );
         let create_value: Value = serde_json::from_str(&create).expect("create json");
-        assert_eq!(create_value["result"]["workerState"], "ready");
-        assert_eq!(create_value["result"]["backend"], "passthrough");
-        assert_eq!(
-            create_value["result"]["runtimeCapabilities"]["schemaVersion"],
-            1
+        assert_eq!(create_value["error"]["code"], 4220);
+        assert!(
+            create_value["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("pluginPath must point to a VST3 bundle directory")
         );
-        assert_eq!(
-            create_value["result"]["runtimeCapabilities"]["binaryAudioProcess"],
-            true
-        );
-        assert_eq!(
-            create_value["result"]["runtimeCapabilities"]["parameters"],
-            false
-        );
-        assert_eq!(
-            create_value["result"]["runtimeCapabilities"]["controllerState"],
-            false
-        );
-        assert_eq!(create_value["result"]["latencySamples"], 0);
-        assert_eq!(create_value["result"]["tailSamples"], 0);
+        assert_eq!(state.instances.len(), 0);
 
         let metrics = handle_ipc_line(r#"{"id":8,"method":"worker.metrics"}"#, &mut state);
         let metrics_value: Value = serde_json::from_str(&metrics).expect("metrics json");
-        assert_eq!(
-            metrics_value["result"]["runtime"][0]["backend"],
-            "passthrough"
-        );
-        assert_eq!(
-            metrics_value["result"]["runtime"][0]["runtimeCapabilities"]["schemaVersion"],
-            1
-        );
-        assert_eq!(
-            metrics_value["result"]["runtime"][0]["runtimeCapabilities"]["binaryAudioProcess"],
-            true
-        );
-        assert_eq!(
-            metrics_value["result"]["runtime"][0]["diagnostics"]["passthroughReason"]["kind"],
-            "non-bundle-path"
-        );
-        assert_eq!(
-            metrics_value["result"]["runtime"][0]["runtimeCapabilities"]["componentState"],
-            false
-        );
-        assert_eq!(metrics_value["result"]["runtime"][0]["latencySamples"], 0);
-        assert_eq!(metrics_value["result"]["runtime"][0]["tailSamples"], 0);
-        assert_eq!(
-            metrics_value["result"]["runtime"][0]["diagnostics"]["componentHandler"],
-            Value::Null
-        );
-
-        let parameters = handle_ipc_line(
-            r#"{"id":9,"method":"instance.parameters","params":{"instanceId":7}}"#,
-            &mut state,
-        );
-        let parameters_value: Value = serde_json::from_str(&parameters).expect("params json");
-        assert_eq!(parameters_value["result"]["parameters"], json!([]));
-
-        let units = handle_ipc_line(
-            r#"{"id":11,"method":"instance.units","params":{"instanceId":7}}"#,
-            &mut state,
-        );
-        let units_value: Value = serde_json::from_str(&units).expect("units json");
-        assert_eq!(units_value["result"]["unitInfo"], Value::Null);
-
-        let select_unit = handle_ipc_line(
-            r#"{"id":12,"method":"instance.selectUnit","params":{"instanceId":7,"unitId":1}}"#,
-            &mut state,
-        );
-        let select_unit_value: Value =
-            serde_json::from_str(&select_unit).expect("select unit json");
-        assert_eq!(select_unit_value["error"]["code"], 4220);
-
-        let program_supported = handle_ipc_line(
-            r#"{"id":13,"method":"instance.programData.supported","params":{"instanceId":7,"listId":1,"programIndex":0}}"#,
-            &mut state,
-        );
-        let program_supported_value: Value =
-            serde_json::from_str(&program_supported).expect("program supported json");
-        assert_eq!(program_supported_value["result"]["supported"], false);
-
-        let unit_supported = handle_ipc_line(
-            r#"{"id":14,"method":"instance.unitData.supported","params":{"instanceId":7,"unitId":1}}"#,
-            &mut state,
-        );
-        let unit_supported_value: Value =
-            serde_json::from_str(&unit_supported).expect("unit supported json");
-        assert_eq!(unit_supported_value["result"]["supported"], false);
-
-        let set_state_missing = handle_ipc_line(
-            r#"{"id":15,"method":"instance.setState","params":{"instanceId":7}}"#,
-            &mut state,
-        );
-        let set_state_missing_value: Value =
-            serde_json::from_str(&set_state_missing).expect("set state missing json");
-        assert_eq!(set_state_missing_value["error"]["code"], -32602);
-
-        let parameter_get = handle_ipc_line(
-            r#"{"id":10,"method":"instance.parameter.get","params":{"instanceId":7,"parameterId":1}}"#,
-            &mut state,
-        );
-        let parameter_get_value: Value =
-            serde_json::from_str(&parameter_get).expect("parameter get json");
-        assert_eq!(parameter_get_value["error"]["code"], 4040);
-
-        let parameter_info = handle_ipc_line(
-            r#"{"id":16,"method":"instance.parameter.info","params":{"instanceId":7,"parameterId":1,"valueNormalized":0.5}}"#,
-            &mut state,
-        );
-        let parameter_info_value: Value =
-            serde_json::from_str(&parameter_info).expect("parameter info json");
-        assert_eq!(parameter_info_value["error"]["code"], 4220);
-
-        let parameter_value_by_string = handle_ipc_line(
-            r#"{"id":17,"method":"instance.parameter.valueByString","params":{"instanceId":7,"parameterId":1,"value":"0.5"}}"#,
-            &mut state,
-        );
-        let parameter_value_by_string_value: Value =
-            serde_json::from_str(&parameter_value_by_string).expect("value-by-string json");
-        assert_eq!(parameter_value_by_string_value["error"]["code"], 4220);
-
-        let parameter_normalized_by_plain = handle_ipc_line(
-            r#"{"id":18,"method":"instance.parameter.normalizedByPlain","params":{"instanceId":7,"parameterId":1,"valuePlain":50.0}}"#,
-            &mut state,
-        );
-        let parameter_normalized_by_plain_value: Value =
-            serde_json::from_str(&parameter_normalized_by_plain).expect("normalized-by-plain json");
-        assert_eq!(parameter_normalized_by_plain_value["error"]["code"], 4040);
-
-        let parameter_begin_edit = handle_ipc_line(
-            r#"{"id":19,"method":"instance.parameter.beginEdit","params":{"instanceId":7,"parameterId":1}}"#,
-            &mut state,
-        );
-        let parameter_begin_edit_value: Value =
-            serde_json::from_str(&parameter_begin_edit).expect("begin-edit json");
-        assert_eq!(parameter_begin_edit_value["error"]["code"], 4220);
-
-        let parameter_perform_edit = handle_ipc_line(
-            r#"{"id":20,"method":"instance.parameter.performEdit","params":{"instanceId":7,"parameterId":1,"valueNormalized":0.5}}"#,
-            &mut state,
-        );
-        let parameter_perform_edit_value: Value =
-            serde_json::from_str(&parameter_perform_edit).expect("perform-edit json");
-        assert_eq!(parameter_perform_edit_value["error"]["code"], 4220);
-
-        let parameter_end_edit = handle_ipc_line(
-            r#"{"id":21,"method":"instance.parameter.endEdit","params":{"instanceId":7,"parameterId":1}}"#,
-            &mut state,
-        );
-        let parameter_end_edit_value: Value =
-            serde_json::from_str(&parameter_end_edit).expect("end-edit json");
-        assert_eq!(parameter_end_edit_value["error"]["code"], 4220);
-
-        let notify_component = handle_ipc_line(
-            r#"{"id":22,"method":"instance.connection.notifyComponent","params":{"instanceId":7,"messageId":"TextMessage","attributes":{"answer":{"type":"int","value":42},"gain":{"type":"float","value":0.5},"label":{"type":"string","value":"ok"},"blob":{"type":"binary","valueBase64":"AQID"}}}}"#,
-            &mut state,
-        );
-        let notify_component_value: Value =
-            serde_json::from_str(&notify_component).expect("notify component json");
-        assert_eq!(notify_component_value["result"]["target"], "component");
-        assert_eq!(notify_component_value["result"]["messageId"], "TextMessage");
-        assert_eq!(notify_component_value["result"]["attributeCount"], 4);
-        assert_eq!(notify_component_value["result"]["notified"], false);
-
-        let notify_controller = handle_ipc_line(
-            r#"{"id":23,"method":"instance.connection.notifyController","params":{"instanceId":7,"messageId":"TextMessage"}}"#,
-            &mut state,
-        );
-        let notify_controller_value: Value =
-            serde_json::from_str(&notify_controller).expect("notify controller json");
-        assert_eq!(notify_controller_value["result"]["target"], "controller");
-        assert_eq!(
-            notify_controller_value["result"]["messageId"],
-            "TextMessage"
-        );
-        assert_eq!(notify_controller_value["result"]["attributeCount"], 0);
-        assert_eq!(notify_controller_value["result"]["notified"], false);
-
-        let notify_controller_null_attributes = handle_ipc_line(
-            r#"{"id":24,"method":"instance.connection.notifyController","params":{"instanceId":7,"messageId":"TextMessage","attributes":null}}"#,
-            &mut state,
-        );
-        let notify_controller_null_attributes_value: Value =
-            serde_json::from_str(&notify_controller_null_attributes)
-                .expect("notify controller null attributes json");
-        assert_eq!(
-            notify_controller_null_attributes_value["result"]["attributeCount"],
-            0
-        );
-
-        let start = handle_ipc_line(
-            r#"{"id":2,"method":"instance.startProcessing","params":{"instanceId":7}}"#,
-            &mut state,
-        );
-        let start_value: Value = serde_json::from_str(&start).expect("start json");
-        assert_eq!(start_value["result"]["workerState"], "processing");
-
-        let stop = handle_ipc_line(
-            r#"{"id":3,"method":"instance.stopProcessing","params":{"instanceId":7}}"#,
-            &mut state,
-        );
-        let stop_value: Value = serde_json::from_str(&stop).expect("stop json");
-        assert_eq!(stop_value["result"]["workerState"], "stopped");
-
-        let destroy = handle_ipc_line(
-            r#"{"id":4,"method":"instance.destroy","params":{"instanceId":7}}"#,
-            &mut state,
-        );
-        let destroy_value: Value = serde_json::from_str(&destroy).expect("destroy json");
-        assert_eq!(destroy_value["result"]["workerState"], "destroyed");
-        assert_eq!(state.instances.len(), 0);
+        assert_eq!(metrics_value["result"]["instances"], 0);
+        assert_eq!(metrics_value["result"]["vst3RuntimeInstances"], 0);
     }
 
     #[test]
-    fn records_passthrough_reason_when_class_id_is_missing() {
+    fn rejects_instance_create_when_class_id_is_missing() {
         let mut state = WorkerIpcState::default();
         let create = handle_ipc_line(
             r#"{"id":1,"method":"instance.create","params":{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":2,"outputChannels":2}}"#,
             &mut state,
         );
         let create_value: Value = serde_json::from_str(&create).expect("create json");
-        assert_eq!(create_value["result"]["backend"], "passthrough");
-
-        let metrics = handle_ipc_line(r#"{"id":8,"method":"worker.metrics"}"#, &mut state);
-        let metrics_value: Value = serde_json::from_str(&metrics).expect("metrics json");
+        assert_eq!(create_value["error"]["code"], 4220);
         assert_eq!(
-            metrics_value["result"]["runtime"][0]["diagnostics"]["passthroughReason"]["kind"],
-            "missing-class-id"
+            create_value["error"]["message"],
+            "classId is required for VST3 runtime instance create"
         );
+        assert_eq!(state.instances.len(), 0);
     }
 
     #[test]
@@ -1123,19 +890,6 @@ mod tests {
         assert_eq!(state.instances.len(), 0);
 
         let _ = std::fs::remove_dir_all(bundle_path);
-    }
-
-    #[test]
-    fn serve_writes_one_response_per_line() {
-        let input = br#"{"id":1,"method":"worker.hello"}
-{"id":2,"method":"worker.metrics"}
-"#;
-        let mut output = Vec::new();
-
-        serve(&input[..], &mut output).expect("served");
-
-        let text = String::from_utf8(output).expect("utf8");
-        assert_eq!(text.lines().count(), 2);
     }
 
     #[test]

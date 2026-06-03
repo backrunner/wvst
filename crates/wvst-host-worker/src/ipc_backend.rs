@@ -1,33 +1,37 @@
 use serde::Serialize;
-use wvst_scanner::PluginDescriptor;
 use wvst_vst3_host::{
-    HeadlessPluginInstance, HostError, VST3_MIDI_CONTROLLER_AFTERTOUCH,
-    VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3BusDirection, Vst3HostMessage, Vst3InputEvent,
-    Vst3LifecycleState, Vst3LoadedComponent, Vst3ParameterChange, Vst3ParameterInfo,
-    Vst3ProcessOutput, Vst3ProcessOutputDiagnostics, Vst3ProcessingConfig, Vst3UnitMetadata,
+    VST3_MIDI_CONTROLLER_AFTERTOUCH, VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3BusDirection,
+    Vst3ControllerComponentStateSync, Vst3HostMessage, Vst3InputEvent, Vst3LifecycleState,
+    Vst3LoadedComponent, Vst3ParameterChange, Vst3ParameterInfo, Vst3ProcessOutput,
+    Vst3ProcessOutputDiagnostics, Vst3ProcessingConfig, Vst3TailSamples, Vst3UnitMetadata,
     create_vst3_component_instance,
 };
 
 use super::{
     InstanceCreateParams,
+    ipc_backend_audio_bus::WorkerAudioBusDiagnostics,
     ipc_backend_error::WorkerBackendError,
     ipc_capabilities::WorkerRuntimeCapabilities,
     ipc_connection::{DecodedMessageAttribute, DecodedMessageAttributeValue},
 };
 
 pub(super) enum WorkerBackend {
-    Passthrough(PassthroughBackend),
     Vst3Runtime(Box<Vst3RuntimeBackend>),
-}
-
-pub(super) struct PassthroughBackend {
-    plugin: HeadlessPluginInstance,
-    reason: PassthroughFallbackReason,
+    #[cfg(test)]
+    TestAudioRuntime(TestAudioRuntimeBackend),
 }
 
 pub(super) struct Vst3RuntimeBackend {
     component: Vst3LoadedComponent,
     midi_mapping: Vst3MidiMappingCache,
+    capabilities: WorkerRuntimeCapabilities,
+    audio_buses: WorkerAudioBusDiagnostics,
+}
+
+#[cfg(test)]
+pub(super) struct TestAudioRuntimeBackend {
+    input_channels: usize,
+    output_channels: usize,
     capabilities: WorkerRuntimeCapabilities,
 }
 
@@ -43,7 +47,6 @@ const MIDI_MAPPING_SLOT_COUNT: usize = MIDI_MAPPING_CHANNELS * MIDI_MAPPING_CONT
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum WorkerBackendKind {
-    Passthrough,
     Vst3Runtime,
 }
 
@@ -51,50 +54,40 @@ pub(super) enum WorkerBackendKind {
 #[serde(rename_all = "camelCase")]
 pub(super) struct WorkerBackendDiagnostics {
     #[serde(skip_serializing_if = "Option::is_none")]
-    passthrough_reason: Option<PassthroughFallbackReason>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     component_handler: Option<wvst_vst3_host::Vst3ComponentHandlerSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    controller_component_state_sync: Option<Vst3ControllerComponentStateSync>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    connection_points: Option<WorkerConnectionPointDiagnostics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     process_context_requirements: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audio_buses: Option<WorkerAudioBusDiagnostics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     process_output: Option<Vst3ProcessOutputDiagnostics>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PassthroughFallbackReason {
-    kind: PassthroughFallbackKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum PassthroughFallbackKind {
-    MissingClassId,
-    NonBundlePath,
-    InvalidClassId,
+#[serde(rename_all = "camelCase")]
+pub(super) struct WorkerConnectionPointDiagnostics {
+    connected: bool,
 }
 
 impl WorkerBackend {
     pub(super) fn from_create_params(
         params: &InstanceCreateParams,
-        descriptor: &PluginDescriptor,
     ) -> Result<Self, WorkerBackendError> {
         let Some(class_id) = params.class_id.as_deref() else {
-            return Self::passthrough(
-                descriptor,
-                params,
-                PassthroughFallbackReason::missing_class_id(),
-            );
+            return Err(WorkerBackendError::plain(
+                "classId is required for VST3 runtime instance create",
+            ));
         };
 
         if !std::path::Path::new(&params.plugin_path).is_dir() {
-            return Self::passthrough(
-                descriptor,
-                params,
-                PassthroughFallbackReason::non_bundle_path(&params.plugin_path),
-            );
+            return Err(WorkerBackendError::plain(format!(
+                "pluginPath must point to a VST3 bundle directory: {}",
+                params.plugin_path
+            )));
         }
 
         let config = processing_config(params).map_err(WorkerBackendError::plain)?;
@@ -117,6 +110,13 @@ impl WorkerBackend {
                     .map_err(|error| {
                         WorkerBackendError::vst3_init("component.setup-processing", error)
                     })?;
+                let audio_buses = component
+                    .instance_mut()
+                    .selected_audio_buses()
+                    .map(WorkerAudioBusDiagnostics::from)
+                    .map_err(|error| {
+                        WorkerBackendError::vst3_init("component.audio-buses", error)
+                    })?;
                 component
                     .instance_mut()
                     .activate()
@@ -125,22 +125,28 @@ impl WorkerBackend {
                     component,
                     midi_mapping,
                     capabilities,
+                    audio_buses,
                 })))
             }
-            Err(HostError::InvalidClassId(class_id)) => Self::passthrough(
-                descriptor,
-                params,
-                PassthroughFallbackReason::invalid_class_id(class_id),
-            ),
             Err(error) => Err(WorkerBackendError::vst3_init("component.create", error)),
         }
     }
 
     pub(super) fn kind(&self) -> WorkerBackendKind {
         match self {
-            Self::Passthrough(_) => WorkerBackendKind::Passthrough,
             Self::Vst3Runtime(_) => WorkerBackendKind::Vst3Runtime,
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => WorkerBackendKind::Vst3Runtime,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_audio_runtime(input_channels: usize, output_channels: usize) -> Self {
+        Self::TestAudioRuntime(TestAudioRuntimeBackend {
+            input_channels,
+            output_channels,
+            capabilities: test_audio_runtime_capabilities(),
+        })
     }
 
     pub(super) fn supports_binary_audio_process(&self) -> bool {
@@ -149,22 +155,33 @@ impl WorkerBackend {
 
     pub(super) fn capabilities(&self) -> WorkerRuntimeCapabilities {
         match self {
-            Self::Passthrough(_) => WorkerRuntimeCapabilities::passthrough(),
-            Self::Vst3Runtime(runtime) => runtime.capabilities,
+            Self::Vst3Runtime(runtime) => runtime.capabilities.clone(),
+            #[cfg(test)]
+            Self::TestAudioRuntime(runtime) => runtime.capabilities.clone(),
         }
     }
 
     pub(super) fn latency_samples(&self) -> u32 {
         match self {
-            Self::Passthrough(_) => 0,
             Self::Vst3Runtime(runtime) => runtime.component.instance().latency_samples(),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => 0,
         }
     }
 
     pub(super) fn tail_samples(&self) -> u32 {
         match self {
-            Self::Passthrough(_) => 0,
             Self::Vst3Runtime(runtime) => runtime.component.instance().tail_samples(),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => 0,
+        }
+    }
+
+    pub(super) fn tail_info(&self) -> Vst3TailSamples {
+        match self {
+            Self::Vst3Runtime(runtime) => runtime.component.instance().tail_info(),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Vst3TailSamples::from_raw(0),
         }
     }
 
@@ -173,19 +190,29 @@ impl WorkerBackend {
         process_output: Option<&Vst3ProcessOutput>,
     ) -> WorkerBackendDiagnostics {
         match self {
-            Self::Passthrough(_) => WorkerBackendDiagnostics {
-                passthrough_reason: self.passthrough_reason(),
-                component_handler: None,
-                process_context_requirements: None,
-                process_output: None,
-            },
             Self::Vst3Runtime(runtime) => WorkerBackendDiagnostics {
-                passthrough_reason: None,
                 component_handler: runtime.component.component_handler_snapshot(),
+                controller_component_state_sync: runtime
+                    .component
+                    .controller_component_state_sync()
+                    .cloned(),
+                connection_points: Some(WorkerConnectionPointDiagnostics {
+                    connected: runtime.component.connection_points_connected(),
+                }),
                 process_context_requirements: runtime
                     .component
                     .instance()
                     .process_context_requirements(),
+                audio_buses: Some(runtime.audio_buses.clone()),
+                process_output: process_output.map(|output| output.diagnostics),
+            },
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => WorkerBackendDiagnostics {
+                component_handler: None,
+                controller_component_state_sync: None,
+                connection_points: None,
+                process_context_requirements: None,
+                audio_buses: None,
                 process_output: process_output.map(|output| output.diagnostics),
             },
         }
@@ -193,29 +220,30 @@ impl WorkerBackend {
 
     pub(super) fn controller_class_id(&self) -> Option<String> {
         match self {
-            Self::Passthrough(_) => None,
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .instance()
                 .controller_class_id()
                 .ok()
                 .flatten(),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => None,
         }
     }
 
     pub(super) fn parameters(&self) -> Result<Vec<Vst3ParameterInfo>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(Vec::new()),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .parameters()
                 .map_err(|error| WorkerBackendError::vst3_control("controller.parameters", error)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(Vec::new()),
         }
     }
 
     pub(super) fn unit_metadata(&self) -> Result<Option<Vst3UnitMetadata>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
@@ -227,16 +255,19 @@ impl WorkerBackend {
                 .transpose()
                 .map(|value| value.flatten())
                 .map_err(|error| WorkerBackendError::vst3_control("controller.unit-info", error)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(None),
         }
     }
 
     pub(super) fn get_param_normalized(&self, id: u32) -> Option<f64> {
         match self {
-            Self::Passthrough(_) => None,
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
                 .map(|controller| controller.get_param_normalized(id)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => None,
         }
     }
 
@@ -246,7 +277,6 @@ impl WorkerBackend {
         value_normalized: f64,
     ) -> Result<Option<String>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
@@ -261,6 +291,10 @@ impl WorkerBackend {
                             )
                         })
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("edit controller not available"))
+            }
         }
     }
 
@@ -270,7 +304,6 @@ impl WorkerBackend {
         value: &str,
     ) -> Result<f64, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
@@ -285,26 +318,32 @@ impl WorkerBackend {
                             )
                         })
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("edit controller not available"))
+            }
         }
     }
 
     pub(super) fn normalized_param_to_plain(&self, id: u32, value_normalized: f64) -> Option<f64> {
         match self {
-            Self::Passthrough(_) => None,
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
                 .map(|controller| controller.normalized_param_to_plain(id, value_normalized)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => None,
         }
     }
 
     pub(super) fn plain_param_to_normalized(&self, id: u32, plain_value: f64) -> Option<f64> {
         match self {
-            Self::Passthrough(_) => None,
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
                 .map(|controller| controller.plain_param_to_normalized(id, plain_value)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => None,
         }
     }
 
@@ -314,7 +353,6 @@ impl WorkerBackend {
         value: f64,
     ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
@@ -324,12 +362,15 @@ impl WorkerBackend {
                         WorkerBackendError::vst3_control("controller.set-param-normalized", error)
                     })
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("edit controller not available"))
+            }
         }
     }
 
     pub(super) fn begin_param_edit(&mut self, id: u32) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller_mut()
@@ -339,6 +380,10 @@ impl WorkerBackend {
                         WorkerBackendError::vst3_control("controller.begin-edit", error)
                     })
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("edit controller not available"))
+            }
         }
     }
 
@@ -348,7 +393,6 @@ impl WorkerBackend {
         value: f64,
     ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller_mut()
@@ -358,12 +402,15 @@ impl WorkerBackend {
                         WorkerBackendError::vst3_control("controller.perform-edit", error)
                     })
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("edit controller not available"))
+            }
         }
     }
 
     pub(super) fn end_param_edit(&mut self, id: u32) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller_mut()
@@ -373,33 +420,38 @@ impl WorkerBackend {
                         WorkerBackendError::vst3_control("controller.end-edit", error)
                     })
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("edit controller not available"))
+            }
         }
     }
 
     pub(super) fn controller_state(&self) -> Result<Option<Vec<u8>>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller_state()
                 .map_err(|error| WorkerBackendError::vst3_control("controller.get-state", error)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(None),
         }
     }
 
     pub(super) fn component_state(&self) -> Result<Option<Vec<u8>>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .component_state()
                 .map(Some)
                 .map_err(|error| WorkerBackendError::vst3_control("component.get-state", error)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(None),
         }
     }
 
     pub(super) fn set_controller_state(&self, state: &[u8]) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("edit controller not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()
@@ -409,16 +461,23 @@ impl WorkerBackend {
                         WorkerBackendError::vst3_control("controller.set-state", error)
                     })
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("edit controller not available"))
+            }
         }
     }
 
     pub(super) fn set_component_state(&mut self, state: &[u8]) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("component state not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .set_component_state(state)
                 .map_err(|error| WorkerBackendError::vst3_control("component.set-state", error)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("component state not available"))
+            }
         }
     }
 
@@ -428,13 +487,14 @@ impl WorkerBackend {
         attributes: &[DecodedMessageAttribute],
     ) -> Result<Option<()>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => notify_connection_point(
                 &mut runtime.component,
                 ConnectionNotifyTarget::Component,
                 message_id,
                 attributes,
             ),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(None),
         }
     }
 
@@ -444,24 +504,26 @@ impl WorkerBackend {
         attributes: &[DecodedMessageAttribute],
     ) -> Result<Option<()>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => notify_connection_point(
                 &mut runtime.component,
                 ConnectionNotifyTarget::Controller,
                 message_id,
                 attributes,
             ),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(None),
         }
     }
 
     pub(super) fn select_unit(&self, unit_id: i32) -> Result<i32, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("unit info not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .select_unit(unit_id)
                 .map_err(|error| WorkerBackendError::vst3_control("controller.select-unit", error))?
                 .ok_or_else(|| WorkerBackendError::plain("unit info not available")),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Err(WorkerBackendError::plain("unit info not available")),
         }
     }
 
@@ -472,11 +534,12 @@ impl WorkerBackend {
         channel: i32,
     ) -> Result<Option<i32>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(None),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .unit_by_audio_bus(direction, bus_index, channel)
                 .map_err(|error| WorkerBackendError::vst3_control("controller.unit-by-bus", error)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(None),
         }
     }
 
@@ -487,7 +550,6 @@ impl WorkerBackend {
         data: &[u8],
     ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("unit info not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .set_unit_program_data(list_or_unit_id, program_index, data)
@@ -495,12 +557,13 @@ impl WorkerBackend {
                     WorkerBackendError::vst3_control("controller.set-unit-program-data", error)
                 })?
                 .ok_or_else(|| WorkerBackendError::plain("unit info not available")),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Err(WorkerBackendError::plain("unit info not available")),
         }
     }
 
     pub(super) fn program_data_supported(&self, list_id: i32) -> Result<bool, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(false),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .program_data_supported(list_id)
@@ -508,6 +571,8 @@ impl WorkerBackend {
                 .map_err(|error| {
                     WorkerBackendError::vst3_control("component.program-data-supported", error)
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(false),
         }
     }
 
@@ -517,9 +582,6 @@ impl WorkerBackend {
         program_index: i32,
     ) -> Result<Vec<u8>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => {
-                Err(WorkerBackendError::plain("program list data not available"))
-            }
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .get_program_data(list_id, program_index)
@@ -527,6 +589,10 @@ impl WorkerBackend {
                     WorkerBackendError::vst3_control("component.get-program-data", error)
                 })?
                 .ok_or_else(|| WorkerBackendError::plain("program list data not available")),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("program list data not available"))
+            }
         }
     }
 
@@ -537,9 +603,6 @@ impl WorkerBackend {
         data: &[u8],
     ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => {
-                Err(WorkerBackendError::plain("program list data not available"))
-            }
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .set_program_data(list_id, program_index, data)
@@ -547,12 +610,15 @@ impl WorkerBackend {
                     WorkerBackendError::vst3_control("component.set-program-data", error)
                 })?
                 .ok_or_else(|| WorkerBackendError::plain("program list data not available")),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => {
+                Err(WorkerBackendError::plain("program list data not available"))
+            }
         }
     }
 
     pub(super) fn unit_data_supported(&self, unit_id: i32) -> Result<bool, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(false),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .unit_data_supported(unit_id)
@@ -560,12 +626,13 @@ impl WorkerBackend {
                 .map_err(|error| {
                     WorkerBackendError::vst3_control("component.unit-data-supported", error)
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(false),
         }
     }
 
     pub(super) fn get_unit_data(&self, unit_id: i32) -> Result<Vec<u8>, WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("unit data not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .get_unit_data(unit_id)
@@ -573,6 +640,8 @@ impl WorkerBackend {
                     WorkerBackendError::vst3_control("component.get-unit-data", error)
                 })?
                 .ok_or_else(|| WorkerBackendError::plain("unit data not available")),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Err(WorkerBackendError::plain("unit data not available")),
         }
     }
 
@@ -582,7 +651,6 @@ impl WorkerBackend {
         data: &[u8],
     ) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Err(WorkerBackendError::plain("unit data not available")),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .set_unit_data(unit_id, data)
@@ -590,12 +658,13 @@ impl WorkerBackend {
                     WorkerBackendError::vst3_control("component.set-unit-data", error)
                 })?
                 .ok_or_else(|| WorkerBackendError::plain("unit data not available")),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Err(WorkerBackendError::plain("unit data not available")),
         }
     }
 
     pub(super) fn start_processing(&mut self) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(()),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .instance_mut()
@@ -603,12 +672,13 @@ impl WorkerBackend {
                 .map_err(|error| {
                     WorkerBackendError::vst3_control("component.start-processing", error)
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(()),
         }
     }
 
     pub(super) fn stop_processing(&mut self) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(()),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .instance_mut()
@@ -616,6 +686,8 @@ impl WorkerBackend {
                 .map_err(|error| {
                     WorkerBackendError::vst3_control("component.stop-processing", error)
                 }),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(()),
         }
     }
 
@@ -630,11 +702,6 @@ impl WorkerBackend {
     ) -> Result<(), WorkerBackendError> {
         process_output.clear();
         match self {
-            Self::Passthrough(passthrough) => passthrough
-                .plugin
-                .process_interleaved_f32(frames, input, output)
-                .map(|_| ())
-                .map_err(WorkerBackendError::plain),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .instance_mut()
@@ -647,19 +714,23 @@ impl WorkerBackend {
                     process_output,
                 )
                 .map_err(|error| WorkerBackendError::vst3_process("component.process", error)),
+            #[cfg(test)]
+            Self::TestAudioRuntime(runtime) => {
+                process_test_audio_runtime(runtime, frames, input, output)
+            }
         }
     }
 
     pub(super) fn midi_controller_param_id(&self, channel: u8, controller: i16) -> Option<u32> {
         match self {
-            Self::Passthrough(_) => None,
             Self::Vst3Runtime(runtime) => runtime.midi_mapping.get(channel, controller),
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => None,
         }
     }
 
     pub(super) fn terminate(&mut self, processing: bool) -> Result<(), WorkerBackendError> {
         match self {
-            Self::Passthrough(_) => Ok(()),
             Self::Vst3Runtime(runtime) => {
                 if processing {
                     runtime
@@ -684,25 +755,70 @@ impl WorkerBackend {
                 })?;
                 Ok(())
             }
+            #[cfg(test)]
+            Self::TestAudioRuntime(_) => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+fn test_audio_runtime_capabilities() -> WorkerRuntimeCapabilities {
+    WorkerRuntimeCapabilities {
+        schema_version: 2,
+        binary_audio_process: true,
+        component_state: false,
+        controller: false,
+        controller_state: false,
+        parameters: false,
+        parameter_automation: true,
+        units: false,
+        unit_program_data: false,
+        program_list_data: false,
+        unit_data: false,
+        midi_mapping: false,
+        output_events: true,
+        output_parameter_changes: true,
+        component_handler_events: false,
+        connection_points: false,
+        process_context: false,
+        unavailable: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+fn process_test_audio_runtime(
+    runtime: &TestAudioRuntimeBackend,
+    frames: usize,
+    input: &[f32],
+    output: &mut [f32],
+) -> Result<(), WorkerBackendError> {
+    let expected_input = frames.saturating_mul(runtime.input_channels);
+    let expected_output = frames.saturating_mul(runtime.output_channels);
+    if input.len() != expected_input {
+        return Err(WorkerBackendError::plain(format!(
+            "invalid test audio input buffer length: expected {expected_input}, got {}",
+            input.len()
+        )));
+    }
+    if output.len() != expected_output {
+        return Err(WorkerBackendError::plain(format!(
+            "invalid test audio output buffer length: expected {expected_output}, got {}",
+            output.len()
+        )));
+    }
+
+    for frame in 0..frames {
+        for channel in 0..runtime.output_channels {
+            let output_index = frame * runtime.output_channels + channel;
+            output[output_index] = if channel < runtime.input_channels {
+                input[frame * runtime.input_channels + channel]
+            } else {
+                0.0
+            };
         }
     }
 
-    fn passthrough(
-        descriptor: &PluginDescriptor,
-        params: &InstanceCreateParams,
-        reason: PassthroughFallbackReason,
-    ) -> Result<Self, WorkerBackendError> {
-        HeadlessPluginInstance::new(descriptor, params.input_channels, params.output_channels)
-            .map(|plugin| Self::Passthrough(PassthroughBackend { plugin, reason }))
-            .map_err(WorkerBackendError::plain)
-    }
-
-    fn passthrough_reason(&self) -> Option<PassthroughFallbackReason> {
-        match self {
-            Self::Passthrough(passthrough) => Some(passthrough.reason.clone()),
-            Self::Vst3Runtime(_) => None,
-        }
-    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -748,29 +864,6 @@ fn notify_connection_point(
             component.notify_controller(&mut message).map_err(|error| {
                 WorkerBackendError::vst3_control("connection-point.notify-controller", error)
             })
-        }
-    }
-}
-
-impl PassthroughFallbackReason {
-    fn missing_class_id() -> Self {
-        Self {
-            kind: PassthroughFallbackKind::MissingClassId,
-            message: Some("classId was not provided".to_string()),
-        }
-    }
-
-    fn non_bundle_path(path: &str) -> Self {
-        Self {
-            kind: PassthroughFallbackKind::NonBundlePath,
-            message: Some(format!("pluginPath is not a directory bundle: {path}")),
-        }
-    }
-
-    fn invalid_class_id(class_id: String) -> Self {
-        Self {
-            kind: PassthroughFallbackKind::InvalidClassId,
-            message: Some(format!("classId is not a valid VST3 FUID: {class_id}")),
         }
     }
 }

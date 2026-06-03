@@ -1,5 +1,6 @@
 use wvst_vst3_host::{
-    Vst3InputEvent, Vst3NoteEvent, Vst3OutputEvent, Vst3ParameterChange, Vst3PolyPressureEvent,
+    Vst3AdvancedOutputEvent, Vst3InputEvent, Vst3LegacyMidiCcOutEvent, Vst3NoteEvent,
+    Vst3OutputEvent, Vst3ParameterChange, Vst3PolyPressureEvent,
 };
 
 pub(super) fn sort_input_events_by_sample_offset(events: &mut [Vst3InputEvent]) {
@@ -8,6 +9,10 @@ pub(super) fn sort_input_events_by_sample_offset(events: &mut [Vst3InputEvent]) 
 
 pub(super) fn sort_output_events_by_sample_offset(events: &mut [Vst3OutputEvent]) {
     events.sort_by_key(|event| output_event_sample_offset(*event));
+}
+
+pub(super) fn sort_advanced_output_events_by_sample_offset(events: &mut [Vst3AdvancedOutputEvent]) {
+    events.sort_by_key(|event| event.sample_offset);
 }
 
 pub(super) fn sort_parameter_changes_by_sample_offset(changes: &mut [Vst3ParameterChange]) {
@@ -27,6 +32,7 @@ fn output_event_sample_offset(event: Vst3OutputEvent) -> u16 {
             note_sample_offset(event)
         }
         Vst3OutputEvent::PolyPressure(event) => poly_pressure_sample_offset(event),
+        Vst3OutputEvent::LegacyMidiCcOut(event) => legacy_midi_cc_out_sample_offset(event),
     }
 }
 
@@ -35,6 +41,10 @@ const fn note_sample_offset(event: Vst3NoteEvent) -> u16 {
 }
 
 const fn poly_pressure_sample_offset(event: Vst3PolyPressureEvent) -> u16 {
+    event.sample_offset
+}
+
+const fn legacy_midi_cc_out_sample_offset(event: Vst3LegacyMidiCcOutEvent) -> u16 {
     event.sample_offset
 }
 
@@ -58,6 +68,26 @@ mod tests {
                 Vst3InputEvent::NoteOff(note(4, 60)),
                 Vst3InputEvent::NoteOn(note(4, 61)),
                 Vst3InputEvent::NoteOn(note(12, 60)),
+            ]
+        );
+    }
+
+    #[test]
+    fn sorts_output_events_with_legacy_midi_by_sample_offset() {
+        let mut events = vec![
+            Vst3OutputEvent::LegacyMidiCcOut(legacy_midi_cc_out(12, 7)),
+            Vst3OutputEvent::NoteOn(note(4, 60)),
+            Vst3OutputEvent::LegacyMidiCcOut(legacy_midi_cc_out(4, 74)),
+        ];
+
+        sort_output_events_by_sample_offset(&mut events);
+
+        assert_eq!(
+            events,
+            vec![
+                Vst3OutputEvent::NoteOn(note(4, 60)),
+                Vst3OutputEvent::LegacyMidiCcOut(legacy_midi_cc_out(4, 74)),
+                Vst3OutputEvent::LegacyMidiCcOut(legacy_midi_cc_out(12, 7)),
             ]
         );
     }
@@ -89,6 +119,19 @@ mod tests {
             pitch,
             velocity: 1.0,
             note_id: -1,
+        }
+    }
+
+    const fn legacy_midi_cc_out(
+        sample_offset: u16,
+        control_number: u8,
+    ) -> Vst3LegacyMidiCcOutEvent {
+        Vst3LegacyMidiCcOutEvent {
+            sample_offset,
+            control_number,
+            channel: 0,
+            value: 64,
+            value2: 0,
         }
     }
 

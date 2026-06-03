@@ -399,6 +399,7 @@ fn encodes_output_audio_midi_and_parameter_events() {
         2,
         &output,
         &mut events,
+        &mut [],
         &mut parameter_changes,
         &mut frame,
     )
@@ -449,12 +450,7 @@ fn encodes_output_audio_midi_and_parameter_events() {
 }
 
 fn create_instance(state: &mut WorkerIpcState, input_channels: usize, output_channels: usize) {
-    let request = format!(
-        r#"{{"id":1,"method":"instance.create","params":{{"instanceId":7,"streamId":9,"pluginId":"vst3:test","pluginPath":"/tmp/Test.vst3","classId":"class-a","className":"Test","sampleRate":48000,"maxBlockFrames":128,"inputChannels":{input_channels},"outputChannels":{output_channels}}}}}"#,
-    );
-    let response = super::super::handle_ipc_line(&request, state);
-
-    assert!(response.contains(r#""result""#), "{response}");
+    super::super::insert_test_audio_instance(state, input_channels, output_channels);
 }
 
 fn start_processing(state: &mut WorkerIpcState) {

@@ -15,11 +15,9 @@ struct InstanceStateParams {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct InstanceSetStateParams {
     instance_id: u64,
-    #[serde(default)]
-    state_base64: Option<String>,
     #[serde(default)]
     component_state_base64: Option<String>,
     #[serde(default)]
@@ -62,8 +60,7 @@ pub(super) fn handle_instance_get_state(
         json!({
             "instanceId": params.instance_id,
             "componentStateBase64": component_state.map(|state| BASE64.encode(state)),
-            "controllerStateBase64": controller_state.as_ref().map(|state| BASE64.encode(state)),
-            "stateBase64": controller_state.map(|state| BASE64.encode(state)),
+            "controllerStateBase64": controller_state.map(|state| BASE64.encode(state)),
         }),
     )
 }
@@ -88,10 +85,7 @@ pub(super) fn handle_instance_set_state(
     };
     let controller_state = match decode_optional_base64(
         "controllerStateBase64",
-        params
-            .controller_state_base64
-            .as_deref()
-            .or(params.state_base64.as_deref()),
+        params.controller_state_base64.as_deref(),
     ) {
         Ok(bytes) => bytes,
         Err(error) => return response_error(id, 4220, error),
@@ -100,7 +94,7 @@ pub(super) fn handle_instance_set_state(
         return response_error(
             id,
             -32602,
-            "set state requires componentStateBase64, controllerStateBase64, or stateBase64",
+            "set state requires componentStateBase64 or controllerStateBase64",
         );
     }
 
@@ -129,7 +123,6 @@ pub(super) fn handle_instance_set_state(
             "instanceId": params.instance_id,
             "componentStateBytes": component_state.as_ref().map(Vec::len),
             "controllerStateBytes": controller_state.as_ref().map(Vec::len),
-            "stateBytes": controller_state.as_ref().map(Vec::len),
         }),
     )
 }
@@ -141,4 +134,32 @@ fn decode_optional_base64(
     value
         .map(|value| decode_control_base64(label, value))
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    #[test]
+    fn rejects_removed_state_base64_alias() {
+        let response = handle_instance_set_state(
+            json!(1),
+            json!({
+                "instanceId": 1,
+                "stateBase64": "AQID",
+            }),
+            &mut WorkerIpcState::default(),
+        );
+        let value: Value = serde_json::from_str(&response).expect("json response");
+
+        assert_eq!(value["error"]["code"], -32602);
+        assert!(
+            value["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("unknown field `stateBase64`")
+        );
+    }
 }

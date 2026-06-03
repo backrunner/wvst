@@ -53,7 +53,14 @@ fn runtime_probe_report(args: &[String]) -> Result<Value, RuntimeProbeFailure> {
     vst3_init("controller.initialize", loaded.initialize_controller())?;
     let parameters = vst3_init("controller.parameters", loaded.parameters())?;
     let parameter_count = parameters.len();
-    let controller_summary = runtime_probe_controller_summary(&loaded, &parameters);
+    let controller_summary = runtime_probe_controller_summary(
+        &mut loaded,
+        &parameters,
+        options.controller_edit_probe,
+        options.controller_edit_probe_parameter_id,
+        options.connection_notify_probe,
+        options.state_roundtrip_probe,
+    );
     let input_buses = vst3_init(
         "component.audio-buses.input",
         loaded.instance_mut().audio_buses(Vst3BusDirection::Input),
@@ -61,6 +68,10 @@ fn runtime_probe_report(args: &[String]) -> Result<Value, RuntimeProbeFailure> {
     let output_buses = vst3_init(
         "component.audio-buses.output",
         loaded.instance_mut().audio_buses(Vst3BusDirection::Output),
+    )?;
+    let selected_audio_buses = vst3_init(
+        "component.audio-buses.selected",
+        loaded.instance_mut().selected_audio_buses(),
     )?;
     vst3_init(
         "component.setup-processing",
@@ -75,6 +86,7 @@ fn runtime_probe_report(args: &[String]) -> Result<Value, RuntimeProbeFailure> {
     let process_result = run_process_blocks(&mut loaded, &options);
     let latency_samples = loaded.instance().latency_samples();
     let tail_samples = loaded.instance().tail_samples();
+    let tail_info = loaded.instance().tail_info();
     let process_context_requirements = loaded.instance().process_context_requirements();
     let cleanup_result = stop_and_terminate(&mut loaded);
     let process_summary = match process_result {
@@ -97,6 +109,10 @@ fn runtime_probe_report(args: &[String]) -> Result<Value, RuntimeProbeFailure> {
         "frames": options.frames,
         "blocks": options.blocks,
         "probeInputs": {
+            "controllerEditProbe": options.controller_edit_probe,
+            "controllerEditProbeParameterId": options.controller_edit_probe_parameter_id,
+            "connectionNotifyProbe": options.connection_notify_probe,
+            "stateRoundtripProbe": options.state_roundtrip_probe,
             "note": options.note.map(note_json),
             "parameterChanges": options.parameter_changes.iter().map(parameter_change_json).collect::<Vec<_>>()
         },
@@ -109,8 +125,10 @@ fn runtime_probe_report(args: &[String]) -> Result<Value, RuntimeProbeFailure> {
             "inputs": input_buses.iter().map(audio_bus_json).collect::<Vec<_>>(),
             "outputs": output_buses.iter().map(audio_bus_json).collect::<Vec<_>>()
         },
+        "selectedAudioBuses": selected_audio_buses_json(&selected_audio_buses),
         "latencySamples": latency_samples,
         "tailSamples": tail_samples,
+        "tailInfo": tail_info,
         "processContextRequirements": process_context_requirements,
         "process": process_summary,
         "terminated": true
@@ -182,7 +200,7 @@ fn run_process_blocks(
             options.output_channels,
             &output,
         );
-        summary.observe_process_output(&process_output);
+        summary.observe_process_output(block_index, options.frames, &process_output);
     }
     summary.finish(process_micros);
 
@@ -217,6 +235,26 @@ fn audio_bus_json(bus: &Vst3AudioBusInfo) -> Value {
         "defaultActive": bus.default_active,
         "controlVoltage": bus.control_voltage,
         "name": bus.name,
+    })
+}
+
+fn selected_audio_buses_json(buses: &wvst_vst3_host::Vst3SelectedAudioBuses) -> Value {
+    json!({
+        "input": buses.input.as_ref().map(selected_audio_bus_json),
+        "output": selected_audio_bus_json(&buses.output),
+    })
+}
+
+fn selected_audio_bus_json(bus: &wvst_vst3_host::Vst3SelectedAudioBus) -> Value {
+    json!({
+        "direction": match bus.direction {
+            Vst3BusDirection::Input => "input",
+            Vst3BusDirection::Output => "output",
+        },
+        "requestedChannels": bus.requested_channels,
+        "selectedIndex": bus.selected_index,
+        "selected": bus.selected.as_ref().map(audio_bus_json),
+        "available": bus.available.iter().map(audio_bus_json).collect::<Vec<_>>(),
     })
 }
 

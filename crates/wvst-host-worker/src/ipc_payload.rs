@@ -65,8 +65,9 @@ mod tests {
     fn rejects_oversized_encoded_payload_before_decoding() {
         let value = "A".repeat(max_base64_len(1) + 1);
 
-        let error = decode_base64_limited("stateBase64", &value, 1).expect_err("too large");
+        let error =
+            decode_base64_limited("controllerStateBase64", &value, 1).expect_err("too large");
 
-        assert!(error.contains("stateBase64 exceeds decoded byte limit"));
+        assert!(error.contains("controllerStateBase64 exceeds decoded byte limit"));
     }
 }

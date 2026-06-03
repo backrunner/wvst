@@ -15,6 +15,10 @@ pub(super) struct RuntimeProbeOptions {
     pub(super) output_channels: u16,
     pub(super) frames: u16,
     pub(super) blocks: u32,
+    pub(super) controller_edit_probe: bool,
+    pub(super) controller_edit_probe_parameter_id: Option<u32>,
+    pub(super) connection_notify_probe: bool,
+    pub(super) state_roundtrip_probe: bool,
     pub(super) note: Option<ProbeNote>,
     pub(super) parameter_changes: Vec<ProbeParameterChange>,
 }
@@ -51,6 +55,10 @@ impl RuntimeProbeOptions {
             output_channels: 2,
             frames: 128,
             blocks: DEFAULT_PROBE_BLOCKS,
+            controller_edit_probe: true,
+            controller_edit_probe_parameter_id: None,
+            connection_notify_probe: true,
+            state_roundtrip_probe: true,
             note: None,
             parameter_changes: Vec::new(),
         };
@@ -79,6 +87,26 @@ impl RuntimeProbeOptions {
                 }
                 "--blocks" => {
                     options.blocks = parse_option(args, index, "--blocks")?;
+                    index += 2;
+                }
+                "--skip-controller-edit-probe" => {
+                    options.controller_edit_probe = false;
+                    index += 1;
+                }
+                "--skip-connection-notify-probe" => {
+                    options.connection_notify_probe = false;
+                    index += 1;
+                }
+                "--skip-state-roundtrip-probe" => {
+                    options.state_roundtrip_probe = false;
+                    index += 1;
+                }
+                "--controller-edit-probe-parameter" => {
+                    options.controller_edit_probe_parameter_id = Some(parse_option(
+                        args,
+                        index,
+                        "--controller-edit-probe-parameter",
+                    )?);
                     index += 2;
                 }
                 "--note" => {
@@ -297,6 +325,10 @@ mod tests {
         assert_eq!(options.output_channels, 2);
         assert_eq!(options.frames, 128);
         assert_eq!(options.blocks, 1);
+        assert!(options.controller_edit_probe);
+        assert_eq!(options.controller_edit_probe_parameter_id, None);
+        assert!(options.connection_notify_probe);
+        assert!(options.state_roundtrip_probe);
         assert_eq!(options.note, None);
         assert!(options.parameter_changes.is_empty());
     }
@@ -318,6 +350,11 @@ mod tests {
             "256".to_string(),
             "--blocks".to_string(),
             "4".to_string(),
+            "--skip-controller-edit-probe".to_string(),
+            "--skip-connection-notify-probe".to_string(),
+            "--skip-state-roundtrip-probe".to_string(),
+            "--controller-edit-probe-parameter".to_string(),
+            "99".to_string(),
             "--note".to_string(),
             "64:0.5:2".to_string(),
             "--parameter-change".to_string(),
@@ -331,6 +368,10 @@ mod tests {
         assert_eq!(options.output_channels, 2);
         assert_eq!(options.frames, 256);
         assert_eq!(options.blocks, 4);
+        assert!(!options.controller_edit_probe);
+        assert_eq!(options.controller_edit_probe_parameter_id, Some(99));
+        assert!(!options.connection_notify_probe);
+        assert!(!options.state_roundtrip_probe);
         assert_eq!(
             options.note,
             Some(ProbeNote {

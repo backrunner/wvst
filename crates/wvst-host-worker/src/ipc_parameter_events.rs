@@ -31,10 +31,9 @@ pub(super) fn decode_parameter_events_into(
     destination.clear();
     for chunk in payload.chunks_exact(PARAMETER_AUTOMATION_EVENT_LEN) {
         let event = ParameterAutomationEvent::decode(chunk).map_err(|error| error.to_string())?;
-        push_parameter_change(frames, destination, event)?;
+        push_parameter_event_into(event, frames, destination)?;
     }
     sort_parameter_changes_by_sample_offset(destination);
-
     Ok(())
 }
 
@@ -74,18 +73,18 @@ pub(super) fn push_mapped_parameter_change(
     parameter_id: u32,
     value_normalized: f64,
 ) -> Result<(), String> {
-    push_parameter_change(
-        frames,
-        destination,
+    push_parameter_event_into(
         ParameterAutomationEvent::new(sample_offset, parameter_id, value_normalized)
             .map_err(|error| error.to_string())?,
+        frames,
+        destination,
     )
 }
 
-fn push_parameter_change(
+pub(super) fn push_parameter_event_into(
+    event: ParameterAutomationEvent,
     frames: usize,
     destination: &mut Vec<Vst3ParameterChange>,
-    event: ParameterAutomationEvent,
 ) -> Result<(), String> {
     if usize::from(event.sample_offset) >= frames {
         return Err(format!(

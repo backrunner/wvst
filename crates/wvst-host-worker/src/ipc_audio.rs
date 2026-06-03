@@ -13,10 +13,12 @@ use wvst_protocol::{
 
 use super::WorkerIpcState;
 use super::ipc_event_ordering::{
-    sort_output_events_by_sample_offset, sort_parameter_changes_by_sample_offset,
+    sort_advanced_output_events_by_sample_offset, sort_output_events_by_sample_offset,
+    sort_parameter_changes_by_sample_offset,
 };
 use super::ipc_midi::{decode_midi_events_into, encode_midi_events_into};
 use super::ipc_parameter_events::{decode_parameter_events_into, encode_parameter_events_into};
+use super::ipc_vst3_events::encode_vst3_output_events_into;
 
 const AUDIO_ERROR_INVALID_REQUEST: u16 = 4220;
 const AUDIO_ERROR_NOT_FOUND: u16 = 4040;
@@ -99,6 +101,11 @@ fn process_message_into(
             "audio frame length mismatch: expected {expected_len}, got {}",
             message_body.len()
         )));
+    }
+    if input_header.vst3_output_event_count != 0 {
+        return Err(AudioProcessError::invalid(
+            "VST3 output event section is only valid in worker responses",
+        ));
     }
     let audio_payload_len = input_header
         .audio_payload_len()
@@ -228,6 +235,7 @@ fn process_message_into(
         output_channels,
         output,
         &mut instance.process_output.events,
+        &mut instance.process_output.advanced_events,
         &mut instance.process_output.parameter_changes,
         output_body,
     )
@@ -238,10 +246,12 @@ fn encode_output_frame_into(
     output_channels: usize,
     output: &[f32],
     events: &mut [wvst_vst3_host::Vst3OutputEvent],
+    advanced_events: &mut [wvst_vst3_host::Vst3AdvancedOutputEvent],
     parameter_changes: &mut [wvst_vst3_host::Vst3ParameterChange],
     destination: &mut Vec<u8>,
 ) -> Result<(), AudioProcessError> {
     sort_output_events_by_sample_offset(events);
+    sort_advanced_output_events_by_sample_offset(advanced_events);
     sort_parameter_changes_by_sample_offset(parameter_changes);
 
     let output_channels = u16::try_from(output_channels)
@@ -258,12 +268,14 @@ fn encode_output_frame_into(
         input_header.flags,
     )
     .map_err(|error| AudioProcessError::invalid(error.to_string()))?
-    .with_event_counts(
+    .with_all_event_counts(
         u16::try_from(events.len())
             .map_err(|_| AudioProcessError::invalid("MIDI output event count overflows u16"))?,
         u16::try_from(parameter_changes.len()).map_err(|_| {
             AudioProcessError::invalid("parameter output event count overflows u16")
         })?,
+        u16::try_from(advanced_events.len())
+            .map_err(|_| AudioProcessError::invalid("VST3 output event count overflows u16"))?,
     )
     .map_err(|error| AudioProcessError::invalid(error.to_string()))?;
     let frame_len = AUDIO_FRAME_HEADER_LEN + header.payload_len as usize;
@@ -292,6 +304,14 @@ fn encode_output_frame_into(
             ))
         })? as usize;
     encode_parameter_events_into(parameter_changes, &mut destination[offset..parameter_end])
+        .map_err(AudioProcessError::invalid)?;
+    offset = parameter_end;
+
+    let vst3_event_end = offset
+        + header.vst3_output_event_payload_len().map_err(|error| {
+            AudioProcessError::invalid(format!("VST3 output event payload length failed: {error}"))
+        })? as usize;
+    encode_vst3_output_events_into(advanced_events, &mut destination[offset..vst3_event_end])
         .map_err(AudioProcessError::invalid)?;
 
     Ok(())
@@ -399,6 +419,14 @@ impl AudioProcessError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "ipc_audio_advanced_vst3_tests.rs"]
+mod advanced_vst3_tests;
+
+#[cfg(test)]
+#[path = "ipc_audio_legacy_midi_tests.rs"]
+mod legacy_midi_tests;
 
 #[cfg(test)]
 #[path = "ipc_audio_tests.rs"]

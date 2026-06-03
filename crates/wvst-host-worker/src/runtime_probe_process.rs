@@ -1,8 +1,13 @@
+use std::fmt::Write as _;
+
 use serde::Serialize;
 use wvst_vst3_host::{
+    VST3_OUTPUT_PAYLOAD_ENCODING_UTF8, Vst3AdvancedOutputEvent, Vst3AdvancedOutputEventKind,
     Vst3InputEvent, Vst3OutputEventStats, Vst3OutputParameterChangeStats, Vst3ProcessOutput,
     Vst3ProcessOutputDiagnostics,
 };
+
+const MAX_ADVANCED_OUTPUT_EVENT_EXAMPLES: usize = 16;
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +31,8 @@ pub(crate) struct RuntimeProbeProcessSummary {
     output_events: u64,
     output_parameter_changes: u64,
     diagnostics: Vst3ProcessOutputDiagnostics,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    advanced_output_event_examples: Vec<RuntimeProbeAdvancedOutputEventExample>,
     process_time_micros: ProbeTimingSummary,
     note_timing: RuntimeProbeNoteTimingSummary,
 }
@@ -56,6 +63,29 @@ struct ProbeTimingSummary {
     p95: u64,
     p99: u64,
     max: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeProbeAdvancedOutputEventExample {
+    block_index: u32,
+    sample_offset: u16,
+    absolute_frame: u64,
+    kind: &'static str,
+    vst3_event_type: u16,
+    bus_index: i32,
+    data1: i32,
+    data2: i32,
+    value: f64,
+    data_size: u32,
+    data_type: u32,
+    payload_size: u16,
+    payload_encoding: u8,
+    payload_flags: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload_text: Option<String>,
 }
 
 impl RuntimeProbeProcessSummary {
@@ -146,14 +176,44 @@ impl RuntimeProbeProcessSummary {
         }
     }
 
-    pub(crate) fn observe_process_output(&mut self, process_output: &Vst3ProcessOutput) {
+    pub(crate) fn observe_process_output(
+        &mut self,
+        block_index: u32,
+        block_frames: u16,
+        process_output: &Vst3ProcessOutput,
+    ) {
         self.output_events = self
             .output_events
-            .saturating_add(process_output.events.len() as u64);
+            .saturating_add(process_output.events.len() as u64)
+            .saturating_add(process_output.advanced_events.len() as u64);
         self.output_parameter_changes = self
             .output_parameter_changes
             .saturating_add(process_output.parameter_changes.len() as u64);
+        self.observe_advanced_output_event_examples(
+            block_index,
+            block_frames,
+            &process_output.advanced_events,
+        );
         merge_process_diagnostics(&mut self.diagnostics, process_output.diagnostics);
+    }
+
+    fn observe_advanced_output_event_examples(
+        &mut self,
+        block_index: u32,
+        block_frames: u16,
+        events: &[Vst3AdvancedOutputEvent],
+    ) {
+        if self.advanced_output_event_examples.len() >= MAX_ADVANCED_OUTPUT_EVENT_EXAMPLES {
+            return;
+        }
+        let available =
+            MAX_ADVANCED_OUTPUT_EVENT_EXAMPLES - self.advanced_output_event_examples.len();
+        self.advanced_output_event_examples.extend(
+            events
+                .iter()
+                .take(available)
+                .map(|event| advanced_output_event_example(block_index, block_frames, *event)),
+        );
     }
 
     pub(crate) fn finish(&mut self, process_micros: Vec<u64>) {
@@ -239,6 +299,64 @@ impl RuntimeProbeNoteTimingSummary {
     }
 }
 
+fn advanced_output_event_example(
+    block_index: u32,
+    block_frames: u16,
+    event: Vst3AdvancedOutputEvent,
+) -> RuntimeProbeAdvancedOutputEventExample {
+    RuntimeProbeAdvancedOutputEventExample {
+        block_index,
+        sample_offset: event.sample_offset,
+        absolute_frame: absolute_frame(block_index, block_frames, event.sample_offset),
+        kind: advanced_output_event_kind_name(event.kind),
+        vst3_event_type: event.vst3_event_type,
+        bus_index: event.bus_index,
+        data1: event.data1,
+        data2: event.data2,
+        value: event.value,
+        data_size: event.data_size,
+        data_type: event.data_type,
+        payload_size: event.payload_size,
+        payload_encoding: event.payload_encoding,
+        payload_flags: event.payload_flags,
+        payload_hex: advanced_payload_hex(event),
+        payload_text: advanced_payload_text(event),
+    }
+}
+
+fn advanced_payload_hex(event: Vst3AdvancedOutputEvent) -> Option<String> {
+    let bytes = event.payload_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    Some(output)
+}
+
+fn advanced_payload_text(event: Vst3AdvancedOutputEvent) -> Option<String> {
+    if event.payload_encoding != VST3_OUTPUT_PAYLOAD_ENCODING_UTF8 {
+        return None;
+    }
+    std::str::from_utf8(event.payload_bytes())
+        .ok()
+        .map(ToOwned::to_owned)
+}
+
+fn advanced_output_event_kind_name(kind: Vst3AdvancedOutputEventKind) -> &'static str {
+    match kind {
+        Vst3AdvancedOutputEventKind::Data => "data",
+        Vst3AdvancedOutputEventKind::NoteExpressionValue => "note-expression-value",
+        Vst3AdvancedOutputEventKind::NoteExpressionText => "note-expression-text",
+        Vst3AdvancedOutputEventKind::NoteExpressionIntValue => "note-expression-int-value",
+        Vst3AdvancedOutputEventKind::Chord => "chord",
+        Vst3AdvancedOutputEventKind::Scale => "scale",
+    }
+}
+
 fn first_non_zero_frame(output: &[f32], output_channels: usize) -> Option<u16> {
     if output_channels == 0 {
         return None;
@@ -286,6 +404,42 @@ fn merge_output_event_stats(target: &mut Vst3OutputEventStats, source: Vst3Outpu
     target.invalid_payload_events = target
         .invalid_payload_events
         .saturating_add(source.invalid_payload_events);
+    target.advanced_events = target
+        .advanced_events
+        .saturating_add(source.advanced_events);
+    target.advanced_data_events = target
+        .advanced_data_events
+        .saturating_add(source.advanced_data_events);
+    target.advanced_note_expression_events = target
+        .advanced_note_expression_events
+        .saturating_add(source.advanced_note_expression_events);
+    target.advanced_chord_events = target
+        .advanced_chord_events
+        .saturating_add(source.advanced_chord_events);
+    target.advanced_scale_events = target
+        .advanced_scale_events
+        .saturating_add(source.advanced_scale_events);
+    target.advanced_payload_events = target
+        .advanced_payload_events
+        .saturating_add(source.advanced_payload_events);
+    target.advanced_payload_bytes = target
+        .advanced_payload_bytes
+        .saturating_add(source.advanced_payload_bytes);
+    target.advanced_raw_payload_events = target
+        .advanced_raw_payload_events
+        .saturating_add(source.advanced_raw_payload_events);
+    target.advanced_text_payload_events = target
+        .advanced_text_payload_events
+        .saturating_add(source.advanced_text_payload_events);
+    target.advanced_truncated_payload_events = target
+        .advanced_truncated_payload_events
+        .saturating_add(source.advanced_truncated_payload_events);
+    target.advanced_unavailable_payload_events = target
+        .advanced_unavailable_payload_events
+        .saturating_add(source.advanced_unavailable_payload_events);
+    target.advanced_invalid_text_payload_events = target
+        .advanced_invalid_text_payload_events
+        .saturating_add(source.advanced_invalid_text_payload_events);
     target.unknown_type_events = target
         .unknown_type_events
         .saturating_add(source.unknown_type_events);
@@ -327,7 +481,10 @@ fn percentile(values: &[u64], percentile: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wvst_vst3_host::{Vst3InputEvent, Vst3NoteEvent};
+    use wvst_vst3_host::{
+        Vst3AdvancedOutputEvent, Vst3AdvancedOutputEventKind, Vst3InputEvent, Vst3NoteEvent,
+        Vst3OutputEventStats, Vst3ProcessOutput,
+    };
 
     #[test]
     fn summarizes_process_timings() {
@@ -370,6 +527,109 @@ mod tests {
         assert_eq!(value["firstNonZeroOutputBlock"], 1);
         assert_eq!(value["firstNonZeroOutputFrame"], 0);
         assert_eq!(value["firstNonZeroOutputAbsoluteFrame"], 2);
+    }
+
+    #[test]
+    fn merges_advanced_output_event_diagnostics() {
+        let mut target = Vst3ProcessOutputDiagnostics {
+            output_events: Vst3OutputEventStats {
+                advanced_events: 1,
+                advanced_data_events: 1,
+                advanced_payload_events: 1,
+                advanced_payload_bytes: 4,
+                advanced_raw_payload_events: 1,
+                ..Vst3OutputEventStats::default()
+            },
+            ..Vst3ProcessOutputDiagnostics::default()
+        };
+        let source = Vst3ProcessOutputDiagnostics {
+            output_events: Vst3OutputEventStats {
+                advanced_events: 4,
+                advanced_note_expression_events: 2,
+                advanced_chord_events: 1,
+                advanced_scale_events: 1,
+                advanced_payload_events: 2,
+                advanced_payload_bytes: 9,
+                advanced_text_payload_events: 2,
+                advanced_truncated_payload_events: 1,
+                advanced_unavailable_payload_events: 1,
+                advanced_invalid_text_payload_events: 1,
+                unknown_type_events: 3,
+                ..Vst3OutputEventStats::default()
+            },
+            ..Vst3ProcessOutputDiagnostics::default()
+        };
+
+        merge_process_diagnostics(&mut target, source);
+
+        assert_eq!(target.output_events.advanced_events, 5);
+        assert_eq!(target.output_events.advanced_data_events, 1);
+        assert_eq!(target.output_events.advanced_note_expression_events, 2);
+        assert_eq!(target.output_events.advanced_chord_events, 1);
+        assert_eq!(target.output_events.advanced_scale_events, 1);
+        assert_eq!(target.output_events.advanced_payload_events, 3);
+        assert_eq!(target.output_events.advanced_payload_bytes, 13);
+        assert_eq!(target.output_events.advanced_raw_payload_events, 1);
+        assert_eq!(target.output_events.advanced_text_payload_events, 2);
+        assert_eq!(target.output_events.advanced_truncated_payload_events, 1);
+        assert_eq!(target.output_events.advanced_unavailable_payload_events, 1);
+        assert_eq!(target.output_events.advanced_invalid_text_payload_events, 1);
+        assert_eq!(target.output_events.unknown_type_events, 3);
+    }
+
+    #[test]
+    fn records_bounded_advanced_output_event_examples() {
+        let mut summary = RuntimeProbeProcessSummary::new(2, 128, 0, 0, 48_000, false);
+        let process_output = Vst3ProcessOutput {
+            advanced_events: (0..17)
+                .map(|index| {
+                    let mut event = Vst3AdvancedOutputEvent {
+                        sample_offset: index,
+                        kind: Vst3AdvancedOutputEventKind::NoteExpressionIntValue,
+                        vst3_event_type: 8,
+                        bus_index: 1,
+                        data1: 10,
+                        data2: i32::from(index),
+                        value: 0.0,
+                        data_size: 0,
+                        data_type: 44,
+                        ..Vst3AdvancedOutputEvent::default()
+                    };
+                    if index == 0 {
+                        event.payload_size = 3;
+                        event.payload_encoding = VST3_OUTPUT_PAYLOAD_ENCODING_UTF8;
+                        event.payload[..3].copy_from_slice(b"abc");
+                    }
+                    event
+                })
+                .collect(),
+            ..Vst3ProcessOutput::default()
+        };
+
+        summary.observe_process_output(1, 128, &process_output);
+
+        let value = serde_json::to_value(summary).expect("summary json");
+        let examples = value["advancedOutputEventExamples"]
+            .as_array()
+            .expect("examples");
+        assert_eq!(value["outputEvents"], 17);
+        assert_eq!(examples.len(), MAX_ADVANCED_OUTPUT_EVENT_EXAMPLES);
+        assert_eq!(examples[0]["blockIndex"], 1);
+        assert_eq!(examples[0]["sampleOffset"], 0);
+        assert_eq!(examples[0]["absoluteFrame"], 128);
+        assert_eq!(examples[0]["kind"], "note-expression-int-value");
+        assert_eq!(examples[0]["data1"], 10);
+        assert_eq!(examples[0]["data2"], 0);
+        assert_eq!(examples[0]["dataType"], 44);
+        assert_eq!(examples[0]["payloadSize"], 3);
+        assert_eq!(
+            examples[0]["payloadEncoding"],
+            u64::from(VST3_OUTPUT_PAYLOAD_ENCODING_UTF8)
+        );
+        assert_eq!(examples[0]["payloadFlags"], 0);
+        assert_eq!(examples[0]["payloadHex"], "616263");
+        assert_eq!(examples[0]["payloadText"], "abc");
+        assert_eq!(examples[15]["sampleOffset"], 15);
     }
 
     #[test]
