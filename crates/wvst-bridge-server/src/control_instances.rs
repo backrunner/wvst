@@ -43,6 +43,22 @@ struct InstanceRuntimeSnapshotParams {
     after_event_sequence: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceStateSetAndRefreshParams {
+    instance_id: u64,
+    #[serde(default)]
+    state_base64: Option<String>,
+    #[serde(default)]
+    component_state_base64: Option<String>,
+    #[serde(default)]
+    controller_state_base64: Option<String>,
+    #[serde(default)]
+    include_state: bool,
+    #[serde(default = "default_include_worker_metrics")]
+    include_worker_metrics: bool,
+}
+
 const fn default_include_worker_metrics() -> bool {
     true
 }
@@ -1037,6 +1053,42 @@ pub async fn handle_instance_parameter_end_edit(
     }
 }
 
+pub async fn handle_instance_parameter_edit(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceParameterSetParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid parameter edit params: {error}"),
+            );
+        }
+    };
+    if !is_normalized_value(params.value_normalized) {
+        return response_error(id, 4220, "valueNormalized must be finite in [0, 1]");
+    }
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .parameter_edit(
+            params.instance_id,
+            params.parameter_id,
+            params.value_normalized,
+        )
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
 fn is_normalized_value(value: f64) -> bool {
     value.is_finite() && (0.0..=1.0).contains(&value)
 }
@@ -1084,6 +1136,42 @@ pub async fn handle_instance_set_state(
             params.state_base64,
             params.component_state_base64,
             params.controller_state_base64,
+        )
+        .await
+    {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_state_set_and_refresh(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceStateSetAndRefreshParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid state set-and-refresh params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .set_state_and_refresh(
+            params.instance_id,
+            params.state_base64,
+            params.component_state_base64,
+            params.controller_state_base64,
+            params.include_state,
+            params.include_worker_metrics,
         )
         .await
     {

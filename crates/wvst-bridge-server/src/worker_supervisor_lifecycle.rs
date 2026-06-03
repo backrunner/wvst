@@ -60,32 +60,14 @@ impl WorkerSupervisor {
         };
 
         let results = self.instance_batch_request(instance_id, requests).await?;
-        let parameters = results
-            .first()
-            .and_then(|result| result.get("parameters"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let unit_info = results
-            .get(1)
-            .and_then(|result| result.get("unitInfo"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let state = state_index
-            .and_then(|index| results.get(index))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let worker = worker_index
-            .and_then(|index| results.get(index))
-            .cloned()
-            .unwrap_or(Value::Null);
-
-        Ok(json!({
-            "instanceId": instance_id,
-            "parameters": parameters,
-            "unitInfo": unit_info,
-            "state": state,
-            "worker": worker,
-        }))
+        Ok(metadata_refresh_value(
+            instance_id,
+            &results,
+            0,
+            1,
+            state_index,
+            worker_index,
+        ))
     }
 
     pub async fn parameter_get(
@@ -223,6 +205,52 @@ impl WorkerSupervisor {
         .await
     }
 
+    pub async fn parameter_edit(
+        &self,
+        instance_id: u64,
+        parameter_id: u32,
+        value_normalized: f64,
+    ) -> Result<Value, WorkerSupervisorError> {
+        let results = self
+            .instance_batch_request(
+                instance_id,
+                vec![
+                    WorkerBatchRequest::new(
+                        "instance.parameter.beginEdit",
+                        json!({
+                            "instanceId": instance_id,
+                            "parameterId": parameter_id,
+                        }),
+                    ),
+                    WorkerBatchRequest::new(
+                        "instance.parameter.performEdit",
+                        json!({
+                            "instanceId": instance_id,
+                            "parameterId": parameter_id,
+                            "valueNormalized": value_normalized,
+                        }),
+                    ),
+                    WorkerBatchRequest::new(
+                        "instance.parameter.endEdit",
+                        json!({
+                            "instanceId": instance_id,
+                            "parameterId": parameter_id,
+                        }),
+                    ),
+                ],
+            )
+            .await?;
+
+        Ok(json!({
+            "instanceId": instance_id,
+            "parameterId": parameter_id,
+            "valueNormalized": value_normalized,
+            "beginEdit": results.first().cloned().unwrap_or(Value::Null),
+            "performEdit": results.get(1).cloned().unwrap_or(Value::Null),
+            "endEdit": results.get(2).cloned().unwrap_or(Value::Null),
+        }))
+    }
+
     pub async fn get_state(&self, instance_id: u64) -> Result<Value, WorkerSupervisorError> {
         self.instance_request(
             instance_id,
@@ -250,6 +278,57 @@ impl WorkerSupervisor {
             }),
         )
         .await
+    }
+
+    pub async fn set_state_and_refresh(
+        &self,
+        instance_id: u64,
+        state_base64: Option<String>,
+        component_state_base64: Option<String>,
+        controller_state_base64: Option<String>,
+        include_state: bool,
+        include_worker_metrics: bool,
+    ) -> Result<Value, WorkerSupervisorError> {
+        let mut requests = vec![
+            WorkerBatchRequest::new(
+                "instance.setState",
+                json!({
+                    "instanceId": instance_id,
+                    "stateBase64": state_base64,
+                    "componentStateBase64": component_state_base64,
+                    "controllerStateBase64": controller_state_base64,
+                }),
+            ),
+            WorkerBatchRequest::new("instance.parameters", json!({ "instanceId": instance_id })),
+            WorkerBatchRequest::new("instance.units", json!({ "instanceId": instance_id })),
+        ];
+        let state_index = if include_state {
+            let index = requests.len();
+            requests.push(WorkerBatchRequest::new(
+                "instance.getState",
+                json!({ "instanceId": instance_id }),
+            ));
+            Some(index)
+        } else {
+            None
+        };
+        let worker_index = if include_worker_metrics {
+            let index = requests.len();
+            requests.push(WorkerBatchRequest::new("worker.metrics", json!({})));
+            Some(index)
+        } else {
+            None
+        };
+
+        let results = self.instance_batch_request(instance_id, requests).await?;
+        let metadata =
+            metadata_refresh_value(instance_id, &results, 1, 2, state_index, worker_index);
+
+        Ok(json!({
+            "instanceId": instance_id,
+            "setState": results.first().cloned().unwrap_or(Value::Null),
+            "metadata": metadata,
+        }))
     }
 
     pub async fn notify_component(
@@ -468,4 +547,40 @@ impl WorkerSupervisor {
             }
         }
     }
+}
+
+fn metadata_refresh_value(
+    instance_id: u64,
+    results: &[Value],
+    parameters_index: usize,
+    units_index: usize,
+    state_index: Option<usize>,
+    worker_index: Option<usize>,
+) -> Value {
+    let parameters = results
+        .get(parameters_index)
+        .and_then(|result| result.get("parameters"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let unit_info = results
+        .get(units_index)
+        .and_then(|result| result.get("unitInfo"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let state = state_index
+        .and_then(|index| results.get(index))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let worker = worker_index
+        .and_then(|index| results.get(index))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    json!({
+        "instanceId": instance_id,
+        "parameters": parameters,
+        "unitInfo": unit_info,
+        "state": state,
+        "worker": worker,
+    })
 }

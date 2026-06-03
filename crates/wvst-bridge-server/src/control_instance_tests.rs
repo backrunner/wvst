@@ -337,6 +337,30 @@ async fn creates_lists_and_destroys_instance() {
     let parameter_end_edit_value = request_json(&parameter_end_edit_request, context).await;
     assert_eq!(parameter_end_edit_value["result"]["editKind"], "end-edit");
 
+    let parameter_edit_request = serde_json::json!({
+        "id": 41,
+        "method": "instance.parameter.edit",
+        "params": { "instanceId": instance_id, "parameterId": 42, "valueNormalized": 0.66 }
+    })
+    .to_string();
+    let parameter_edit_value = request_json(&parameter_edit_request, context).await;
+    assert_eq!(
+        parameter_edit_value["result"]["beginEdit"]["editKind"],
+        "begin-edit"
+    );
+    assert_eq!(
+        parameter_edit_value["result"]["performEdit"]["editKind"],
+        "perform-edit"
+    );
+    assert_eq!(
+        parameter_edit_value["result"]["performEdit"]["valueNormalized"],
+        0.66
+    );
+    assert_eq!(
+        parameter_edit_value["result"]["endEdit"]["editKind"],
+        "end-edit"
+    );
+
     let notify_component_request = serde_json::json!({
         "id": 38,
         "method": "instance.connection.notifyComponent",
@@ -386,6 +410,34 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(
         invalid_notify_value["error"]["message"],
         "attributes must be an object"
+    );
+
+    let set_state_and_refresh_request = serde_json::json!({
+        "id": 42,
+        "method": "instance.state.setAndRefresh",
+        "params": {
+            "instanceId": instance_id,
+            "controllerStateBase64": "AQID",
+            "includeState": true
+        }
+    })
+    .to_string();
+    let set_state_and_refresh_value = request_json(&set_state_and_refresh_request, context).await;
+    assert_eq!(
+        set_state_and_refresh_value["result"]["setState"]["controllerStateBytes"],
+        3
+    );
+    assert_eq!(
+        set_state_and_refresh_value["result"]["metadata"]["parameters"][0]["id"],
+        42
+    );
+    assert_eq!(
+        set_state_and_refresh_value["result"]["metadata"]["state"]["stateBase64"],
+        "AQID"
+    );
+    assert_eq!(
+        set_state_and_refresh_value["result"]["metadata"]["worker"]["instances"],
+        1
     );
 
     let close_stream_request = serde_json::json!({
@@ -1122,6 +1174,8 @@ while IFS= read -r line; do
     *instance.parameter.beginEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"begin-edit","valueNormalized":null}}\n' "$id" ;;
     *instance.parameter.performEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"perform-edit","valueNormalized":0.66}}\n' "$id" ;;
     *instance.parameter.endEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"end-edit","valueNormalized":null}}\n' "$id" ;;
+    *instance.getState*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"componentStateBase64":null,"controllerStateBase64":"AQID","stateBase64":"AQID"}}\n' "$id" ;;
+    *instance.setState*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"componentStateBytes":null,"controllerStateBytes":3,"stateBytes":3}}\n' "$id" ;;
     *instance.connection.notifyComponent*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"component","messageId":"TextMessage","attributeCount":2,"notified":true}}\n' "$id" ;;
     *instance.connection.notifyController*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"controller","messageId":"TextMessage","attributeCount":0,"notified":true}}\n' "$id" ;;
     *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;

@@ -355,12 +355,26 @@ pub(crate) async fn handle_control_text(
             .await,
             session_authorized,
         ),
+        "instance.parameter.edit" => ControlResponse::new(
+            control_instances::handle_instance_parameter_edit(request.id, request.params, context)
+                .await,
+            session_authorized,
+        ),
         "instance.getState" => ControlResponse::new(
             control_instances::handle_instance_get_state(request.id, request.params, context).await,
             session_authorized,
         ),
         "instance.setState" => ControlResponse::new(
             control_instances::handle_instance_set_state(request.id, request.params, context).await,
+            session_authorized,
+        ),
+        "instance.state.setAndRefresh" => ControlResponse::new(
+            control_instances::handle_instance_state_set_and_refresh(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
             session_authorized,
         ),
         "instance.connection.notifyComponent" => ControlResponse::new(
