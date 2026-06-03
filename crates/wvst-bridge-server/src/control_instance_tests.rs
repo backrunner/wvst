@@ -588,6 +588,18 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
     assert_eq!(instances.list().len(), 1);
     assert_eq!(metrics.snapshot().worker_failures, 1);
 
+    let events_value =
+        request_json(r#"{"id":5,"method":"bridge.events","params":{}}"#, context).await;
+    let policy = worker_policy_decision(
+        &events_value,
+        "resource-limit",
+        "reject",
+        "worker-instance-limit",
+    );
+    assert_eq!(policy["pluginId"], plugin_id);
+    assert_eq!(policy["data"]["kind"], "resource-limit-exceeded");
+    assert_eq!(policy["data"]["resource"], "worker-instances");
+
     let first_instance = first["result"]["instanceId"].as_u64().expect("instance id");
     let _ = request_json(
         &instance_request(3, "instance.destroy", first_instance),
@@ -676,6 +688,15 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     assert_eq!(recovering["kind"]["mode"], "auto-heartbeat");
     assert_eq!(recovering["kind"]["reason"], "heartbeat-failed");
     assert!(recovering["kind"]["errorData"].is_object());
+    let policy = worker_policy_decision(
+        &events_value,
+        "worker-recovery",
+        "restart",
+        "heartbeat-failed",
+    );
+    assert_eq!(policy["instanceId"].as_u64(), Some(instance_id));
+    assert_eq!(policy["pluginId"], plugin_id);
+    assert!(policy["data"].is_object());
     let recovered = events_value["result"]["events"]
         .as_array()
         .expect("events")
@@ -844,6 +865,15 @@ async fn restarts_failed_instance_with_same_stream() {
     assert_eq!(recovering["kind"]["mode"], "manual-restart");
     assert_eq!(recovering["kind"]["reason"], "manual-restart");
     assert!(recovering["kind"].get("errorData").is_none());
+    let policy = worker_policy_decision(
+        &events_value,
+        "worker-recovery",
+        "restart",
+        "manual-restart",
+    );
+    assert_eq!(policy["instanceId"].as_u64(), Some(instance_id));
+    assert_eq!(policy["pluginId"], plugin_id);
+    assert_eq!(policy["data"]["wasProcessing"], false);
     let recovered = events_value["result"]["events"]
         .as_array()
         .expect("events")
@@ -994,6 +1024,29 @@ async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
     .await;
 
     serde_json::from_str(&response.text).expect("valid control json")
+}
+
+fn worker_policy_decision<'a>(
+    events_value: &'a Value,
+    policy: &str,
+    decision: &str,
+    reason: &str,
+) -> &'a Value {
+    events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find_map(|event| {
+            let kind = &event["kind"];
+            (kind["type"].as_str() == Some("worker-policy-decision")
+                && kind["policy"].as_str() == Some(policy)
+                && kind["decision"].as_str() == Some(decision)
+                && kind["reason"].as_str() == Some(reason))
+            .then_some(kind)
+        })
+        .unwrap_or_else(|| {
+            panic!("missing worker-policy-decision {policy}/{decision}/{reason}: {events_value}")
+        })
 }
 
 fn test_host_worker() -> HostWorkerClient {

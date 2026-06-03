@@ -91,7 +91,7 @@
 
 仍缺少：
 
-- `ready` 之后的 `processing` / `stopped` 生命周期已有控制 API，`starting`、`stopping`、自动恢复中等瞬态状态和事件推送已有首版；WebSocket server-push notification 已能把 Bridge event 主动发给授权 Web 客户端，start/stop/destroy 已补充更细粒度的 `worker-processing-starting`、`worker-processing-stopping`、`worker-destroying` 和 `worker-destroyed` 事件，stream open/close 已补充 `stream-opened`、`stream-closing` 和 `stream-closed` 事件；仍缺少更完整的应用级策略决策事件。
+- `ready` 之后的 `processing` / `stopped` 生命周期已有控制 API，`starting`、`stopping`、自动恢复中等瞬态状态和事件推送已有首版；WebSocket server-push notification 已能把 Bridge event 主动发给授权 Web 客户端，start/stop/destroy 已补充更细粒度的 `worker-processing-starting`、`worker-processing-stopping`、`worker-destroying` 和 `worker-destroyed` 事件，stream open/close 已补充 `stream-opened`、`stream-closing` 和 `stream-closed` 事件；应用级 `worker-policy-decision` 事件已有首版，覆盖 quarantine release/reject、worker 实例资源上限拒绝、手动 restart、heartbeat 自动 restart 和自动恢复禁用拒绝，仍缺少更完整的策略回收/调度决策与真实压测校准。
 - 每个实例的独立 worker 进程已具备原型，并支持手动 restart 与 heartbeat 驱动的自动 restart；崩溃/恢复/quarantine 事件、worker 实例数量上限、memory hard cap、CPU time hard cap 和 Linux cgroup v2 CPU/memory quota 已有首版，仍缺少更完整的策略化资源回收、真实 Linux cgroup 部署验证和池化调度策略。
 - 同一插件 N 个实例的 worker 池化、调度和资源上限策略；当前更接近一实例一 worker 的保守隔离原型。
 

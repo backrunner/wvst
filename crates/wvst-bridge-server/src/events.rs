@@ -128,6 +128,17 @@ pub enum BridgeEventKind {
     WorkerQuarantineReleased {
         plugin_id: String,
     },
+    WorkerPolicyDecision {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        instance_id: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plugin_id: Option<String>,
+        policy: String,
+        decision: String,
+        reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<Value>,
+    },
     Vst3ComponentHandlerEvent {
         instance_id: u64,
         plugin_id: String,
@@ -340,5 +351,25 @@ mod tests {
         assert_eq!(value["mode"], "auto-heartbeat");
         assert_eq!(value["reason"], "restart-failed");
         assert_eq!(value["errorData"]["kind"], "spawn");
+    }
+
+    #[test]
+    fn serializes_worker_policy_decision() {
+        let value = json!(BridgeEventKind::WorkerPolicyDecision {
+            instance_id: Some(7),
+            plugin_id: Some("vst3:test".to_string()),
+            policy: "resource-limit".to_string(),
+            decision: "reject".to_string(),
+            reason: "worker-instance-limit".to_string(),
+            data: Some(json!({ "resource": "worker-instances" })),
+        });
+
+        assert_eq!(value["type"], "worker-policy-decision");
+        assert_eq!(value["instanceId"], 7);
+        assert_eq!(value["pluginId"], "vst3:test");
+        assert_eq!(value["policy"], "resource-limit");
+        assert_eq!(value["decision"], "reject");
+        assert_eq!(value["reason"], "worker-instance-limit");
+        assert_eq!(value["data"]["resource"], "worker-instances");
     }
 }

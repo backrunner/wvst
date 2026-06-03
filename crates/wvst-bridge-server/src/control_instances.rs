@@ -73,6 +73,15 @@ pub async fn handle_instance_create(
         .await
         .is_some()
     {
+        emit_policy_decision(
+            &context,
+            None,
+            Some(&plugin_id),
+            "plugin-quarantine",
+            "release",
+            "quarantine-expired",
+            None,
+        );
         context
             .events
             .emit(BridgeEventKind::WorkerQuarantineReleased {
@@ -113,6 +122,12 @@ pub async fn handle_instance_create(
             let _ = context.instances.destroy(InstanceDestroyParams {
                 instance_id: record.instance_id,
             });
+            emit_worker_start_policy_rejection(
+                &context,
+                record.instance_id,
+                &record.plugin_id,
+                &error,
+            );
             emit_worker_error(&context, record.instance_id, &record.plugin_id, &error);
             if let Some(status) = context.workers.quarantine_status(&record.plugin_id).await {
                 context.events.emit(BridgeEventKind::WorkerQuarantined {
@@ -204,6 +219,15 @@ pub async fn handle_instance_restart(
         reason: "manual-restart".to_string(),
         error_data: None,
     });
+    emit_policy_decision(
+        &context,
+        Some(record.instance_id),
+        Some(&record.plugin_id),
+        "worker-recovery",
+        "restart",
+        "manual-restart",
+        Some(json!({ "wasProcessing": was_processing })),
+    );
 
     match context.workers.restart_instance(&record).await {
         Ok(worker) => {
@@ -360,6 +384,15 @@ async fn handle_status_worker_failure(
     context.metrics.increment_worker_failures();
     if !context.config.worker_auto_restart_enabled() {
         let _ = context.instances.mark_worker_failed(record.instance_id);
+        emit_policy_decision(
+            &context,
+            Some(record.instance_id),
+            Some(&record.plugin_id),
+            "worker-recovery",
+            "reject",
+            "auto-restart-disabled",
+            Some(error.rpc_data()),
+        );
         emit_worker_error(&context, record.instance_id, &record.plugin_id, &error);
         return response_worker_supervisor_error(id, error);
     }
@@ -375,6 +408,15 @@ async fn handle_status_worker_failure(
         reason: "heartbeat-failed".to_string(),
         error_data: Some(error.rpc_data()),
     });
+    emit_policy_decision(
+        &context,
+        Some(record.instance_id),
+        Some(&record.plugin_id),
+        "worker-recovery",
+        "restart",
+        "heartbeat-failed",
+        Some(error.rpc_data()),
+    );
 
     match context.workers.restart_instance(&record).await {
         Ok(worker) => {
@@ -549,6 +591,54 @@ fn emit_worker_error(
         code: error.rpc_code(),
         message: error.rpc_message(),
         error_data: Some(error.rpc_data()),
+    });
+}
+
+fn emit_worker_start_policy_rejection(
+    context: &ControlContext<'_>,
+    instance_id: u64,
+    plugin_id: &str,
+    error: &WorkerSupervisorError,
+) {
+    match error {
+        WorkerSupervisorError::Quarantined { .. } => emit_policy_decision(
+            context,
+            Some(instance_id),
+            Some(plugin_id),
+            "plugin-quarantine",
+            "reject",
+            "active-quarantine",
+            Some(error.rpc_data()),
+        ),
+        WorkerSupervisorError::ResourceLimitExceeded { .. } => emit_policy_decision(
+            context,
+            Some(instance_id),
+            Some(plugin_id),
+            "resource-limit",
+            "reject",
+            "worker-instance-limit",
+            Some(error.rpc_data()),
+        ),
+        _ => {}
+    }
+}
+
+fn emit_policy_decision(
+    context: &ControlContext<'_>,
+    instance_id: Option<u64>,
+    plugin_id: Option<&str>,
+    policy: &str,
+    decision: &str,
+    reason: &str,
+    data: Option<Value>,
+) {
+    context.events.emit(BridgeEventKind::WorkerPolicyDecision {
+        instance_id,
+        plugin_id: plugin_id.map(ToOwned::to_owned),
+        policy: policy.to_string(),
+        decision: decision.to_string(),
+        reason: reason.to_string(),
+        data,
     });
 }
 
