@@ -224,6 +224,12 @@ export {
   type PluginScanReport,
 } from "./control/plugins.js";
 export {
+  createWVSTWebAudioMetricsSnapshot,
+  type WVSTLatencyPercentiles,
+  type WVSTWebAudioMetricsSnapshot,
+  type WVSTWebAudioMetricsSnapshotOptions,
+} from "./session/metrics.js";
+export {
   AUDIO_FRAME_HEADER_BYTES,
   AUDIO_FRAME_MAGIC,
   AUDIO_FRAME_VERSION,

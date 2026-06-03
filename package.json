@@ -9,8 +9,9 @@
   ],
   "scripts": {
     "build:web": "npm --workspace @wvst/web run build",
-    "check": "cargo test --all && npm run check:web",
+    "check": "cargo test --all && npm run check:web && npm run test:web",
     "check:web": "npm --workspace @wvst/web run check",
+    "test:web": "npm --workspace @wvst/web run test",
     "docs:dev": "npm run build:web && npm --workspace @wvst/docs run dev",
     "docs:build": "npm run build:web && npm --workspace @wvst/docs run build --",
     "docs:check": "npm run build:web && npm --workspace @wvst/docs run check"

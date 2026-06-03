@@ -1,6 +1,6 @@
 /target/
 /node_modules/
+/packages/*/node_modules/
 /packages/*/dist/
 /packages/*/.rollup.cache/
 /.DS_Store
-
