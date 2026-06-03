@@ -10,6 +10,7 @@ use crate::{BridgeError, BridgeResult};
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:35876";
 const DEFAULT_MAX_WORKER_INSTANCES: usize = 64;
 const DEFAULT_MAX_CONTROL_MESSAGE_BYTES: usize = WORKER_CONTROL_IPC_MAX_BODY_LEN as usize;
+const DEFAULT_WORKER_QUARANTINE_FAILURE_THRESHOLD: u32 = 3;
 
 #[derive(Debug, Clone)]
 pub struct BridgeConfig {
@@ -19,6 +20,7 @@ pub struct BridgeConfig {
     allow_loopback_origins: bool,
     worker_auto_restart: bool,
     max_worker_instances: usize,
+    worker_quarantine_failure_threshold: u32,
     max_control_message_bytes: usize,
     worker_memory_limit_bytes: Option<u64>,
     worker_cpu_time_limit_seconds: Option<u64>,
@@ -58,6 +60,11 @@ impl BridgeConfig {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_MAX_WORKER_INSTANCES);
+        let worker_quarantine_failure_threshold = std::env::var("WVST_WORKER_QUARANTINE_FAILURES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_WORKER_QUARANTINE_FAILURE_THRESHOLD);
         let max_control_message_bytes = std::env::var("WVST_MAX_CONTROL_MESSAGE_BYTES")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
@@ -98,6 +105,7 @@ impl BridgeConfig {
             allow_loopback_origins,
             worker_auto_restart,
             max_worker_instances,
+            worker_quarantine_failure_threshold,
             max_control_message_bytes,
             worker_memory_limit_bytes,
             worker_cpu_time_limit_seconds,
@@ -116,6 +124,7 @@ impl BridgeConfig {
             allow_loopback_origins: true,
             worker_auto_restart: true,
             max_worker_instances: DEFAULT_MAX_WORKER_INSTANCES,
+            worker_quarantine_failure_threshold: DEFAULT_WORKER_QUARANTINE_FAILURE_THRESHOLD,
             max_control_message_bytes: DEFAULT_MAX_CONTROL_MESSAGE_BYTES,
             worker_memory_limit_bytes: None,
             worker_cpu_time_limit_seconds: None,
@@ -133,6 +142,11 @@ impl BridgeConfig {
 
     pub fn with_max_worker_instances(mut self, max_instances: usize) -> Self {
         self.max_worker_instances = max_instances.max(1);
+        self
+    }
+
+    pub fn with_worker_quarantine_failure_threshold(mut self, failures: u32) -> Self {
+        self.worker_quarantine_failure_threshold = failures.max(1);
         self
     }
 
@@ -239,6 +253,10 @@ impl BridgeConfig {
         self.max_worker_instances
     }
 
+    pub fn worker_quarantine_failure_threshold(&self) -> u32 {
+        self.worker_quarantine_failure_threshold
+    }
+
     pub fn max_control_message_bytes(&self) -> usize {
         self.max_control_message_bytes
     }
@@ -324,6 +342,22 @@ mod tests {
         assert_eq!(config.max_worker_instances(), DEFAULT_MAX_WORKER_INSTANCES);
         assert_eq!(
             config.with_max_worker_instances(2).max_worker_instances(),
+            2
+        );
+    }
+
+    #[test]
+    fn sets_default_and_overridden_worker_quarantine_threshold() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+
+        assert_eq!(
+            config.worker_quarantine_failure_threshold(),
+            DEFAULT_WORKER_QUARANTINE_FAILURE_THRESHOLD
+        );
+        assert_eq!(
+            config
+                .with_worker_quarantine_failure_threshold(2)
+                .worker_quarantine_failure_threshold(),
             2
         );
     }

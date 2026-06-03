@@ -182,6 +182,14 @@ impl BridgeRuntimeBuilder {
         self
     }
 
+    pub fn worker_quarantine_failure_threshold(mut self, failures: u32) -> Self {
+        self.options.config = self
+            .options
+            .config
+            .with_worker_quarantine_failure_threshold(failures);
+        self
+    }
+
     pub fn worker_memory_limit_bytes(mut self, bytes: u64) -> Self {
         self.options.config = self.options.config.with_worker_memory_limit_bytes(bytes);
         self
@@ -313,6 +321,7 @@ mod tests {
             .worker_executable("/tmp/wvst-host-worker")
             .worker_timeout(Duration::from_millis(250))
             .max_worker_instances(2)
+            .worker_quarantine_failure_threshold(2)
             .worker_memory_limit_bytes(64 * 1024 * 1024)
             .worker_cpu_time_limit_seconds(30)
             .worker_linux_cgroup_parent("/sys/fs/cgroup/wvst")
@@ -326,6 +335,7 @@ mod tests {
         );
         assert_eq!(runtime.worker_timeout, Duration::from_millis(250));
         assert_eq!(runtime.config.max_worker_instances(), 2);
+        assert_eq!(runtime.config.worker_quarantine_failure_threshold(), 2);
         assert_eq!(
             runtime.config.worker_memory_limit_bytes(),
             Some(64 * 1024 * 1024)

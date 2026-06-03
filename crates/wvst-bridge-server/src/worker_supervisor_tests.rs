@@ -10,7 +10,7 @@ async fn quarantines_plugin_after_repeated_start_failures() {
     );
     let record = record();
 
-    for _ in 0..QUARANTINE_FAILURES {
+    for _ in 0..DEFAULT_QUARANTINE_FAILURE_THRESHOLD {
         assert!(matches!(
             supervisor.start_instance(&record).await,
             Err(WorkerSupervisorError::Spawn { .. })
@@ -25,7 +25,7 @@ async fn quarantines_plugin_after_repeated_start_failures() {
     assert!(matches!(
         &error,
         WorkerSupervisorError::Quarantined {
-            failures: QUARANTINE_FAILURES,
+            failures: DEFAULT_QUARANTINE_FAILURE_THRESHOLD,
             ..
         }
     ));
@@ -38,8 +38,36 @@ async fn quarantines_plugin_after_repeated_start_failures() {
         .quarantine_status(&record.plugin_id)
         .await
         .expect("quarantine status");
-    assert_eq!(status.failures, QUARANTINE_FAILURES);
+    assert_eq!(status.failures, DEFAULT_QUARANTINE_FAILURE_THRESHOLD);
     assert!(status.release_after_ms > 0);
+}
+
+#[tokio::test]
+async fn quarantines_after_configured_failure_threshold() {
+    let supervisor = WorkerSupervisor::with_options(
+        WorkerSupervisorOptions::new(PathBuf::from("missing-wvst-worker"))
+            .with_timeout(Duration::from_millis(50))
+            .with_quarantine_failure_threshold(2)
+            .with_audio_ipc(false)
+            .with_framed_control_ipc(false),
+    );
+    let record = record();
+
+    for _ in 0..2 {
+        assert!(matches!(
+            supervisor.start_instance(&record).await,
+            Err(WorkerSupervisorError::Spawn { .. })
+        ));
+    }
+    let error = supervisor
+        .start_instance(&record)
+        .await
+        .expect_err("quarantined");
+
+    assert!(matches!(
+        &error,
+        WorkerSupervisorError::Quarantined { failures: 2, .. }
+    ));
 }
 
 #[tokio::test]
@@ -51,12 +79,12 @@ async fn releases_quarantine_after_duration() {
     );
     let record = record();
 
-    for _ in 0..QUARANTINE_FAILURES {
+    for _ in 0..DEFAULT_QUARANTINE_FAILURE_THRESHOLD {
         let _ = supervisor.start_instance(&record).await;
     }
     assert_eq!(
         supervisor.quarantine_failures(&record.plugin_id).await,
-        Some(QUARANTINE_FAILURES)
+        Some(DEFAULT_QUARANTINE_FAILURE_THRESHOLD)
     );
 
     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -64,7 +92,7 @@ async fn releases_quarantine_after_duration() {
         supervisor
             .release_expired_quarantine(&record.plugin_id)
             .await,
-        Some(QUARANTINE_FAILURES)
+        Some(DEFAULT_QUARANTINE_FAILURE_THRESHOLD)
     );
     assert_eq!(
         supervisor.quarantine_failures(&record.plugin_id).await,

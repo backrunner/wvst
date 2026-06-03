@@ -23,7 +23,7 @@ const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_QUARANTINE_DURATION: Duration = Duration::from_secs(60);
 const DEFAULT_MAX_WORKER_INSTANCES: usize = 64;
 const EXPECTED_WORKER_IPC_VERSION: u16 = 1;
-const QUARANTINE_FAILURES: u32 = 3;
+const DEFAULT_QUARANTINE_FAILURE_THRESHOLD: u32 = 3;
 const STDERR_TAIL_BYTES: usize = 4096;
 
 #[path = "worker_supervisor_audio.rs"]
@@ -49,6 +49,7 @@ pub struct WorkerSupervisor {
     failures: Mutex<BTreeMap<String, u32>>,
     processes: Mutex<BTreeMap<u64, Arc<Mutex<WorkerProcess>>>>,
     quarantine_duration: Duration,
+    quarantine_failure_threshold: u32,
     quarantined: Mutex<BTreeMap<String, QuarantineRecord>>,
 }
 
@@ -57,6 +58,7 @@ pub struct WorkerSupervisorOptions {
     executable: PathBuf,
     timeout: Duration,
     quarantine_duration: Duration,
+    quarantine_failure_threshold: u32,
     use_audio_ipc: bool,
     use_framed_control_ipc: bool,
     max_instances: usize,
@@ -178,6 +180,7 @@ impl WorkerSupervisor {
             failures: Mutex::new(BTreeMap::new()),
             processes: Mutex::new(BTreeMap::new()),
             quarantine_duration: options.quarantine_duration,
+            quarantine_failure_threshold: options.quarantine_failure_threshold,
             quarantined: Mutex::new(BTreeMap::new()),
         }
     }
@@ -294,6 +297,7 @@ impl WorkerSupervisorOptions {
             executable,
             timeout: DEFAULT_IPC_TIMEOUT,
             quarantine_duration: DEFAULT_QUARANTINE_DURATION,
+            quarantine_failure_threshold: DEFAULT_QUARANTINE_FAILURE_THRESHOLD,
             use_audio_ipc: true,
             use_framed_control_ipc: true,
             max_instances: DEFAULT_MAX_WORKER_INSTANCES,
@@ -309,6 +313,11 @@ impl WorkerSupervisorOptions {
 
     pub fn with_quarantine_duration(mut self, duration: Duration) -> Self {
         self.quarantine_duration = duration;
+        self
+    }
+
+    pub fn with_quarantine_failure_threshold(mut self, failures: u32) -> Self {
+        self.quarantine_failure_threshold = failures.max(1);
         self
     }
 
@@ -714,7 +723,7 @@ impl WorkerSupervisor {
             .and_modify(|count| *count += 1)
             .or_insert(1);
 
-        if *count >= QUARANTINE_FAILURES {
+        if *count >= self.quarantine_failure_threshold {
             self.quarantined.lock().await.insert(
                 plugin_id.to_string(),
                 QuarantineRecord {

@@ -23,6 +23,7 @@
 - Bridge/Web SDK 已提供 `instance.start` / `instance.stop` 处理生命周期控制，实例状态可从 `ready` 切到 `processing` / `stopped`，并已补入 `starting` / `stopping` / `recovering` 瞬态状态。
 - Bridge 已提供运行时事件总线、`bridge.events` 控制面查询和授权后 WebSocket `bridge.event` server-push notification；Web SDK 已暴露 `client.events()` 轮询和 `client.onEvent()` 主动订阅，可观察 server lifecycle、worker start/ready/processing/stopped/failed/recovering/recovered/quarantine 事件；`worker-failed` 事件会携带可选 `errorData`，数据面 audio process 失败也会发布包含 worker/runtime 结构化原因的失败事件。
 - Bridge worker supervisor 已提供 quarantine TTL 释放策略，过期释放会清空累计失败计数并可通过事件观测；quarantine error data 与 `worker-quarantined` event 已暴露 `releaseAfterMs`，便于 Web/UI 展示重试倒计时和策略诊断；`worker-recovering` / `worker-recovered` / `worker-recovery-failed` event 已通过 `mode`、`reason` 和结构化 `errorData` 区分手动 restart、heartbeat 自动恢复、重启失败与 processing 恢复失败。
+- Bridge worker supervisor 的 quarantine failure threshold 已可通过 `WVST_WORKER_QUARANTINE_FAILURES`、`BridgeConfig::with_worker_quarantine_failure_threshold()` 和 `BridgeRuntimeBuilder::worker_quarantine_failure_threshold()` 配置；嵌入式宿主可按自身恢复策略调节插件进入 quarantine 前允许的失败次数。
 - Bridge worker supervisor 已提供首版 worker 进程树终止：Unix/macOS 启动 worker 时放入独立 process group，shutdown 时优先向 process group 发终止信号并等待，超时后升级强制 kill；测试覆盖 worker 派生子进程后 destroy 仍能清理进程组。
 - Bridge worker supervisor 生产路径已默认通过 `WVCI` framed control IPC 发送/接收 worker 控制请求；worker hello 会暴露并校验 `framedControlIpcVersion`、`framedControlMaxBodyBytes`、sequence id、status code 和 error response frame capability，测试覆盖真实 worker framed create/destroy passthrough path、版本不匹配和 body cap/capability 不匹配拒绝路径。framed control IPC 已能在 header 层区分 `Response` / `ErrorResponse`，worker JSON-RPC error 会映射到非零 `statusCode`，Bridge 会校验 frame kind、sequence 和 status 后再解析 body。
 - Bridge 音频路由现在要求实例处于 `processing` 状态；未 start、已 stop 或处理失败都会返回带 `silence` / `process-error` 的诊断静音帧，而不是继续把音频送进 worker。
@@ -99,7 +100,7 @@
 
 - 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略、worker kill/wait 审计指标、Unix/macOS 进程组终止、Windows Job Object 终止、Unix `RLIMIT_AS` / `RLIMIT_CPU` worker hard cap、Windows Job Object memory/user-time hard cap、Linux cgroup v2 CPU/memory quota 和 framed control IPC 首版；仍缺少 Windows 真实运行验证、Linux cgroup 真实部署验证和更多失败分类。
 - framed control IPC 已替换生产路径 JSON-line 控制面，并已有 schema version、max body、sequence id、status code、error response frame capability 校验、header-level error classification、sequence/status 校验和 body size cap；仍缺少 framed control IPC 的批处理/多路复用。
-- 超时后的全链路 kill/wait 审计已有首版 counters，且 Unix/macOS 已覆盖进程树维度；quarantine 已暴露释放倒计时诊断，restart/recovery 事件已暴露手动/自动模式、触发原因、恢复失败原因和结构化错误，仍缺少更深入的 crash quarantine 策略调优。
+- 超时后的全链路 kill/wait 审计已有首版 counters，且 Unix/macOS 已覆盖进程树维度；quarantine 已暴露释放倒计时诊断、可配置失败阈值，restart/recovery 事件已暴露手动/自动模式、触发原因、恢复失败原因和结构化错误，仍缺少基于真实插件压测数据的默认策略校准。
 - worker hello 已有基础 capability negotiation 和 framed control IPC schema/body/capability 校验，实例级 `runtimeCapabilities` 已能按数据面、MIDI、参数自动化和诊断能力暴露首版，且包含 schema version 与 passthrough fallback 原因；worker rejection 已能透传 VST3 runtime init、control 和 `process()` 阶段化失败 data，framed IPC 已能在 header 层标记 worker rejection；仍缺少 framed IPC 的批处理/多路复用和更完整的非 VST3 runtime/control/process 失败分类。
 
 ### 3. 真实 VST3 component/controller lifecycle

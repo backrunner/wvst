@@ -8,6 +8,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = BridgeConfig::development("127.0.0.1:0".parse()?);
     let runtime = BridgeRuntime::builder(config)
         .max_worker_instances(8)
+        .worker_quarantine_failure_threshold(3)
         .worker_memory_limit_bytes(512 * 1024 * 1024)
         .worker_cpu_time_limit_seconds(30)
         .build();

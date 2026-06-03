@@ -72,6 +72,7 @@ impl BridgeServer {
             WorkerSupervisorOptions::new(host_worker.executable_path().to_path_buf())
                 .with_timeout(host_worker.timeout())
                 .with_max_instances(config.max_worker_instances())
+                .with_quarantine_failure_threshold(config.worker_quarantine_failure_threshold())
                 .with_resource_limits(resource_limits)
                 .with_metrics(Arc::clone(&metrics)),
         );
