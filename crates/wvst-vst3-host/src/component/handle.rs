@@ -61,10 +61,16 @@ impl Vst3ComponentHandle {
             self.activate_selected_audio_bus(
                 Vst3BusDirection::Input,
                 config.input_channels,
+                config.input_bus_index,
                 active,
             )?;
         }
-        self.activate_selected_audio_bus(Vst3BusDirection::Output, config.output_channels, active)
+        self.activate_selected_audio_bus(
+            Vst3BusDirection::Output,
+            config.output_channels,
+            config.output_bus_index,
+            active,
+        )
     }
 
     pub(super) fn controller_class_id(&self) -> HostResult<Option<String>> {
@@ -175,10 +181,11 @@ impl Vst3ComponentHandle {
         &mut self,
         direction: Vst3BusDirection,
         channels: u16,
+        requested_index: Option<i32>,
         active: bool,
     ) -> HostResult<()> {
         let buses = self.audio_buses(direction)?;
-        let index = select_audio_bus_index(&buses, channels);
+        let index = select_audio_bus_index(&buses, channels, requested_index, direction)?;
         self.activate_audio_bus(direction.as_abi(), index, active)
     }
 

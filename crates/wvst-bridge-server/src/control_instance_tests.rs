@@ -1654,6 +1654,8 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
                 max_block_frames: 128,
                 input_channels: 2,
                 output_channels: 2,
+                input_bus_index: None,
+                output_bus_index: None,
             },
             &plugin,
         )

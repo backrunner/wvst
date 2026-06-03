@@ -32,6 +32,7 @@ pub struct Vst3SelectedAudioBuses {
 pub struct Vst3SelectedAudioBus {
     pub direction: Vst3BusDirection,
     pub requested_channels: u16,
+    pub requested_index: Option<i32>,
     pub selected_index: i32,
     pub selected: Option<Vst3AudioBusInfo>,
     pub available: Vec<Vst3AudioBusInfo>,
@@ -100,11 +101,13 @@ impl Vst3ComponentInstance {
             Some(self.selected_audio_bus(
                 Vst3BusDirection::Input,
                 self.processing_config.input_channels,
+                self.processing_config.input_bus_index,
             )?)
         };
         let output = self.selected_audio_bus(
             Vst3BusDirection::Output,
             self.processing_config.output_channels,
+            self.processing_config.output_bus_index,
         )?;
         Ok(Vst3SelectedAudioBuses { input, output })
     }
@@ -113,9 +116,11 @@ impl Vst3ComponentInstance {
         &mut self,
         direction: Vst3BusDirection,
         requested_channels: u16,
+        requested_index: Option<i32>,
     ) -> HostResult<Vst3SelectedAudioBus> {
         let available = self.audio_buses(direction)?;
-        let selected_index = select_audio_bus_index(&available, requested_channels);
+        let selected_index =
+            select_audio_bus_index(&available, requested_channels, requested_index, direction)?;
         let selected = available
             .iter()
             .find(|bus| bus.index == selected_index)
@@ -123,6 +128,7 @@ impl Vst3ComponentInstance {
         Ok(Vst3SelectedAudioBus {
             direction,
             requested_channels,
+            requested_index,
             selected_index,
             selected,
             available,
@@ -349,9 +355,28 @@ impl Vst3ComponentInstance {
     }
 }
 
-fn select_audio_bus_index(buses: &[Vst3AudioBusInfo], requested_channels: u16) -> i32 {
+fn select_audio_bus_index(
+    buses: &[Vst3AudioBusInfo],
+    requested_channels: u16,
+    requested_index: Option<i32>,
+    direction: Vst3BusDirection,
+) -> HostResult<i32> {
+    if let Some(index) = requested_index {
+        if index < 0
+            || !buses
+                .iter()
+                .any(|bus| bus.index == index && bus.direction == direction)
+        {
+            return Err(HostError::InvalidAudioBusIndex {
+                direction: direction.as_str(),
+                index,
+            });
+        }
+        return Ok(index);
+    }
+
     let requested_channels = i32::from(requested_channels);
-    buses
+    Ok(buses
         .iter()
         .find(|bus| bus.bus_type == Vst3BusType::Main && bus.channel_count == requested_channels)
         .or_else(|| {
@@ -360,7 +385,7 @@ fn select_audio_bus_index(buses: &[Vst3AudioBusInfo], requested_channels: u16) -
             })
         })
         .or_else(|| buses.iter().find(|bus| bus.channel_count > 0))
-        .map_or(0, |bus| bus.index)
+        .map_or(0, |bus| bus.index))
 }
 
 #[cfg(test)]

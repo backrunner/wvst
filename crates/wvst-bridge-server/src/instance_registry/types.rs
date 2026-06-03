@@ -13,6 +13,10 @@ pub struct InstanceCreateParams {
     pub max_block_frames: u16,
     pub input_channels: u16,
     pub output_channels: u16,
+    #[serde(default)]
+    pub input_bus_index: Option<i32>,
+    #[serde(default)]
+    pub output_bus_index: Option<i32>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
@@ -178,6 +182,10 @@ pub struct InstanceRecord {
     pub max_block_frames: u16,
     pub input_channels: u16,
     pub output_channels: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_bus_index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_bus_index: Option<i32>,
     pub state: InstanceState,
     pub worker_state: WorkerState,
     pub stream_state: StreamState,
@@ -328,6 +336,8 @@ pub enum InstanceError {
     InvalidMaxBlockFrames(u16),
     InvalidInputChannels(u16),
     InvalidOutputChannels(u16),
+    InvalidInputBusIndex(i32),
+    InvalidOutputBusIndex(i32),
     InstanceNotFound(u64),
     RegistryUnavailable,
 }

@@ -78,6 +78,7 @@ const fn compatibility_category_and_hint(error: &HostError) -> (&'static str, &'
             "the parameter edit gesture order is invalid for this controller",
         ),
         HostError::InvalidChannelCount { .. }
+        | HostError::InvalidAudioBusIndex { .. }
         | HostError::InvalidMaxBlockFrames(_)
         | HostError::InvalidSampleRate(_)
         | HostError::UnsupportedSpeakerArrangement(_) => (
@@ -144,6 +145,7 @@ fn host_error_kind(error: &HostError) -> &'static str {
         HostError::InvalidInterfaceId(_) => "invalid-interface-id",
         HostError::InvalidMaxBlockFrames(_) => "invalid-max-block-frames",
         HostError::InvalidSampleRate(_) => "invalid-sample-rate",
+        HostError::InvalidAudioBusIndex { .. } => "invalid-audio-bus-index",
         HostError::UnsupportedSpeakerArrangement(_) => "unsupported-speaker-arrangement",
         HostError::MissingSymbol(_) => "missing-symbol",
         HostError::ModuleLoadFailed(_) => "module-load-failed",

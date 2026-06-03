@@ -16,6 +16,8 @@ pub(super) struct WorkerAudioBusDiagnostics {
 struct WorkerSelectedAudioBus {
     direction: WorkerAudioBusDirection,
     requested_channels: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_index: Option<i32>,
     selected_index: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     selected: Option<WorkerAudioBusInfo>,
@@ -72,6 +74,7 @@ impl From<Vst3SelectedAudioBus> for WorkerSelectedAudioBus {
         Self {
             direction: WorkerAudioBusDirection::from(value.direction),
             requested_channels: value.requested_channels,
+            requested_index: value.requested_index,
             selected_index: value.selected_index,
             selected: value.selected.map(WorkerAudioBusInfo::from),
             available: value
@@ -135,6 +138,7 @@ mod tests {
             input: Some(Vst3SelectedAudioBus {
                 direction: Vst3BusDirection::Input,
                 requested_channels: 2,
+                requested_index: Some(1),
                 selected_index: 1,
                 selected: Some(bus(1, Vst3BusDirection::Input, Vst3BusType::Main)),
                 available: vec![
@@ -145,6 +149,7 @@ mod tests {
             output: Vst3SelectedAudioBus {
                 direction: Vst3BusDirection::Output,
                 requested_channels: 2,
+                requested_index: None,
                 selected_index: 3,
                 selected: Some(bus(3, Vst3BusDirection::Output, Vst3BusType::Unknown(99))),
                 available: vec![bus(3, Vst3BusDirection::Output, Vst3BusType::Unknown(99))],
@@ -155,6 +160,7 @@ mod tests {
 
         assert_eq!(value["input"]["direction"], "input");
         assert_eq!(value["input"]["requestedChannels"], 2);
+        assert_eq!(value["input"]["requestedIndex"], 1);
         assert_eq!(value["input"]["selectedIndex"], 1);
         assert_eq!(value["input"]["selected"]["busType"]["kind"], "main");
         assert_eq!(value["input"]["available"][0]["busType"]["kind"], "aux");

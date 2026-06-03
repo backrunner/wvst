@@ -56,6 +56,8 @@ impl InstanceRegistry {
             max_block_frames: params.max_block_frames,
             input_channels: params.input_channels,
             output_channels: params.output_channels,
+            input_bus_index: params.input_bus_index,
+            output_bus_index: params.output_bus_index,
             state: InstanceState::Allocated,
             worker_state: WorkerState::NotStarted,
             stream_state: StreamState::Open,
@@ -347,6 +349,8 @@ impl InstanceError {
             }
             Self::InvalidInputChannels(value) => format!("invalid inputChannels: {value}"),
             Self::InvalidOutputChannels(value) => format!("invalid outputChannels: {value}"),
+            Self::InvalidInputBusIndex(value) => format!("invalid inputBusIndex: {value}"),
+            Self::InvalidOutputBusIndex(value) => format!("invalid outputBusIndex: {value}"),
             Self::InstanceNotFound(instance_id) => {
                 format!("instance not found: {instance_id}")
             }
@@ -375,6 +379,12 @@ impl InstanceError {
             Self::InvalidOutputChannels(value) => {
                 json!({ "kind": "invalid-output-channels", "outputChannels": value })
             }
+            Self::InvalidInputBusIndex(value) => {
+                json!({ "kind": "invalid-input-bus-index", "inputBusIndex": value })
+            }
+            Self::InvalidOutputBusIndex(value) => {
+                json!({ "kind": "invalid-output-bus-index", "outputBusIndex": value })
+            }
             Self::InstanceNotFound(instance_id) => {
                 json!({ "kind": "instance-not-found", "instanceId": instance_id })
             }
@@ -399,7 +409,24 @@ fn validate_create_params(params: &InstanceCreateParams) -> Result<(), InstanceE
 
     ChannelCount::new(params.output_channels)
         .map_err(|_| InstanceError::InvalidOutputChannels(params.output_channels))?;
+    validate_bus_index(params.input_bus_index, InstanceError::InvalidInputBusIndex)?;
+    validate_bus_index(
+        params.output_bus_index,
+        InstanceError::InvalidOutputBusIndex,
+    )?;
 
+    Ok(())
+}
+
+fn validate_bus_index(
+    index: Option<i32>,
+    invalid: fn(i32) -> InstanceError,
+) -> Result<(), InstanceError> {
+    if let Some(index) = index
+        && index < 0
+    {
+        return Err(invalid(index));
+    }
     Ok(())
 }
 

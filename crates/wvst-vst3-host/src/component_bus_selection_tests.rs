@@ -7,7 +7,39 @@ fn prefers_main_bus_matching_requested_channels() {
         test_bus(2, 2, false, Vst3BusType::Main),
     ];
 
-    assert_eq!(select_audio_bus_index(&buses, 2), 2);
+    assert_eq!(
+        select_audio_bus_index(&buses, 2, None, Vst3BusDirection::Output).expect("selected"),
+        2
+    );
+}
+
+#[test]
+fn uses_explicit_bus_index_when_available() {
+    let buses = [
+        test_bus(0, 2, true, Vst3BusType::Main),
+        test_bus(3, 2, false, Vst3BusType::Aux),
+    ];
+
+    assert_eq!(
+        select_audio_bus_index(&buses, 2, Some(3), Vst3BusDirection::Output).expect("selected"),
+        3
+    );
+}
+
+#[test]
+fn rejects_missing_explicit_bus_index() {
+    let buses = [test_bus(0, 2, true, Vst3BusType::Main)];
+
+    let error =
+        select_audio_bus_index(&buses, 2, Some(3), Vst3BusDirection::Output).expect_err("bus");
+
+    assert_eq!(
+        error,
+        HostError::InvalidAudioBusIndex {
+            direction: "output",
+            index: 3,
+        }
+    );
 }
 
 fn test_bus(

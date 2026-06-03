@@ -55,7 +55,6 @@ pub struct Vst3LoadedComponent {
 }
 
 impl Vst3LoadedComponent {
-    #[cfg(target_os = "macos")]
     fn new(
         instance: Vst3ComponentInstance,
         controller: Option<Vst3EditController>,
@@ -380,7 +379,6 @@ struct Vst3ConnectedPair {
 // mutex.
 unsafe impl Send for Vst3LoadedComponent {}
 
-#[cfg(any(target_os = "macos", test))]
 fn factory_create_instance_tuids(
     class_id: &str,
     interface_id: &str,
@@ -428,9 +426,20 @@ pub fn create_vst3_component_instance(
 #[path = "factory/platform_macos.rs"]
 mod platform;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+#[path = "factory/platform_native.rs"]
+mod platform;
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    all(unix, not(target_os = "macos"))
+)))]
 #[path = "factory/platform_stub.rs"]
 mod platform;
+
+#[path = "factory/plugin_factory.rs"]
+mod plugin_factory;
 
 #[cfg(test)]
 #[path = "factory_tests.rs"]

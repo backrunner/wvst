@@ -41,6 +41,25 @@ fn accepts_explicit_class_id_missing_from_scanner_metadata() {
 }
 
 #[test]
+fn records_explicit_audio_bus_selection() {
+    let registry = InstanceRegistry::new();
+    let plugin = plugin();
+    let mut params = create_params();
+    params.input_bus_index = Some(1);
+    params.output_bus_index = Some(2);
+
+    let record = registry
+        .create(params, &plugin)
+        .expect("instance with bus selection");
+
+    assert_eq!(record.input_bus_index, Some(1));
+    assert_eq!(record.output_bus_index, Some(2));
+    let value = serde_json::to_value(record).expect("record json");
+    assert_eq!(value["inputBusIndex"], 1);
+    assert_eq!(value["outputBusIndex"], 2);
+}
+
+#[test]
 fn destroys_record_by_instance_id() {
     let registry = InstanceRegistry::new();
     let plugin = plugin();
@@ -341,6 +360,19 @@ fn rejects_invalid_sample_rate() {
     );
 }
 
+#[test]
+fn rejects_negative_audio_bus_index() {
+    let registry = InstanceRegistry::new();
+    let plugin = plugin();
+    let mut params = create_params();
+    params.output_bus_index = Some(-1);
+
+    assert_eq!(
+        registry.create(params, &plugin),
+        Err(InstanceError::InvalidOutputBusIndex(-1))
+    );
+}
+
 fn create_params() -> InstanceCreateParams {
     InstanceCreateParams {
         plugin_id: "vst3:test".to_string(),
@@ -349,6 +381,8 @@ fn create_params() -> InstanceCreateParams {
         max_block_frames: 128,
         input_channels: 2,
         output_channels: 2,
+        input_bus_index: None,
+        output_bus_index: None,
     }
 }
 

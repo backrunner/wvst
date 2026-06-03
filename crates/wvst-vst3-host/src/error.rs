@@ -74,6 +74,10 @@ pub enum HostError {
         input: usize,
         output: usize,
     },
+    InvalidAudioBusIndex {
+        direction: &'static str,
+        index: i32,
+    },
     InvalidBufferLength {
         expected: usize,
         actual: usize,
@@ -240,6 +244,12 @@ impl Display for HostError {
                 write!(
                     formatter,
                     "invalid channel count: input={input}, output={output}"
+                )
+            }
+            Self::InvalidAudioBusIndex { direction, index } => {
+                write!(
+                    formatter,
+                    "invalid VST3 {direction} audio bus index: {index}"
                 )
             }
             Self::InvalidBufferLength { expected, actual } => {

@@ -86,6 +86,8 @@ fn test_record(stream_state: StreamState) -> InstanceRecord {
         max_block_frames: 128,
         input_channels: 2,
         output_channels: 2,
+        input_bus_index: None,
+        output_bus_index: None,
         state: InstanceState::Ready,
         worker_state: WorkerState::Ready,
         stream_state,

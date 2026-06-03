@@ -4,6 +4,20 @@ use super::*;
 use crate::instance_registry::{InstanceState, StreamState, WorkerState};
 use crate::metrics::BridgeMetrics;
 
+#[test]
+fn instance_create_params_include_explicit_audio_bus_selection() {
+    let record = InstanceRecord {
+        input_bus_index: Some(1),
+        output_bus_index: Some(2),
+        ..record()
+    };
+
+    let params = instance_create_params(&record);
+
+    assert_eq!(params["inputBusIndex"], 1);
+    assert_eq!(params["outputBusIndex"], 2);
+}
+
 #[tokio::test]
 async fn quarantines_plugin_after_repeated_start_failures() {
     let supervisor = WorkerSupervisor::new_for_test(
@@ -416,6 +430,8 @@ fn record() -> InstanceRecord {
         max_block_frames: 128,
         input_channels: 2,
         output_channels: 2,
+        input_bus_index: None,
+        output_bus_index: None,
         state: InstanceState::Allocated,
         worker_state: WorkerState::NotStarted,
         stream_state: StreamState::Open,

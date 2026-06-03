@@ -443,7 +443,7 @@ fn record_worker_shutdown(metrics: Option<&Arc<BridgeMetrics>>, audit: WorkerShu
 }
 
 fn instance_create_params(record: &InstanceRecord) -> Value {
-    json!({
+    let mut params = json!({
         "instanceId": record.instance_id,
         "streamId": record.stream_id,
         "pluginId": record.plugin_id,
@@ -454,7 +454,14 @@ fn instance_create_params(record: &InstanceRecord) -> Value {
         "maxBlockFrames": record.max_block_frames,
         "inputChannels": record.input_channels,
         "outputChannels": record.output_channels,
-    })
+    });
+    if let Some(input_bus_index) = record.input_bus_index {
+        params["inputBusIndex"] = json!(input_bus_index);
+    }
+    if let Some(output_bus_index) = record.output_bus_index {
+        params["outputBusIndex"] = json!(output_bus_index);
+    }
+    params
 }
 
 #[cfg(test)]

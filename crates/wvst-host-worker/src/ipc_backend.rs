@@ -413,9 +413,37 @@ fn processing_config(params: &InstanceCreateParams) -> Result<Vst3ProcessingConf
         input_channels,
         output_channels,
     )
+    .and_then(|config| {
+        config.with_audio_bus_indices(params.input_bus_index, params.output_bus_index)
+    })
     .map_err(error_message)
 }
 
 fn error_message(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn processing_config_carries_explicit_audio_bus_indices() {
+        let config = processing_config(&InstanceCreateParams {
+            instance_id: 7,
+            stream_id: 9,
+            plugin_path: "/tmp/Test.vst3".to_string(),
+            class_id: Some("class-a".to_string()),
+            sample_rate: 48_000,
+            max_block_frames: 128,
+            input_channels: 2,
+            output_channels: 2,
+            input_bus_index: Some(1),
+            output_bus_index: Some(3),
+        })
+        .expect("processing config");
+
+        assert_eq!(config.input_bus_index, Some(1));
+        assert_eq!(config.output_bus_index, Some(3));
+    }
 }

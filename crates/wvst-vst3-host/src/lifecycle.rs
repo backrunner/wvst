@@ -35,6 +35,10 @@ pub struct Vst3ProcessingConfig {
     pub max_block_frames: u16,
     pub input_channels: u16,
     pub output_channels: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_bus_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_bus_index: Option<i32>,
 }
 
 impl Vst3ProcessingConfig {
@@ -62,8 +66,31 @@ impl Vst3ProcessingConfig {
             max_block_frames,
             input_channels,
             output_channels,
+            input_bus_index: None,
+            output_bus_index: None,
         })
     }
+
+    pub fn with_audio_bus_indices(
+        mut self,
+        input_bus_index: Option<i32>,
+        output_bus_index: Option<i32>,
+    ) -> HostResult<Self> {
+        validate_bus_index("input", input_bus_index)?;
+        validate_bus_index("output", output_bus_index)?;
+        self.input_bus_index = input_bus_index;
+        self.output_bus_index = output_bus_index;
+        Ok(self)
+    }
+}
+
+fn validate_bus_index(direction: &'static str, index: Option<i32>) -> HostResult<()> {
+    if let Some(index) = index
+        && index < 0
+    {
+        return Err(HostError::InvalidAudioBusIndex { direction, index });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]

@@ -16,6 +16,13 @@ impl Vst3BusDirection {
             Self::Output => VST3_BUS_DIRECTION_OUTPUT,
         }
     }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

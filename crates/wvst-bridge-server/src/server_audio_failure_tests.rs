@@ -88,6 +88,8 @@ fn instance_params() -> crate::instance_registry::InstanceCreateParams {
         max_block_frames: 128,
         input_channels: 2,
         output_channels: 2,
+        input_bus_index: None,
+        output_bus_index: None,
     }
 }
 

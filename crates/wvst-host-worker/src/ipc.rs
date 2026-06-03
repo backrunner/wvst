@@ -96,6 +96,10 @@ struct InstanceCreateParams {
     max_block_frames: u16,
     input_channels: usize,
     output_channels: usize,
+    #[serde(default)]
+    input_bus_index: Option<i32>,
+    #[serde(default)]
+    output_bus_index: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
