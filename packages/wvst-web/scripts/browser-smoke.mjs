@@ -10,6 +10,14 @@ const reportPath = resolve(
   repoRoot,
   process.env.WVST_BROWSER_SMOKE_REPORT ?? "output/playwright/web-audio-smoke.json",
 );
+const smokeConfig = {
+  frames: integerFromEnv("WVST_BROWSER_SMOKE_FRAMES", 128),
+  outputChannels: integerFromEnv("WVST_BROWSER_SMOKE_OUTPUT_CHANNELS", 1),
+  capacityQuanta: integerFromEnv("WVST_BROWSER_SMOKE_CAPACITY_QUANTA", 64),
+  durationMs: integerFromEnv("WVST_BROWSER_SMOKE_DURATION_MS", 750),
+  pollMs: integerFromEnv("WVST_BROWSER_SMOKE_POLL_MS", 5),
+  minRoundTrips: integerFromEnv("WVST_BROWSER_SMOKE_MIN_ROUND_TRIPS", 8),
+};
 
 const MIME_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -35,6 +43,7 @@ const result = {
   sharedArrayBuffer: typeof globalThis.SharedArrayBuffer === "function",
   audioWorklet: false,
   sampleRate: 0,
+  config: ${JSON.stringify(smokeConfig)},
   metrics: undefined,
 };
 const outputWriteTimes = new Map();
@@ -42,20 +51,26 @@ const roundTripSamplesUs = [];
 let lastRecordedOutputSequence = 0;
 
 async function waitForMetrics(buffers) {
-  const deadline = performance.now() + 4_000;
+  const deadline = performance.now() + result.config.durationMs;
+  let metrics = readLoopbackMetrics(buffers);
   while (performance.now() < deadline) {
     const inputSequence = Atomics.load(buffers.counters, LoopbackCounter.InputSequence);
     Atomics.store(buffers.counters, LoopbackCounter.InputConsumedSequence, inputSequence);
     keepOutputAhead(buffers);
 
-    const metrics = readLoopbackMetrics(buffers);
+    metrics = readLoopbackMetrics(buffers);
     recordConsumedOutputs(metrics.outputConsumedSequence);
-    if (metrics.inputSequence >= 8 && metrics.outputConsumedSequence >= 8) {
-      return metrics;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, result.config.pollMs));
   }
-  throw new Error("timed out waiting for AudioWorklet loopback metrics");
+  metrics = readLoopbackMetrics(buffers);
+  recordConsumedOutputs(metrics.outputConsumedSequence);
+  if (
+    metrics.inputSequence < result.config.minRoundTrips ||
+    metrics.outputConsumedSequence < result.config.minRoundTrips
+  ) {
+    throw new Error("insufficient AudioWorklet loopback samples");
+  }
+  return metrics;
 }
 
 async function withTimeout(promise, timeoutMs, label) {
@@ -144,15 +159,15 @@ try {
   result.sampleRate = context.sampleRate;
 
   const buffers = createLoopbackSharedBuffers({
-    frames: 128,
+    frames: result.config.frames,
     inputChannels: 0,
-    outputChannels: 1,
-    capacityQuanta: 64,
+    outputChannels: result.config.outputChannels,
+    capacityQuanta: result.config.capacityQuanta,
   });
   const node = await createLoopbackAudioWorkletNode(context, {
     processorUrl: "/dist/esm/audio/loopback-processor.js",
     inputChannels: 0,
-    outputChannels: 1,
+    outputChannels: result.config.outputChannels,
     buffers,
   });
   const gain = context.createGain();
@@ -167,9 +182,9 @@ try {
     endToEndRoundTripUs: percentileSnapshot(roundTripSamplesUs),
   };
   result.ok =
-    result.metrics.inputSequence >= 8 &&
-    result.metrics.outputConsumedSequence >= 8 &&
-    result.metrics.endToEndRoundTripUs.count >= 8;
+    result.metrics.inputSequence >= result.config.minRoundTrips &&
+    result.metrics.outputConsumedSequence >= result.config.minRoundTrips &&
+    result.metrics.endToEndRoundTripUs.count >= result.config.minRoundTrips;
   await context.close();
 } catch (error) {
   result.error = error instanceof Error ? error.message : String(error);
@@ -227,6 +242,7 @@ if (!address || typeof address === "string") {
 let browser;
 try {
   browser = await chromium.launch({
+    headless: process.env.WVST_BROWSER_SMOKE_HEADLESS !== "0",
     args: ["--autoplay-policy=no-user-gesture-required"],
   });
   const page = await browser.newPage();
@@ -244,7 +260,7 @@ try {
     await page.waitForFunction(
       () => globalThis.__WVST_BROWSER_SMOKE_RESULT__,
       undefined,
-      { timeout: 6_000 },
+      { timeout: smokeConfig.durationMs + 6_000 },
     );
   } catch (error) {
     throw new Error(
@@ -263,4 +279,16 @@ try {
 } finally {
   await browser?.close();
   await new Promise((resolve) => server.close(resolve));
+}
+
+function integerFromEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.length === 0) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
 }
