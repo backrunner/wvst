@@ -1,7 +1,8 @@
 use std::error::Error;
+use std::io::Write;
 
 use wvst_bridge_server::BridgeConfig;
-use wvst_embed::BridgeRuntime;
+use wvst_embed::{BridgeRuntime, BridgeRuntimeLogRecord};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -15,19 +16,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut events = runtime.subscribe_events();
 
     let handle = runtime.start().await?;
-    println!("WVST bridge listening on {}", handle.local_addr());
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "WVST bridge listening on {}", handle.local_addr())?;
 
     while let Ok(event) = events.try_recv() {
-        println!("event #{}: {:?}", event.sequence, event.kind);
+        BridgeRuntimeLogRecord::event(event).write_json_line(&mut stdout)?;
     }
 
     let diagnostics = handle.diagnostics(None);
-    println!(
-        "metrics: websocketConnections={}, workerFailures={}, workerRestarts={}",
-        diagnostics.metrics.websocket_connections,
-        diagnostics.metrics.worker_failures,
-        diagnostics.metrics.worker_restarts
-    );
+    BridgeRuntimeLogRecord::diagnostics(diagnostics).write_json_line(&mut stdout)?;
 
     handle.shutdown().await?;
     Ok(())

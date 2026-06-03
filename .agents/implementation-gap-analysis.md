@@ -80,7 +80,7 @@
 - `wvst-vst3-host` 已提供可选 `IMidiMapping` facade；`wvst-host-worker` 会在 VST3 runtime 初始化后缓存 channel/controller 到 ParamID 的映射，并将 MIDI CC、pitch bend 和 channel aftertouch 转换为 VST3 parameter changes 随当前 audio block 输入。
 - VST3 runtime process path 已将插件写回的 output note on/off、poly pressure 和 output parameter changes 规范化为 WVST 协议事件，并由 worker audio IPC 在响应 frame 中编码为 audio + MIDI event section + parameter automation section；未知、越界或 payload 非法的 VST3 output event 会被过滤以避免污染 Web 数据面，同时最近一次 process 的 output event / output parameter-change raw、normalized、filtered 计数已进入 worker runtime diagnostics，便于真实插件兼容测试定位丢失原因。
 - Workspace 已新增 `wvst-embed` crate，提供可嵌入 `BridgeRuntime` / `BridgeHandle`，支持应用内启动 Bridge Server、读取绑定地址、主动 shutdown、runtime event subscription、最近事件快照、外部 worker executable 注入和 worker timeout 配置。
-- `wvst-embed` 的 `BridgeHandle` 已提供只读 metrics snapshot 和 runtime diagnostics 聚合，嵌入式宿主可直接读取本地地址、指标和 recent events 做健康检查/日志集成；`crates/wvst-embed/examples/embedded_bridge.rs` 提供可编译的应用生命周期集成示例，覆盖配置、事件订阅、启动、diagnostics 读取和优雅 shutdown。
+- `wvst-embed` 的 `BridgeHandle` 已提供只读 metrics snapshot 和 runtime diagnostics 聚合，嵌入式宿主可直接读取本地地址、指标和 recent events 做健康检查/日志集成；`BridgeRuntimeLogRecord` 已提供 event/diagnostics JSON-lines 写入 helper，`crates/wvst-embed/examples/embedded_bridge.rs` 提供可编译的应用生命周期和结构化日志管线集成示例，覆盖配置、事件订阅、启动、diagnostics 读取和优雅 shutdown。
 - Workspace 已新增 `wvst-process-supervision` crate，将 worker 进程树终止的 Unix process group 与 Windows Job Object 平台 FFI 收敛到独立安全 API；`wvst-bridge-server` 继续保持 `unsafe_code = deny`。
 - Bridge worker supervisor 已接入可选 worker address-space memory cap 和 CPU time hard cap：`WVST_WORKER_MEMORY_LIMIT_BYTES` / `BridgeConfig::with_worker_memory_limit_bytes()` 与 `WVST_WORKER_CPU_TIME_LIMIT_SECONDS` / `BridgeConfig::with_worker_cpu_time_limit_seconds()` 会通过 `wvst-process-supervision::WorkerResourceLimits` 传给 worker spawn；Unix/macOS/Linux 在 child `exec` 前设置 `RLIMIT_AS` / `RLIMIT_CPU`，Windows Job Object 会设置 job memory 和 job user-time limit。Linux 还新增 cgroup v2 backend，可通过 `WVST_WORKER_LINUX_CGROUP_PARENT`、`WVST_WORKER_LINUX_CGROUP_MEMORY_MAX_BYTES`、`WVST_WORKER_LINUX_CGROUP_CPU_QUOTA_MICROS` 和 `WVST_WORKER_LINUX_CGROUP_CPU_PERIOD_MICROS` 为每个 worker 创建独立 cgroup 并写入 `memory.max` / `cpu.max` / `cgroup.procs`；cgroup 配置失败会以 `supervision-setup-failed` 结构化错误返回，Bridge Server 自身仍不含 unsafe。
 
@@ -141,7 +141,7 @@
 
 仍缺少：
 
-- `wvst-embed` 已有 runtime builder、事件订阅、事件快照、只读 metrics diagnostics、外部 worker executable 注入、timeout 配置和可编译应用生命周期示例；仍缺少日志管线示例和打包脚本。
+- `wvst-embed` 已有 runtime builder、事件订阅、事件快照、只读 metrics diagnostics、外部 worker executable 注入、timeout 配置、JSON-lines 日志 helper 和可编译应用生命周期/日志管线示例；仍缺少打包脚本。
 - macOS 安装、启动、授权、日志和诊断命令。
 - Windows 真实运行验证、Linux cgroup 资源限制 backend 和发布打包脚本。
 

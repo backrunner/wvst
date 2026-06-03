@@ -751,6 +751,8 @@ version = "0.1.0"
 name = "wvst-embed"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tokio",
  "wvst-bridge-server",
 ]

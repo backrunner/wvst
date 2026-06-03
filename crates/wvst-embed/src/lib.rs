@@ -1,9 +1,11 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use serde::Serialize;
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
 use wvst_bridge_server::{
@@ -43,17 +45,39 @@ pub struct BridgeHandle {
     join: JoinHandle<Result<(), BridgeError>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeRuntimeDiagnostics {
     pub local_addr: SocketAddr,
     pub metrics: BridgeMetricsSnapshot,
     pub recent_events: Vec<BridgeEvent>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "recordType",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum BridgeRuntimeLogRecord {
+    Event {
+        event: BridgeEvent,
+    },
+    Diagnostics {
+        diagnostics: Box<BridgeRuntimeDiagnostics>,
+    },
+}
+
 #[derive(Debug)]
 pub enum EmbedError {
     Bridge(BridgeError),
     RuntimeTask(tokio::task::JoinError),
+}
+
+#[derive(Debug)]
+pub enum BridgeRuntimeLogError {
+    Io(std::io::Error),
+    Json(serde_json::Error),
 }
 
 impl BridgeRuntime {
@@ -145,6 +169,24 @@ impl BridgeHandle {
         }
 
         self.join.await??;
+        Ok(())
+    }
+}
+
+impl BridgeRuntimeLogRecord {
+    pub const fn event(event: BridgeEvent) -> Self {
+        Self::Event { event }
+    }
+
+    pub fn diagnostics(diagnostics: BridgeRuntimeDiagnostics) -> Self {
+        Self::Diagnostics {
+            diagnostics: Box::new(diagnostics),
+        }
+    }
+
+    pub fn write_json_line(&self, writer: &mut impl Write) -> Result<(), BridgeRuntimeLogError> {
+        serde_json::to_writer(&mut *writer, self)?;
+        writer.write_all(b"\n")?;
         Ok(())
     }
 }
@@ -253,6 +295,17 @@ impl Display for EmbedError {
 
 impl Error for EmbedError {}
 
+impl Display for BridgeRuntimeLogError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "bridge runtime log I/O error: {error}"),
+            Self::Json(error) => write!(formatter, "bridge runtime log JSON error: {error}"),
+        }
+    }
+}
+
+impl Error for BridgeRuntimeLogError {}
+
 impl From<BridgeError> for EmbedError {
     fn from(value: BridgeError) -> Self {
         Self::Bridge(value)
@@ -262,6 +315,18 @@ impl From<BridgeError> for EmbedError {
 impl From<tokio::task::JoinError> for EmbedError {
     fn from(value: tokio::task::JoinError) -> Self {
         Self::RuntimeTask(value)
+    }
+}
+
+impl From<std::io::Error> for BridgeRuntimeLogError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+impl From<serde_json::Error> for BridgeRuntimeLogError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::Json(value)
     }
 }
 
@@ -353,5 +418,33 @@ mod tests {
             runtime.config.worker_linux_cgroup_cpu_max_micros(),
             Some((50_000, 100_000))
         );
+    }
+
+    #[tokio::test]
+    async fn writes_event_and_diagnostics_json_lines() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("bind addr"));
+        let handle = BridgeRuntime::new(config).start().await.expect("runtime");
+        let event = handle
+            .recent_events(None)
+            .into_iter()
+            .next()
+            .expect("recent event");
+        let diagnostics = handle.diagnostics(None);
+        let mut output = Vec::new();
+
+        BridgeRuntimeLogRecord::event(event)
+            .write_json_line(&mut output)
+            .expect("event log line");
+        BridgeRuntimeLogRecord::diagnostics(diagnostics)
+            .write_json_line(&mut output)
+            .expect("diagnostics log line");
+
+        let text = String::from_utf8(output).expect("utf8");
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"recordType\":\"event\""));
+        assert!(lines[1].contains("\"recordType\":\"diagnostics\""));
+
+        handle.shutdown().await.expect("shutdown");
     }
 }
