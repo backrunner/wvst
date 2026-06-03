@@ -1,22 +1,20 @@
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
-use wvst_core::ProtocolVersion;
-use wvst_protocol::{AUDIO_FRAME_VERSION, negotiate_protocol};
 
 use crate::audio_in_flight::AudioInFlightLimiter;
 use crate::audio_stream_tracker::AudioStreamTracker;
 use crate::component_handler_events::ComponentHandlerEventPublisher;
 use crate::config::BridgeConfig;
 use crate::events::BridgeEventBus;
-use crate::host_worker::{HostWorkerClient, HostWorkerError};
-use crate::instance_registry::{InstanceError, InstanceRegistry};
+use crate::host_worker::HostWorkerClient;
+use crate::instance_registry::InstanceRegistry;
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::stream_shared_memory::SharedMemoryStreamRegistry;
 use crate::stream_shared_memory_pump::SharedMemoryPumpRegistry;
-use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorError};
+use crate::worker_supervisor::WorkerSupervisor;
 
 pub(crate) struct ControlContext<'a> {
     pub(crate) config: &'a BridgeConfig,
@@ -59,70 +57,6 @@ struct RpcRequest {
     params: Value,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HelloParams {
-    client_name: String,
-    client_version: String,
-    protocol_min: WireProtocolVersion,
-    protocol_max: WireProtocolVersion,
-    audio_frame_version: u16,
-    #[serde(default)]
-    token: Option<String>,
-    #[serde(default)]
-    origin: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PluginScanParams {
-    #[serde(default)]
-    paths: Vec<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PluginListParams {
-    #[serde(default)]
-    rescan: bool,
-    #[serde(default)]
-    paths: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PluginFactoryInfoParams {
-    path: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BridgeEventsParams {
-    #[serde(default)]
-    after_sequence: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-struct WireProtocolVersion {
-    major: u16,
-    minor: u16,
-}
-
-impl From<WireProtocolVersion> for ProtocolVersion {
-    fn from(value: WireProtocolVersion) -> Self {
-        Self::new(value.major, value.minor)
-    }
-}
-
-impl From<ProtocolVersion> for WireProtocolVersion {
-    fn from(value: ProtocolVersion) -> Self {
-        Self {
-            major: value.major,
-            minor: value.minor,
-        }
-    }
-}
-
 pub(crate) async fn handle_control_text(
     text: &str,
     context: ControlContext<'_>,
@@ -148,25 +82,25 @@ pub(crate) async fn handle_control_text(
 
     let session_authorized = context.session_authorized;
     match request.method.as_str() {
-        "bridge.hello" => handle_hello(request.id, request.params, context),
+        "bridge.hello" => control_handlers::handle_hello(request.id, request.params, context),
         "bridge.metrics" => ControlResponse::new(
             response_result(request.id, json!(context.metrics.snapshot())),
             session_authorized,
         ),
         "bridge.events" => ControlResponse::new(
-            handle_bridge_events(request.id, request.params, context),
+            control_handlers::handle_bridge_events(request.id, request.params, context),
             session_authorized,
         ),
         "plugin.scan" => ControlResponse::new(
-            handle_plugin_scan(request.id, request.params, context),
+            control_handlers::handle_plugin_scan(request.id, request.params, context),
             session_authorized,
         ),
         "plugin.list" => ControlResponse::new(
-            handle_plugin_list(request.id, request.params, context),
+            control_handlers::handle_plugin_list(request.id, request.params, context),
             session_authorized,
         ),
         "plugin.factoryInfo" => ControlResponse::new(
-            handle_plugin_factory_info(request.id, request.params, context).await,
+            control_handlers::handle_plugin_factory_info(request.id, request.params, context).await,
             session_authorized,
         ),
         "instance.create" => ControlResponse::new(
@@ -550,203 +484,16 @@ pub(crate) async fn handle_control_text(
     }
 }
 
-fn handle_plugin_scan(id: Value, params: Value, context: ControlContext<'_>) -> String {
-    let params = parse_params::<PluginScanParams>(params).unwrap_or_default();
-    let report = if params.paths.is_empty() {
-        context.plugins.scan_default_paths()
-    } else {
-        context.plugins.scan_paths(paths_from_strings(params.paths))
-    };
+#[path = "control_handlers.rs"]
+mod control_handlers;
 
-    response_result(id, json!(report))
-}
+#[path = "control_response.rs"]
+mod control_response;
 
-fn handle_bridge_events(id: Value, params: Value, context: ControlContext<'_>) -> String {
-    let params = parse_params::<BridgeEventsParams>(params).unwrap_or_default();
-    let events = context.events.recent_since(params.after_sequence);
-
-    response_result(
-        id,
-        json!({
-            "events": events,
-            "lastSequence": events.last().map(|event| event.sequence),
-        }),
-    )
-}
-
-fn handle_plugin_list(id: Value, params: Value, context: ControlContext<'_>) -> String {
-    let params = parse_params::<PluginListParams>(params).unwrap_or_default();
-    let report = if params.rescan {
-        if params.paths.is_empty() {
-            context.plugins.scan_default_paths()
-        } else {
-            context.plugins.scan_paths(paths_from_strings(params.paths))
-        }
-    } else {
-        context.plugins.list()
-    };
-
-    response_result(id, json!(report))
-}
-
-async fn handle_plugin_factory_info(
-    id: Value,
-    params: Value,
-    context: ControlContext<'_>,
-) -> String {
-    let params = match serde_json::from_value::<PluginFactoryInfoParams>(params) {
-        Ok(params) => params,
-        Err(error) => {
-            return response_error(id, -32602, format!("invalid factory info params: {error}"));
-        }
-    };
-
-    if params.path.is_empty() {
-        return response_error(id, -32602, "factory info path is required");
-    }
-
-    match context.host_worker.factory_info(params.path).await {
-        Ok(info) => response_result(id, info),
-        Err(error) => response_host_worker_error(id, error),
-    }
-}
-
-fn handle_hello(id: Value, params: Value, context: ControlContext<'_>) -> ControlResponse {
-    let params = match serde_json::from_value::<HelloParams>(params) {
-        Ok(params) => params,
-        Err(error) => {
-            return ControlResponse::new(
-                response_error(id, -32602, format!("invalid hello params: {error}")),
-                context.session_authorized,
-            );
-        }
-    };
-
-    let effective_origin = context.origin.or(params.origin.as_deref());
-    if !context.config.origin_is_allowed(effective_origin) {
-        return ControlResponse::new(
-            response_error(id, 4010, "origin denied"),
-            context.session_authorized,
-        );
-    }
-
-    if !context.config.token_is_valid(params.token.as_deref()) {
-        return ControlResponse::new(
-            response_error(id, 4011, "invalid pairing token"),
-            context.session_authorized,
-        );
-    }
-
-    if params.audio_frame_version != AUDIO_FRAME_VERSION {
-        return ControlResponse::new(
-            response_error(id, 4091, "unsupported audio frame version"),
-            context.session_authorized,
-        );
-    }
-
-    let Some(protocol) = negotiate_protocol(
-        params.protocol_min.into(),
-        params.protocol_max.into(),
-        wvst_core::CURRENT_PROTOCOL_VERSION,
-    ) else {
-        return ControlResponse::new(
-            response_error(id, 4090, "protocol version mismatch"),
-            context.session_authorized,
-        );
-    };
-
-    context.metrics.increment_hello_requests();
-
-    ControlResponse::new(
-        response_result(
-            id,
-            json!({
-                "bridgeName": "wvst-bridge",
-                "bridgeVersion": env!("CARGO_PKG_VERSION"),
-                "protocol": WireProtocolVersion::from(protocol),
-                "audioFrameVersion": AUDIO_FRAME_VERSION,
-                "pairingRequired": context.config.token_required(),
-                "origin": effective_origin,
-                "client": {
-                    "name": params.client_name,
-                    "version": params.client_version
-                },
-                "lowLatency": {
-                    "sharedArrayBufferRequired": true,
-                    "crossOriginIsolationRequired": true
-                },
-                "allowedOrigins": context.config.allowed_origins(),
-                "metrics": context.metrics.snapshot()
-            }),
-        ),
-        true,
-    )
-}
-
-fn parse_params<T>(params: Value) -> Result<T, serde_json::Error>
-where
-    T: for<'de> Deserialize<'de> + Default,
-{
-    if params.is_null() {
-        Ok(T::default())
-    } else {
-        serde_json::from_value(params)
-    }
-}
-
-fn paths_from_strings(paths: Vec<String>) -> Vec<std::path::PathBuf> {
-    paths.into_iter().map(std::path::PathBuf::from).collect()
-}
-
-fn response_result(id: Value, result: Value) -> String {
-    serialize_json(json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "result": result
-    }))
-}
-
-fn response_error(id: Value, code: i64, message: impl Into<String>) -> String {
-    serialize_json(json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": code,
-            "message": message.into()
-        }
-    }))
-}
-
-fn response_host_worker_error(id: Value, error: HostWorkerError) -> String {
-    response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
-}
-
-fn response_instance_error(id: Value, error: InstanceError) -> String {
-    response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
-}
-
-fn response_worker_supervisor_error(id: Value, error: WorkerSupervisorError) -> String {
-    response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
-}
-
-fn response_error_data(id: Value, code: i64, message: impl Into<String>, data: Value) -> String {
-    serialize_json(json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": code,
-            "message": message.into(),
-            "data": data
-        }
-    }))
-}
-
-fn serialize_json(value: Value) -> String {
-    serde_json::to_string(&value).unwrap_or_else(|_| {
-        "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"internal error\"}}"
-            .to_string()
-    })
-}
+pub(crate) use control_response::{
+    response_error, response_error_data, response_host_worker_error, response_instance_error,
+    response_result, response_worker_supervisor_error,
+};
 
 #[cfg(test)]
 #[path = "control_tests.rs"]
