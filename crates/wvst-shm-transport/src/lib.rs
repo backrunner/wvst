@@ -3,6 +3,7 @@
 mod cursor;
 mod error;
 mod layout;
+mod memory;
 
 pub use cursor::{
     SHARED_AUDIO_CURSOR_BLOCK_BYTES, SHARED_AUDIO_CURSOR_DROPPED_FRAMES_OFFSET,
@@ -19,3 +20,4 @@ pub use layout::{
     SharedAudioRingLayout, SharedAudioRingRole, SharedAudioRingSpanPlan,
     SharedAudioTransportConfig, SharedAudioTransportLayout,
 };
+pub use memory::{SharedAudioByteRange, SharedAudioRingByteRanges};

@@ -22,6 +22,10 @@ pub enum SharedAudioLayoutError {
         min: usize,
         actual: usize,
     },
+    MemoryTooShort {
+        min: u64,
+        actual: u64,
+    },
     ZeroSampleRate,
     ZeroBlockFrames,
     ZeroCapacityBlocks,
@@ -69,6 +73,10 @@ impl Display for SharedAudioLayoutError {
             Self::CursorBlockTooShort { min, actual } => write!(
                 formatter,
                 "shared audio cursor block requires at least {min} bytes, got {actual}"
+            ),
+            Self::MemoryTooShort { min, actual } => write!(
+                formatter,
+                "shared audio memory requires at least {min} bytes, got {actual}"
             ),
             Self::ZeroSampleRate => {
                 formatter.write_str("shared audio sample rate must be non-zero")
