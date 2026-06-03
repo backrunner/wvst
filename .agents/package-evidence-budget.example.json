@@ -1,0 +1,43 @@
+{
+  "expectedPlatform": "macos",
+  "requireVerifyPassed": true,
+  "requireStrictSignature": false,
+  "maxFailedChecks": 0,
+  "maxSkippedChecks": 0,
+  "maxWarnings": 0,
+  "minChecksRun": 1,
+  "requirePlatformServiceKind": true,
+  "requireDeclaredRuntimeFiles": true,
+  "requireVerificationScriptFile": true,
+  "requireDeclaredChecksExecuted": true,
+  "minVerificationChecks": 1,
+  "requiredVerificationChecks": [
+    "bundle-files",
+    "executable-permissions",
+    "env-template",
+    "launchd-plist",
+    "plist-lint",
+    "codesign",
+    "gatekeeper-assessment",
+    "bridge-diagnose"
+  ],
+  "requiredFileRoles": [
+    "bridge-server",
+    "host-worker",
+    "launcher",
+    "config-template",
+    "service-definition",
+    "install-script",
+    "uninstall-script",
+    "diagnose-script",
+    "log-rotate-script",
+    "verification-script",
+    "package-manifest"
+  ],
+  "requiredFilePaths": [
+    "bin/wvst-bridge-server",
+    "bin/wvst-host-worker",
+    "scripts/verify-macos.sh",
+    "wvst-package-manifest.json"
+  ]
+}

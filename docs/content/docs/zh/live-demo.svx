@@ -1,0 +1,17 @@
+---
+title: Live Demo
+description: 通过浏览器侧 WVST effect rack 播放并处理本地音频文件。
+order: 4
+---
+
+# Live Demo
+
+这个 demo 使用真实 WVST bridge path。当 bridge、浏览器隔离环境或本地 VST 插件不可用时，它不会创建 mock effect。
+
+<WVSTRackDemo locale="zh" />
+
+## 前置条件
+
+- 文档页必须从 localhost 或 HTTPS 提供，并带有 cross-origin isolation headers。
+- `wvst-bridge-server` 必须在 demo 显示的 endpoint 上运行。
+- 挂载的插件应当是能处理 stereo input/output 的 VST3 effect class。

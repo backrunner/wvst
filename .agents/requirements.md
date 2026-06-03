@@ -44,9 +44,10 @@ MVP 范围：
 - FR-WEB-005：提供 `createAudioNode(instance, options)` 或等价 API，把实例挂载为 WebAudio graph 中的节点。
 - FR-WEB-006：支持获取插件名称、厂商、版本、类别、I/O bus、参数、单位、program list、latency、tail、是否为 instrument/effect。
 - FR-WEB-007：支持参数读写、参数文本展示、自动化事件调度和 sample-offset 参数变化。
-- FR-WEB-008：支持 MIDI/note 输入事件，包括 note on/off、pitch bend、CC、aftertouch，以及可扩展 VST3 note expression。
+- FR-WEB-008：支持 MIDI/note 输入事件，包括 note on/off、pitch bend、CC、aftertouch、Web MIDI adapter、虚拟键盘 helper，以及可扩展 VST3 note expression。
 - FR-WEB-009：暴露连接状态、实时状态、当前延迟、drop/underflow/overflow、插件崩溃和恢复事件。
 - FR-WEB-010：当 SAB 不可用时明确失败或进入高延迟 fallback，不静默伪装为低延迟模式。
+- FR-WEB-011：提供应用侧可持久化的实例 state snapshot JSON helper 和目标实例兼容性检查，用于保存和恢复 component/controller opaque state，但 Web SDK 不解释插件私有 state 内容。
 
 ### Bridge Server
 
@@ -121,6 +122,3 @@ MVP 范围：
 - 首个公开版本是否要求浏览器扩展来改善本地 Bridge 配对体验？
 - WebTransport 是否在 MVP 中实验性支持，还是等 WebSocket 数据面稳定后再引入？
 - MVP 是否允许 trusted mode 将多个实例放入同一 worker 进程？
-- 是否需要在首版支持插件 state 的持久化格式导入/导出？
-- 是否需要提供 Web MIDI 到 VST note event 的内置 adapter？
-

@@ -1,0 +1,60 @@
+:root {
+  --sd-bg: #f4eadb;
+  --sd-ink: #2a1b12;
+  --sd-muted: #715b48;
+  --sd-line: #d7c0a5;
+  --sd-grid-line: color-mix(in srgb, var(--sd-line) 44%, transparent);
+  --sd-panel: #fff8ec;
+  --sd-accent-2: #087f8c;
+}
+
+:root[data-theme="dark"] {
+  --sd-bg: #130d09;
+  --sd-ink: #f2e3cf;
+  --sd-muted: #b99b7f;
+  --sd-line: #3b2a1f;
+  --sd-grid-line: color-mix(in srgb, var(--sd-line) 52%, transparent);
+  --sd-panel: #1e1510;
+  --sd-accent-2: #5ec8c2;
+}
+
+body {
+  text-rendering: optimizeLegibility;
+}
+
+.sd-root {
+  background:
+    linear-gradient(var(--sd-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--sd-grid-line) 1px, transparent 1px),
+    radial-gradient(ellipse at 78% 18%, color-mix(in srgb, var(--sd-accent-2) 10%, transparent), transparent 26rem),
+    var(--sd-bg);
+  background-size: 44px 44px, 44px 44px, 100% 100%, 100% 100%;
+}
+
+.sd-brand span:last-child,
+.sd-doc-header h1,
+.sd-page-header h1,
+.sd-home-hero h1 {
+  font-family: "Iowan Old Style", Georgia, serif;
+}
+
+.sd-topbar {
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--sd-ink) 5%, transparent);
+}
+
+.sd-doc,
+.sd-page,
+.sd-code,
+.sd-search-dialog,
+.sd-ask-panel {
+  box-shadow: 0 18px 54px color-mix(in srgb, var(--sd-ink) 8%, transparent);
+}
+
+.sd-doc-header h1,
+.sd-page-header h1 {
+  letter-spacing: 0;
+}
+
+.sd-prose a {
+  text-underline-offset: 0.18em;
+}

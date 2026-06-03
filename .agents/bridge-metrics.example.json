@@ -1,0 +1,21 @@
+{
+  "sharedMemoryPumpPreflightSkips": 0,
+  "sharedMemoryPumpOverruns": 0,
+  "sharedMemoryPumpInputUnderruns": 0,
+  "sharedMemoryPumpOutputBackpressure": 0,
+  "sharedMemoryPumpWorkerErrors": 0,
+  "sharedMemoryPumpEventsEnqueued": 12,
+  "sharedMemoryPumpEventsDrained": 12,
+  "sharedMemoryPumpEventsLate": 0,
+  "sharedMemoryPumpEventsDropped": 0,
+  "sharedMemoryPumpEventsCleared": 0,
+  "sharedMemoryProcessLatency": {
+    "count": 240,
+    "p50Us": 500,
+    "p95Us": 1000,
+    "p99Us": 2000
+  },
+  "sharedMemoryPumpLastProcessMicros": 700,
+  "sharedMemoryPumpMaxProcessMicros": 1800,
+  "sharedMemoryPumpLastOverrunMicros": 0
+}

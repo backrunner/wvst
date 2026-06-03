@@ -85,7 +85,7 @@ AudioFrameHeader
   sent_frame_time: u64  # WebAudio sample clock
 ```
 
-MVP payload 使用 interleaved f32 little-endian。若 `event_count > 0`，payload 前半部分为 `frames * channels * 4` 字节音频样本，后半部分为固定 16 字节 `MidiEvent` 数组。后续可协商 planar、f64、compression 或 datagram 分片。
+MVP payload 使用 interleaved f32 little-endian，并按固定顺序拼接：`frames * channels * 4` 字节音频样本、固定 16 字节 `MidiEvent` 数组、固定 16 字节 parameter automation 数组，以及固定 104 字节 VST3 advanced output event 数组。VST3 advanced event 槽前 40 字节保留 kind、event type、bus、data/text length、type id、note id、value 等固定字段，后 64 字节是 host 在 VST3 `addEvent()` 边界复制的有界 payload，可表达 raw `DataEvent.bytes` 预览或 UTF-8 text/chord/scale 文本，并通过 flags 标记 truncated/unavailable/invalid-text。后续可协商 planar、f64、compression 或 datagram 分片。
 
 ### `wvst-bridge-server`
 
@@ -304,7 +304,7 @@ MidiEvent
   note_id: u32
 ```
 
-Bridge Server 将事件按 `stream_id + sequence + sample_offset` 排序后送入 worker。当前 worker 数据面会验证 event section，并将 note on/off、poly pressure 和对应 raw MIDI note 事件转换为 VST3 `IEventList` 传给真实 backend；CC、pitch bend、channel aftertouch 后续需要走 VST3 parameter/controller path。音源插件允许 `inputChannels = 0`，但仍按稳定 block clock 调用处理，以生成 tail 或持续音频。
+Bridge Server 将事件按 `stream_id + sequence + sample_offset` 排序后送入 worker。当前 worker 数据面会验证 event section，并将 note on/off、poly pressure 和对应 raw MIDI note 事件转换为 VST3 `IEventList` 传给真实 backend；CC、pitch bend、channel aftertouch 和 poly pressure 可通过 VST3 `IMidiMapping` 转换为 sample-accurate parameter changes，与 Web 侧显式参数自动化在 block 内稳定归并。音源插件允许 `inputChannels = 0`，但仍按稳定 block clock 调用处理，以生成 tail 或持续音频。
 
 ## 错误模型
 

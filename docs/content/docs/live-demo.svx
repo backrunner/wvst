@@ -1,0 +1,17 @@
+---
+title: Live Demo
+description: Play a local audio file through a browser-side WVST effect rack.
+order: 4
+---
+
+# Live Demo
+
+This demo uses the real WVST bridge path. It does not create mock effects when the bridge, browser isolation, or local VST plugins are unavailable.
+
+<WVSTRackDemo locale="en" />
+
+## Requirements
+
+- The docs page must be served from localhost or HTTPS with cross-origin isolation headers.
+- `wvst-bridge-server` must be running on the endpoint shown in the demo.
+- Mounted plugins should be effect-style VST3 classes that can process stereo input and output.

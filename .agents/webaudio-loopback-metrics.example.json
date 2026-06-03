@@ -1,0 +1,25 @@
+{
+  "inputFrames": 48000,
+  "outputFrames": 48000,
+  "underflows": 0,
+  "overflows": 0,
+  "droppedInputQuanta": 0,
+  "droppedOutputQuanta": 0,
+  "droppedMidiEvents": 0,
+  "droppedParameterEvents": 0,
+  "lateMidiEvents": 0,
+  "lateParameterEvents": 0,
+  "transportFailures": 0,
+  "endToEndRoundTripUs": {
+    "count": 120,
+    "p50": 5500,
+    "p95": 8500,
+    "p99": 12000
+  },
+  "inputSequence": 375,
+  "inputConsumedSequence": 375,
+  "outputSequence": 375,
+  "outputConsumedSequence": 375,
+  "pendingInputQuanta": 0,
+  "pendingOutputQuanta": 0
+}

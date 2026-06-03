@@ -13,8 +13,11 @@
 - [roadmap.md](roadmap.md)：从 macOS MVP 到跨平台生产可用版本的阶段计划。
 - [development-standards.md](development-standards.md)：Rust/TS 实时音频、高性能、测试、代码规模和提交规范。
 - [implementation-gap-analysis.md](implementation-gap-analysis.md)：当前实现状态、完整能力差距和下一阶段顺序。
-- [runtime-probe-matrix.example.json](runtime-probe-matrix.example.json)：`wvst-testkit` runtime-probe 固定矩阵 manifest 示例，包含 case-level expectations，可配合 `cargo run -p wvst-testkit --bin wvst-runtime-matrix -- --worker <wvst-host-worker> --manifest <matrix.json>` 接入本机真实 VST3 fixture。
+- [runtime-probe-matrix.example.json](runtime-probe-matrix.example.json)：`wvst-testkit` runtime-probe 固定矩阵 manifest 示例，包含真实插件 evidence、case-level expectations 和第三方 expectation quality gates，可配合 `cargo run -p wvst-testkit --bin wvst-runtime-matrix -- --worker <wvst-host-worker> --manifest <matrix.json>` 接入本机真实 VST3 fixture。
 - [latency-snapshot.example.json](latency-snapshot.example.json)：`wvst-testkit` latency snapshot 输入示例，可配合 `cargo run -p wvst-testkit --bin wvst-latency-snapshot -- --input <observations.json>` 生成 `wvst-stability-budget` 可消费的 `LatencySnapshot` JSON。
+- [webaudio-loopback-metrics.example.json](webaudio-loopback-metrics.example.json)：`wvst-stability-budget --webaudio` 可消费的浏览器 WebAudio loopback 指标示例，包含 input/output quantum、drop/late/transport 计数和端到端 round-trip percentile。
+- [bridge-metrics.example.json](bridge-metrics.example.json)：`wvst-stability-budget --bridge` 可消费的 Bridge 指标示例，包含 shared-memory pump 计数、process latency percentile 和可选 pump status timing；CLI 同时兼容 `bridge.metrics` 原始 JSON-RPC result、`stream.sharedMemory.pump.status` result 和 `instance.runtime.snapshot` 中的 pump status。
+- [package-evidence-budget.example.json](package-evidence-budget.example.json)：`wvst-package-evidence` 发布包证据预算示例，可校验平台服务类型、runtime bridge/worker 文件、verify script、manifest/report 检查项一致性和必需文件角色。
 - [skills/wvst-engineering/SKILL.md](skills/wvst-engineering/SKILL.md)：后续 WVST 开发时应加载的本地 skill。
 
 ## 当前结论
