@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::{SHARED_AUDIO_DESCRIPTOR_BYTES, SharedAudioRingLayout};
 use crate::{SharedAudioLayoutError, SharedAudioRingSpanPlan, SharedAudioTransportLayout};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -52,6 +53,16 @@ impl SharedAudioRingByteRanges {
 }
 
 impl SharedAudioTransportLayout {
+    pub fn from_memory_bytes(memory: &[u8]) -> Result<Self, SharedAudioLayoutError> {
+        let layout = Self::from_descriptor_bytes(memory)?;
+        layout.validate_memory_len(memory.len() as u64)?;
+        Ok(layout)
+    }
+
+    pub const fn descriptor_range(&self) -> SharedAudioByteRange {
+        SharedAudioByteRange::new(0, SHARED_AUDIO_DESCRIPTOR_BYTES as u64)
+    }
+
     pub fn validate_memory_len(&self, memory_len: u64) -> Result<(), SharedAudioLayoutError> {
         if memory_len < self.total_bytes {
             return Err(SharedAudioLayoutError::MemoryTooShort {
@@ -60,6 +71,16 @@ impl SharedAudioTransportLayout {
             });
         }
         Ok(())
+    }
+}
+
+impl SharedAudioRingLayout {
+    pub const fn cursor_range(self) -> SharedAudioByteRange {
+        SharedAudioByteRange::new(self.cursor_offset, self.cursor_bytes as u64)
+    }
+
+    pub const fn audio_range(self) -> Option<SharedAudioByteRange> {
+        non_empty_range(self.audio_offset, self.audio_bytes)
     }
 }
 
@@ -181,6 +202,62 @@ mod tests {
             Err(SharedAudioLayoutError::MemoryTooShort {
                 min: 128,
                 actual: 127,
+            })
+        );
+    }
+
+    #[test]
+    fn exposes_descriptor_cursor_and_audio_ranges() {
+        let layout = SharedAudioTransportConfig::new(48_000, 128, 2, 0, 2)
+            .layout()
+            .expect("layout");
+
+        assert_eq!(
+            layout.descriptor_range(),
+            SharedAudioByteRange::new(0, SHARED_AUDIO_DESCRIPTOR_BYTES as u64)
+        );
+        assert_eq!(
+            layout.input.cursor_range(),
+            SharedAudioByteRange::new(layout.input.cursor_offset, 64)
+        );
+        assert_eq!(layout.input.audio_range(), None);
+        assert_eq!(
+            layout.output.audio_range(),
+            Some(SharedAudioByteRange::new(
+                layout.output.audio_offset,
+                layout.output.audio_bytes,
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_layout_from_full_memory_bytes() {
+        let layout = SharedAudioTransportConfig::new(48_000, 128, 2, 2, 2)
+            .layout()
+            .expect("layout");
+        let mut memory = vec![0_u8; layout.total_bytes as usize];
+        memory[..usize::from(SHARED_AUDIO_DESCRIPTOR_BYTES)]
+            .copy_from_slice(&layout.descriptor_bytes());
+
+        assert_eq!(
+            SharedAudioTransportLayout::from_memory_bytes(&memory),
+            Ok(layout)
+        );
+    }
+
+    #[test]
+    fn rejects_memory_shorter_than_layout_total() {
+        let layout = SharedAudioTransportConfig::new(48_000, 128, 2, 2, 2)
+            .layout()
+            .expect("layout");
+        let mut memory = vec![0_u8; usize::from(SHARED_AUDIO_DESCRIPTOR_BYTES)];
+        memory.copy_from_slice(&layout.descriptor_bytes());
+
+        assert_eq!(
+            SharedAudioTransportLayout::from_memory_bytes(&memory),
+            Err(SharedAudioLayoutError::MemoryTooShort {
+                min: layout.total_bytes,
+                actual: u64::from(SHARED_AUDIO_DESCRIPTOR_BYTES),
             })
         );
     }
