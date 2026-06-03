@@ -61,7 +61,12 @@ async fn publishes_worker_failed_event_for_audio_process_error() {
     assert!(header.flags.contains(AudioFrameFlags::SILENCE));
     assert!(header.flags.contains(AudioFrameFlags::PROCESS_ERROR));
     assert_eq!(failed.worker_state, WorkerState::Failed);
+    assert_eq!(failed_event["schemaVersion"], 1);
     assert_eq!(failed_event["kind"], "worker-rejected");
+    assert_eq!(
+        failed_event["classification"]["category"],
+        "worker-rejection"
+    );
     assert_eq!(failed_event["workerData"]["kind"], "vst3-runtime-process");
     assert_eq!(failed_event["workerData"]["stage"], "component.process");
 

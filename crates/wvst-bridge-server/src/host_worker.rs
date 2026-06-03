@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::error_classification::{ErrorClassification, attach_error_classification};
+
 const HOST_WORKER_ENV: &str = "WVST_HOST_WORKER";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_STDERR_CHARS: usize = 4096;
@@ -140,7 +142,7 @@ impl HostWorkerError {
     }
 
     pub fn rpc_data(&self) -> Value {
-        match self {
+        let data = match self {
             Self::Spawn {
                 executable,
                 message,
@@ -163,7 +165,9 @@ impl HostWorkerError {
                 "message": message,
                 "stdout": stdout,
             }),
-        }
+        };
+
+        attach_error_classification(data, host_worker_classification(self))
     }
 
     #[cfg(test)]
@@ -172,6 +176,27 @@ impl HostWorkerError {
             status: "exit status: 2".to_string(),
             stderr: stderr.into(),
         }
+    }
+}
+
+const fn host_worker_classification(error: &HostWorkerError) -> ErrorClassification {
+    match error {
+        HostWorkerError::Spawn { .. } => ErrorClassification::new(
+            "host-worker-launch",
+            "verify WVST_HOST_WORKER, executable permissions, architecture, and local installation layout",
+        ),
+        HostWorkerError::Timeout { .. } => ErrorClassification::new(
+            "host-worker-timeout",
+            "the one-shot host worker command did not complete before the timeout; inspect plugin scan/probe latency and worker stderr",
+        ),
+        HostWorkerError::Exit { .. } => ErrorClassification::new(
+            "host-worker-exit",
+            "the one-shot host worker command exited unsuccessfully; inspect stderr for plugin loading or runtime details",
+        ),
+        HostWorkerError::InvalidJson { .. } => ErrorClassification::new(
+            "host-worker-output",
+            "the one-shot host worker returned malformed JSON; verify worker version compatibility and stdout contamination",
+        ),
     }
 }
 
@@ -242,8 +267,23 @@ mod tests {
         let data = error.rpc_data();
 
         assert_eq!(error.rpc_code(), 5032);
+        assert_eq!(data["schemaVersion"], 1);
         assert_eq!(data["kind"], "exit");
         assert_eq!(data["stderr"], "module load failed");
+        assert_eq!(data["classification"]["schemaVersion"], 1);
+        assert_eq!(data["classification"]["category"], "host-worker-exit");
+    }
+
+    #[test]
+    fn classifies_host_worker_launch_errors() {
+        let error = HostWorkerError::Spawn {
+            executable: PathBuf::from("/tmp/wvst-host-worker"),
+            message: "not found".to_string(),
+        };
+        let data = error.rpc_data();
+
+        assert_eq!(data["kind"], "spawn");
+        assert_eq!(data["classification"]["category"], "host-worker-launch");
     }
 
     fn unique_temp_dir() -> PathBuf {

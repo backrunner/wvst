@@ -4,6 +4,7 @@ pub mod component_handler_events;
 pub mod config;
 pub mod control;
 pub mod error;
+pub(crate) mod error_classification;
 pub mod events;
 pub mod host_worker;
 pub mod instance_registry;
