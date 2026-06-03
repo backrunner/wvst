@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{WorkerSupervisor, WorkerSupervisorError};
+use super::{WorkerSupervisor, WorkerSupervisorError, worker_supervisor_batch::WorkerBatchRequest};
 
 impl WorkerSupervisor {
     pub async fn start_processing(&self, instance_id: u64) -> Result<Value, WorkerSupervisorError> {
@@ -29,6 +29,63 @@ impl WorkerSupervisor {
             json!({ "instanceId": instance_id }),
         )
         .await
+    }
+
+    pub async fn metadata_refresh(
+        &self,
+        instance_id: u64,
+        include_state: bool,
+        include_worker_metrics: bool,
+    ) -> Result<Value, WorkerSupervisorError> {
+        let mut requests = vec![
+            WorkerBatchRequest::new("instance.parameters", json!({ "instanceId": instance_id })),
+            WorkerBatchRequest::new("instance.units", json!({ "instanceId": instance_id })),
+        ];
+        let state_index = if include_state {
+            let index = requests.len();
+            requests.push(WorkerBatchRequest::new(
+                "instance.getState",
+                json!({ "instanceId": instance_id }),
+            ));
+            Some(index)
+        } else {
+            None
+        };
+        let worker_index = if include_worker_metrics {
+            let index = requests.len();
+            requests.push(WorkerBatchRequest::new("worker.metrics", json!({})));
+            Some(index)
+        } else {
+            None
+        };
+
+        let results = self.instance_batch_request(instance_id, requests).await?;
+        let parameters = results
+            .first()
+            .and_then(|result| result.get("parameters"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let unit_info = results
+            .get(1)
+            .and_then(|result| result.get("unitInfo"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let state = state_index
+            .and_then(|index| results.get(index))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let worker = worker_index
+            .and_then(|index| results.get(index))
+            .cloned()
+            .unwrap_or(Value::Null);
+
+        Ok(json!({
+            "instanceId": instance_id,
+            "parameters": parameters,
+            "unitInfo": unit_info,
+            "state": state,
+            "worker": worker,
+        }))
     }
 
     pub async fn parameter_get(

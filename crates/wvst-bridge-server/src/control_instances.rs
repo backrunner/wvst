@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{
@@ -17,6 +18,20 @@ use crate::instance_registry::{
 use crate::worker_supervisor::WorkerSupervisorError;
 
 const STREAM_CLOSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceMetadataRefreshParams {
+    instance_id: u64,
+    #[serde(default)]
+    include_state: bool,
+    #[serde(default = "default_include_worker_metrics")]
+    include_worker_metrics: bool,
+}
+
+const fn default_include_worker_metrics() -> bool {
+    true
+}
 
 pub async fn handle_instance_create(
     id: Value,
@@ -582,6 +597,39 @@ pub async fn handle_instance_units(
     }
 
     match context.workers.units(params.instance_id).await {
+        Ok(result) => response_result(id, result),
+        Err(error) => response_worker_supervisor_error(id, error),
+    }
+}
+
+pub async fn handle_instance_metadata_refresh(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<InstanceMetadataRefreshParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid metadata refresh params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .workers
+        .metadata_refresh(
+            params.instance_id,
+            params.include_state,
+            params.include_worker_metrics,
+        )
+        .await
+    {
         Ok(result) => response_result(id, result),
         Err(error) => response_worker_supervisor_error(id, error),
     }

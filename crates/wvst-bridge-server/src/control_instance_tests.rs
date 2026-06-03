@@ -216,6 +216,19 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(parameters_value["result"]["parameters"][0]["id"], 42);
     assert_eq!(parameters_value["result"]["parameters"][0]["title"], "Gain");
 
+    let metadata_refresh_request = serde_json::json!({
+        "id": 30,
+        "method": "instance.metadata.refresh",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let metadata_refresh_value = request_json(&metadata_refresh_request, context).await;
+    assert_eq!(metadata_refresh_value["result"]["instanceId"], instance_id);
+    assert_eq!(metadata_refresh_value["result"]["parameters"][0]["id"], 42);
+    assert_eq!(metadata_refresh_value["result"]["unitInfo"], Value::Null);
+    assert_eq!(metadata_refresh_value["result"]["state"], Value::Null);
+    assert_eq!(metadata_refresh_value["result"]["worker"]["instances"], 1);
+
     let parameter_info_request = serde_json::json!({
         "id": 32,
         "method": "instance.parameter.info",
@@ -1022,6 +1035,7 @@ while IFS= read -r line; do
     *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
     *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough",%s,"latencySamples":0,"tailSamples":0}}\n' "$id" "$runtime_capabilities" ;;
     *instance.parameters*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameters":[{"id":42,"title":"Gain","shortTitle":"Gain","units":"dB","stepCount":0,"defaultNormalizedValue":0.5,"unitId":0,"flags":{"raw":1,"canAutomate":true,"readOnly":false,"wrapAround":false,"list":false,"hidden":false,"programChange":false,"bypass":false}}]}}\n' "$id" ;;
+    *instance.units*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"unitInfo":null}}\n' "$id" ;;
     *instance.parameter.info*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.25,"valuePlain":25.0,"valueString":"25 dB"}}\n' "$id" ;;
     *instance.parameter.valueByString*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.5,"valuePlain":50.0,"valueString":"50 dB"}}\n' "$id" ;;
     *instance.parameter.normalizedByPlain*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.75,"valuePlain":75.0,"valueString":"75 dB"}}\n' "$id" ;;

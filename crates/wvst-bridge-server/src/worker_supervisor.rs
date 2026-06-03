@@ -28,6 +28,8 @@ const STDERR_TAIL_BYTES: usize = 4096;
 
 #[path = "worker_supervisor_audio.rs"]
 mod worker_supervisor_audio;
+#[path = "worker_supervisor_batch.rs"]
+mod worker_supervisor_batch;
 #[path = "worker_supervisor_error.rs"]
 mod worker_supervisor_error;
 #[path = "worker_supervisor_hello.rs"]

@@ -128,6 +128,35 @@ async fn starts_real_worker_with_framed_control_ipc() {
 }
 
 #[tokio::test]
+async fn refreshes_metadata_with_framed_control_batch() {
+    let Some(worker) = option_env!("CARGO_BIN_EXE_wvst-host-worker") else {
+        return;
+    };
+    let supervisor = WorkerSupervisor::with_options(
+        WorkerSupervisorOptions::new(PathBuf::from(worker))
+            .with_timeout(Duration::from_secs(5))
+            .with_audio_ipc(false),
+    );
+
+    supervisor
+        .start_instance(&record())
+        .await
+        .expect("framed worker starts");
+    let metadata = supervisor
+        .metadata_refresh(1, false, true)
+        .await
+        .expect("metadata refresh");
+
+    assert_eq!(metadata["instanceId"], 1);
+    assert_eq!(metadata["parameters"], serde_json::json!([]));
+    assert_eq!(metadata["unitInfo"], Value::Null);
+    assert_eq!(metadata["state"], Value::Null);
+    assert_eq!(metadata["worker"]["instances"], 1);
+
+    let _ = supervisor.destroy_instance(1).await;
+}
+
+#[tokio::test]
 async fn framed_control_ipc_preserves_worker_rejections() {
     let Some(worker) = option_env!("CARGO_BIN_EXE_wvst-host-worker") else {
         return;

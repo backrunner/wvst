@@ -196,6 +196,15 @@ pub(crate) async fn handle_control_text(
             control_instances::handle_instance_units(request.id, request.params, context).await,
             session_authorized,
         ),
+        "instance.metadata.refresh" => ControlResponse::new(
+            control_instances::handle_instance_metadata_refresh(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.selectUnit" => ControlResponse::new(
             control_instance_units::handle_instance_select_unit(
                 request.id,
