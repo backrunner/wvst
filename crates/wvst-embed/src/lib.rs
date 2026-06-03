@@ -219,6 +219,35 @@ impl BridgeRuntimeBuilder {
         self
     }
 
+    pub fn token(mut self, token: impl Into<String>) -> Self {
+        self.options.config = self.options.config.with_token(token);
+        self
+    }
+
+    pub fn without_token(mut self) -> Self {
+        self.options.config = self.options.config.without_token();
+        self
+    }
+
+    pub fn allowed_origins<I, S>(mut self, origins: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.options.config = self.options.config.with_allowed_origins(origins);
+        self
+    }
+
+    pub fn allow_loopback_origins(mut self, allowed: bool) -> Self {
+        self.options.config = self.options.config.with_loopback_origins(allowed);
+        self
+    }
+
+    pub fn worker_auto_restart(mut self, enabled: bool) -> Self {
+        self.options.config = self.options.config.with_worker_auto_restart(enabled);
+        self
+    }
+
     pub fn max_worker_instances(mut self, max_instances: usize) -> Self {
         self.options.config = self.options.config.with_max_worker_instances(max_instances);
         self
@@ -232,8 +261,21 @@ impl BridgeRuntimeBuilder {
         self
     }
 
+    pub fn max_control_message_bytes(mut self, max_bytes: usize) -> Self {
+        self.options.config = self
+            .options
+            .config
+            .with_max_control_message_bytes(max_bytes);
+        self
+    }
+
     pub fn worker_memory_limit_bytes(mut self, bytes: u64) -> Self {
         self.options.config = self.options.config.with_worker_memory_limit_bytes(bytes);
+        self
+    }
+
+    pub fn without_worker_memory_limit(mut self) -> Self {
+        self.options.config = self.options.config.without_worker_memory_limit();
         self
     }
 
@@ -245,8 +287,18 @@ impl BridgeRuntimeBuilder {
         self
     }
 
+    pub fn without_worker_cpu_time_limit(mut self) -> Self {
+        self.options.config = self.options.config.without_worker_cpu_time_limit();
+        self
+    }
+
     pub fn worker_linux_cgroup_parent(mut self, parent: impl Into<PathBuf>) -> Self {
         self.options.config = self.options.config.with_worker_linux_cgroup_parent(parent);
+        self
+    }
+
+    pub fn without_worker_linux_cgroup(mut self) -> Self {
+        self.options.config = self.options.config.without_worker_linux_cgroup();
         self
     }
 
@@ -385,8 +437,13 @@ mod tests {
         let runtime = BridgeRuntime::builder(config)
             .worker_executable("/tmp/wvst-host-worker")
             .worker_timeout(Duration::from_millis(250))
+            .token("secret")
+            .allowed_origins([" https://app.example ", "", "https://admin.example"])
+            .allow_loopback_origins(false)
+            .worker_auto_restart(false)
             .max_worker_instances(2)
             .worker_quarantine_failure_threshold(2)
+            .max_control_message_bytes(4096)
             .worker_memory_limit_bytes(64 * 1024 * 1024)
             .worker_cpu_time_limit_seconds(30)
             .worker_linux_cgroup_parent("/sys/fs/cgroup/wvst")
@@ -399,8 +456,27 @@ mod tests {
             Some(std::path::Path::new("/tmp/wvst-host-worker"))
         );
         assert_eq!(runtime.worker_timeout, Duration::from_millis(250));
+        assert!(runtime.config.token_required());
+        assert!(runtime.config.token_is_valid(Some("secret")));
+        assert!(!runtime.config.token_is_valid(Some("wrong")));
+        assert_eq!(
+            runtime.config.allowed_origins(),
+            ["https://app.example", "https://admin.example"]
+        );
+        assert!(
+            runtime
+                .config
+                .origin_is_allowed(Some("https://app.example"))
+        );
+        assert!(
+            !runtime
+                .config
+                .origin_is_allowed(Some("http://localhost:5173"))
+        );
+        assert!(!runtime.config.worker_auto_restart_enabled());
         assert_eq!(runtime.config.max_worker_instances(), 2);
         assert_eq!(runtime.config.worker_quarantine_failure_threshold(), 2);
+        assert_eq!(runtime.config.max_control_message_bytes(), 4096);
         assert_eq!(
             runtime.config.worker_memory_limit_bytes(),
             Some(64 * 1024 * 1024)
@@ -418,6 +494,30 @@ mod tests {
             runtime.config.worker_linux_cgroup_cpu_max_micros(),
             Some((50_000, 100_000))
         );
+    }
+
+    #[test]
+    fn builder_clears_optional_bridge_policy() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("bind addr"));
+        let runtime = BridgeRuntime::builder(config)
+            .token("secret")
+            .without_token()
+            .worker_memory_limit_bytes(64 * 1024 * 1024)
+            .without_worker_memory_limit()
+            .worker_cpu_time_limit_seconds(30)
+            .without_worker_cpu_time_limit()
+            .worker_linux_cgroup_parent("/sys/fs/cgroup/wvst")
+            .worker_linux_cgroup_memory_max_bytes(128 * 1024 * 1024)
+            .worker_linux_cgroup_cpu_max_micros(50_000, 100_000)
+            .without_worker_linux_cgroup()
+            .build();
+
+        assert!(!runtime.config.token_required());
+        assert_eq!(runtime.config.worker_memory_limit_bytes(), None);
+        assert_eq!(runtime.config.worker_cpu_time_limit_seconds(), None);
+        assert_eq!(runtime.config.worker_linux_cgroup_parent(), None);
+        assert_eq!(runtime.config.worker_linux_cgroup_memory_max_bytes(), None);
+        assert_eq!(runtime.config.worker_linux_cgroup_cpu_max_micros(), None);
     }
 
     #[tokio::test]

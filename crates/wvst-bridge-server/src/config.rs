@@ -140,6 +140,36 @@ impl BridgeConfig {
         self
     }
 
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        let token = token.into();
+        self.token = (!token.is_empty()).then_some(token);
+        self
+    }
+
+    pub fn without_token(mut self) -> Self {
+        self.token = None;
+        self
+    }
+
+    pub fn with_allowed_origins<I, S>(mut self, origins: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.allowed_origins = origins
+            .into_iter()
+            .map(Into::into)
+            .map(|origin| origin.trim().to_string())
+            .filter(|origin| !origin.is_empty())
+            .collect();
+        self
+    }
+
+    pub fn with_loopback_origins(mut self, allowed: bool) -> Self {
+        self.allow_loopback_origins = allowed;
+        self
+    }
+
     pub fn with_max_worker_instances(mut self, max_instances: usize) -> Self {
         self.max_worker_instances = max_instances.max(1);
         self
@@ -315,12 +345,38 @@ mod tests {
 
     #[test]
     fn validates_token_when_configured() {
-        let mut config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
-        config.token = Some("secret".to_string());
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
+            .with_token("secret");
 
+        assert!(config.token_required());
         assert!(config.token_is_valid(Some("secret")));
         assert!(!config.token_is_valid(None));
         assert!(!config.token_is_valid(Some("wrong")));
+    }
+
+    #[test]
+    fn clears_token_when_disabled_or_empty() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
+            .with_token("secret");
+
+        assert!(!config.clone().without_token().token_required());
+        assert!(!config.with_token("").token_required());
+    }
+
+    #[test]
+    fn configures_allowed_origins_and_loopback_policy() {
+        let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
+            .with_allowed_origins([" https://app.example ", "", "https://admin.example"])
+            .with_loopback_origins(false);
+
+        assert_eq!(
+            config.allowed_origins(),
+            ["https://app.example", "https://admin.example"]
+        );
+        assert!(config.origin_is_allowed(Some("https://app.example")));
+        assert!(config.origin_is_allowed(Some("https://admin.example")));
+        assert!(!config.origin_is_allowed(Some("http://localhost:5173")));
+        assert!(!config.origin_is_allowed(Some("https://example.com")));
     }
 
     #[test]
