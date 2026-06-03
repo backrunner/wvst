@@ -219,6 +219,62 @@ fn marks_audio_expectation_failures() {
 }
 
 #[test]
+fn marks_note_timing_expectation_failures() {
+    let mut executor = RecordingExecutor {
+        results: vec![RuntimeProbeResult {
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": true,
+                "process": {
+                    "totalBlocks": 4,
+                    "silentOutputBlocks": 1,
+                    "nonZeroOutputBlocks": 3,
+                    "nonFiniteOutputSamples": 0,
+                    "clippedOutputSamples": 0,
+                    "maxOutputPeak": 0.75,
+                    "outputRms": 0.25,
+                    "noteTiming": {
+                        "sampleRateHz": 48000,
+                        "notePresent": true,
+                        "noteOnAbsoluteFrame": 0,
+                        "firstNonZeroOutputAbsoluteFrame": 1024,
+                        "framesFromNoteOnToFirstNonZeroOutput": 1024,
+                        "microsFromNoteOnToFirstNonZeroOutput": 21333
+                    }
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        }],
+        ..RecordingExecutor::default()
+    };
+    let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
+        RuntimeProbeCase::new("slow-synth", "/tmp/Synth.vst3", "class-a").with_expectations(
+            RuntimeProbeExpectations::default()
+                .require_note_response()
+                .max_note_to_audio_frames(512)
+                .max_note_to_audio_micros(10_000),
+        ),
+    );
+
+    let report = matrix.run_with(&mut executor);
+
+    assert!(!report.all_passed());
+    assert_eq!(report.expectation_failed, 1);
+    assert!(
+        report.results[0]
+            .expectation_failures
+            .iter()
+            .any(|failure| failure.contains("512 frames"))
+    );
+    assert!(
+        report.results[0]
+            .expectation_failures
+            .iter()
+            .any(|failure| failure.contains("10000 us"))
+    );
+}
+
+#[test]
 fn expected_failed_probe_can_pass_with_matching_diagnostics() {
     let mut executor = RecordingExecutor {
         results: vec![RuntimeProbeResult {

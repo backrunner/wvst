@@ -289,6 +289,12 @@ fn validate_expectations(
             "expectations cannot require both non-zero and silent output",
         ));
     }
+    if expectations.require_note_response && expectations.require_silent_output {
+        return Err(invalid_case(
+            case_name,
+            "expectations cannot require both note response and silent output",
+        ));
+    }
     if let (Some(min_rms), Some(max_peak)) = (
         expectations.min_output_rms_milli,
         expectations.max_output_peak_milli,
@@ -453,7 +459,15 @@ mod tests {
                         "nonFiniteOutputSamples": 0,
                         "clippedOutputSamples": 0,
                         "maxOutputPeak": 0.75,
-                        "outputRms": 0.25
+                        "outputRms": 0.25,
+                        "noteTiming": {
+                            "sampleRateHz": 48000,
+                            "notePresent": true,
+                            "noteOnAbsoluteFrame": 0,
+                            "firstNonZeroOutputAbsoluteFrame": 128,
+                            "framesFromNoteOnToFirstNonZeroOutput": 128,
+                            "microsFromNoteOnToFirstNonZeroOutput": 2666
+                        }
                     }
                 })),
                 ..RuntimeProbeResult::default()
@@ -464,7 +478,7 @@ mod tests {
     #[test]
     fn parses_manifest_and_builds_matrix() {
         let manifest = RuntimeProbeMatrixManifest::from_json_str(
-            r#"{"schemaVersion":1,"description":"local third-party VST3 smoke matrix","fixtureRoot":"${CARGO_MANIFEST_DIR}/fixtures","cases":[{"name":"instrument-note","pluginPath":"Synth.vst3","classId":"class-a","inputChannels":0,"outputChannels":2,"frames":128,"blocks":8,"note":{"pitch":60,"velocityMilli":750,"channel":1},"parameterChanges":[{"parameterId":42,"valueMilli":500,"sampleOffset":64}],"expectations":{"requireNonZeroOutput":true,"maxNonFiniteOutputSamples":0,"maxClippedOutputSamples":0,"minOutputRmsMilli":1,"maxOutputPeakMilli":1000}}]}"#,
+            r#"{"schemaVersion":1,"description":"local third-party VST3 smoke matrix","fixtureRoot":"${CARGO_MANIFEST_DIR}/fixtures","cases":[{"name":"instrument-note","pluginPath":"Synth.vst3","classId":"class-a","inputChannels":0,"outputChannels":2,"frames":128,"blocks":8,"note":{"pitch":60,"velocityMilli":750,"channel":1},"parameterChanges":[{"parameterId":42,"valueMilli":500,"sampleOffset":64}],"expectations":{"requireNonZeroOutput":true,"requireNoteResponse":true,"maxNoteToAudioFrames":512,"maxNonFiniteOutputSamples":0,"maxClippedOutputSamples":0,"minOutputRmsMilli":1,"maxOutputPeakMilli":1000}}]}"#,
         )
         .expect("manifest");
 
@@ -488,6 +502,13 @@ mod tests {
                 .expect("expectations")
                 .require_non_zero_output
         );
+        assert!(
+            matrix.cases()[0]
+                .expectations
+                .as_ref()
+                .expect("expectations")
+                .require_note_response
+        );
         let mut executor = RecordingExecutor::default();
         let report = matrix.run_with(&mut executor);
         assert_eq!(
@@ -509,7 +530,7 @@ mod tests {
             manifest
                 .to_json_string_pretty()
                 .expect("pretty json")
-                .contains("\"requireNonZeroOutput\": true")
+                .contains("\"requireNoteResponse\": true")
         );
     }
 

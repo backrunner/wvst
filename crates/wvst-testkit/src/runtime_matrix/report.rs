@@ -59,6 +59,12 @@ pub struct RuntimeProbeExpectations {
     pub min_output_rms_milli: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_peak_milli: Option<u32>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub require_note_response: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_note_to_audio_frames: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_note_to_audio_micros: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_compatibility_category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,6 +112,21 @@ impl RuntimeProbeExpectations {
         self
     }
 
+    pub const fn require_note_response(mut self) -> Self {
+        self.require_note_response = true;
+        self
+    }
+
+    pub const fn max_note_to_audio_frames(mut self, frames: u64) -> Self {
+        self.max_note_to_audio_frames = Some(frames);
+        self
+    }
+
+    pub const fn max_note_to_audio_micros(mut self, micros: u64) -> Self {
+        self.max_note_to_audio_micros = Some(micros);
+        self
+    }
+
     pub fn expected_compatibility_category(mut self, category: impl Into<String>) -> Self {
         self.expected_compatibility_category = Some(category.into());
         self
@@ -146,6 +167,7 @@ impl RuntimeProbeExpectations {
         }
 
         self.evaluate_audio(result, &mut failures);
+        self.evaluate_note_timing(result, &mut failures);
         self.evaluate_category(
             result,
             &mut failures,
@@ -227,6 +249,71 @@ impl RuntimeProbeExpectations {
         }
     }
 
+    fn evaluate_note_timing(&self, result: &RuntimeProbeResult, failures: &mut Vec<String>) {
+        if !self.has_note_timing_expectations() {
+            return;
+        }
+
+        let Some(note_timing) = result
+            .probe_report
+            .as_ref()
+            .and_then(|report| report.get("process"))
+            .and_then(|process| process.get("noteTiming"))
+        else {
+            failures.push("missing runtime-probe note timing diagnostics".to_string());
+            return;
+        };
+
+        let note_present = bool_field(note_timing, "notePresent");
+        let note_on_frame = optional_i64_field(note_timing, "noteOnAbsoluteFrame");
+        let output_frame = optional_i64_field(note_timing, "firstNonZeroOutputAbsoluteFrame");
+        let latency_frames =
+            optional_i64_field(note_timing, "framesFromNoteOnToFirstNonZeroOutput");
+        let latency_micros =
+            optional_i64_field(note_timing, "microsFromNoteOnToFirstNonZeroOutput");
+
+        if self.require_note_response {
+            if !note_present {
+                failures.push("expected note response, but probe did not send a note".to_string());
+            }
+            if note_on_frame.is_none() {
+                failures.push("expected note response, but note-on timing is missing".to_string());
+            }
+            if output_frame.is_none() {
+                failures.push(
+                    "expected note response, but no non-zero output was observed".to_string(),
+                );
+            }
+            if let Some(frames) = latency_frames
+                && frames < 0
+            {
+                failures.push(format!(
+                    "expected note response after note-on, got first output {frames} frames before note-on"
+                ));
+            }
+        }
+
+        if let Some(max) = self.max_note_to_audio_frames {
+            match latency_frames {
+                Some(frames) if frames >= 0 && frames as u64 <= max => {}
+                Some(frames) => failures.push(format!(
+                    "expected note-to-audio latency <= {max} frames, got {frames}"
+                )),
+                None => failures.push("missing note-to-audio frame latency".to_string()),
+            }
+        }
+
+        if let Some(max) = self.max_note_to_audio_micros {
+            match latency_micros {
+                Some(micros) if micros >= 0 && micros as u64 <= max => {}
+                Some(micros) => failures.push(format!(
+                    "expected note-to-audio latency <= {max} us, got {micros}"
+                )),
+                None => failures.push("missing note-to-audio latency in microseconds".to_string()),
+            }
+        }
+    }
+
     fn evaluate_category(
         &self,
         result: &RuntimeProbeResult,
@@ -259,6 +346,12 @@ impl RuntimeProbeExpectations {
             || self.max_silent_output_blocks.is_some()
             || self.min_output_rms_milli.is_some()
             || self.max_output_peak_milli.is_some()
+    }
+
+    fn has_note_timing_expectations(&self) -> bool {
+        self.require_note_response
+            || self.max_note_to_audio_frames.is_some()
+            || self.max_note_to_audio_micros.is_some()
     }
 }
 
@@ -472,6 +565,14 @@ fn u64_field(value: &Value, field: &str) -> u64 {
 
 fn f64_field(value: &Value, field: &str) -> f64 {
     value.get(field).and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+fn bool_field(value: &Value, field: &str) -> bool {
+    value.get(field).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn optional_i64_field(value: &Value, field: &str) -> Option<i64> {
+    value.get(field).and_then(Value::as_i64)
 }
 
 const fn is_false(value: &bool) -> bool {

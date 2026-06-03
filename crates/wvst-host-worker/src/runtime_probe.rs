@@ -4,9 +4,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use wvst_vst3_host::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
-    Vst3AudioBusInfo, Vst3BusDirection, Vst3BusType, Vst3OutputEventStats,
-    Vst3OutputParameterChangeStats, Vst3ProcessOutput, Vst3ProcessOutputDiagnostics,
-    Vst3ProcessingConfig, create_vst3_component_instance,
+    Vst3AudioBusInfo, Vst3BusDirection, Vst3BusType, Vst3ProcessOutput, Vst3ProcessingConfig,
+    create_vst3_component_instance,
 };
 
 use crate::runtime_probe_error::{
@@ -15,39 +14,7 @@ use crate::runtime_probe_error::{
 use crate::runtime_probe_options::{
     ProbeNote, ProbeParameterChange, RuntimeProbeOptions, probe_events, probe_parameter_changes,
 };
-
-#[derive(Debug, Default, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RuntimeProbeProcessSummary {
-    total_blocks: u32,
-    total_frames: u64,
-    input_samples: u64,
-    output_samples: u64,
-    finite_output_samples: u64,
-    non_finite_output_samples: u64,
-    clipped_output_samples: u64,
-    output_energy: f64,
-    output_rms: f64,
-    max_output_peak: f32,
-    max_output_peak_block: Option<u32>,
-    non_zero_output_blocks: u32,
-    silent_output_blocks: u32,
-    first_non_zero_output_block: Option<u32>,
-    output_events: u64,
-    output_parameter_changes: u64,
-    diagnostics: Vst3ProcessOutputDiagnostics,
-    process_time_micros: ProbeTimingSummary,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ProbeTimingSummary {
-    min: u64,
-    p50: u64,
-    p95: u64,
-    p99: u64,
-    max: u64,
-}
+use crate::runtime_probe_process::RuntimeProbeProcessSummary;
 
 pub fn runtime_probe(args: &[String]) -> Result<(), String> {
     match runtime_probe_report(args) {
@@ -171,13 +138,14 @@ fn run_process_blocks(
         DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK,
     );
     let mut process_micros = Vec::with_capacity(options.blocks as usize);
-    let mut summary = RuntimeProbeProcessSummary {
-        total_blocks: options.blocks,
-        total_frames: u64::from(options.blocks) * u64::from(options.frames),
-        input_samples: input_len as u64 * u64::from(options.blocks),
-        output_samples: output_len as u64 * u64::from(options.blocks),
-        ..RuntimeProbeProcessSummary::default()
-    };
+    let mut summary = RuntimeProbeProcessSummary::new(
+        options.blocks,
+        options.frames,
+        input_len,
+        output_len,
+        options.sample_rate,
+        options.note.is_some(),
+    );
 
     for block_index in 0..options.blocks {
         input.fill(0.0);
@@ -187,6 +155,7 @@ fn run_process_blocks(
         }
         let events = probe_events(options, block_index);
         let parameter_changes = probe_parameter_changes(options, block_index);
+        summary.observe_input_events(block_index, options.frames, &events);
         let started = Instant::now();
         vst3_process(
             "component.process",
@@ -203,75 +172,17 @@ fn run_process_blocks(
         )?;
         process_micros.push(started.elapsed().as_micros() as u64);
 
-        observe_output_block(&mut summary, block_index, &output);
-        summary.output_events = summary
-            .output_events
-            .saturating_add(process_output.events.len() as u64);
-        summary.output_parameter_changes = summary
-            .output_parameter_changes
-            .saturating_add(process_output.parameter_changes.len() as u64);
-        merge_process_diagnostics(&mut summary.diagnostics, process_output.diagnostics);
+        summary.observe_output_block(
+            block_index,
+            options.frames,
+            options.output_channels,
+            &output,
+        );
+        summary.observe_process_output(&process_output);
     }
-    summary.process_time_micros = timing_summary(process_micros);
-    summary.output_rms = output_rms(summary.output_energy, summary.finite_output_samples);
+    summary.finish(process_micros);
 
     Ok(summary)
-}
-
-fn observe_output_block(
-    summary: &mut RuntimeProbeProcessSummary,
-    block_index: u32,
-    output: &[f32],
-) {
-    let mut block_peak = 0.0_f32;
-    let mut block_non_finite = 0_u64;
-    let mut block_finite = 0_u64;
-    let mut block_energy = 0.0_f64;
-    let mut block_clipped = 0_u64;
-
-    for sample in output {
-        if sample.is_finite() {
-            let abs = sample.abs();
-            block_peak = block_peak.max(abs);
-            block_energy += f64::from(*sample) * f64::from(*sample);
-            block_finite = block_finite.saturating_add(1);
-            if abs > 1.0 {
-                block_clipped = block_clipped.saturating_add(1);
-            }
-        } else {
-            block_non_finite = block_non_finite.saturating_add(1);
-        }
-    }
-
-    summary.finite_output_samples = summary.finite_output_samples.saturating_add(block_finite);
-    summary.non_finite_output_samples = summary
-        .non_finite_output_samples
-        .saturating_add(block_non_finite);
-    summary.clipped_output_samples = summary.clipped_output_samples.saturating_add(block_clipped);
-    summary.output_energy += block_energy;
-
-    if !output.is_empty() && block_peak == 0.0 && block_non_finite == 0 {
-        summary.silent_output_blocks = summary.silent_output_blocks.saturating_add(1);
-    }
-
-    if block_peak > 0.0 {
-        summary.non_zero_output_blocks = summary.non_zero_output_blocks.saturating_add(1);
-        if summary.first_non_zero_output_block.is_none() {
-            summary.first_non_zero_output_block = Some(block_index);
-        }
-        if block_peak > summary.max_output_peak {
-            summary.max_output_peak = block_peak;
-            summary.max_output_peak_block = Some(block_index);
-        }
-    }
-}
-
-fn output_rms(output_energy: f64, finite_output_samples: u64) -> f64 {
-    if finite_output_samples == 0 {
-        0.0
-    } else {
-        (output_energy / finite_output_samples as f64).sqrt()
-    }
 }
 
 fn seed_probe_signal(input: &mut [f32], channels: usize) {
@@ -321,69 +232,6 @@ fn parameter_change_json(change: &ProbeParameterChange) -> Value {
     })
 }
 
-fn merge_process_diagnostics(
-    target: &mut Vst3ProcessOutputDiagnostics,
-    source: Vst3ProcessOutputDiagnostics,
-) {
-    merge_output_event_stats(&mut target.output_events, source.output_events);
-    merge_output_parameter_change_stats(
-        &mut target.output_parameter_changes,
-        source.output_parameter_changes,
-    );
-}
-
-fn merge_output_event_stats(target: &mut Vst3OutputEventStats, source: Vst3OutputEventStats) {
-    target.raw_events = target.raw_events.saturating_add(source.raw_events);
-    target.normalized_events = target
-        .normalized_events
-        .saturating_add(source.normalized_events);
-    target.filtered_events = target
-        .filtered_events
-        .saturating_add(source.filtered_events);
-    target.invalid_sample_offset_events = target
-        .invalid_sample_offset_events
-        .saturating_add(source.invalid_sample_offset_events);
-    target.invalid_payload_events = target
-        .invalid_payload_events
-        .saturating_add(source.invalid_payload_events);
-    target.unknown_type_events = target
-        .unknown_type_events
-        .saturating_add(source.unknown_type_events);
-}
-
-fn merge_output_parameter_change_stats(
-    target: &mut Vst3OutputParameterChangeStats,
-    source: Vst3OutputParameterChangeStats,
-) {
-    target.raw_points = target.raw_points.saturating_add(source.raw_points);
-    target.normalized_points = target
-        .normalized_points
-        .saturating_add(source.normalized_points);
-    target.filtered_points = target
-        .filtered_points
-        .saturating_add(source.filtered_points);
-}
-
-fn timing_summary(mut values: Vec<u64>) -> ProbeTimingSummary {
-    if values.is_empty() {
-        return ProbeTimingSummary::default();
-    }
-    values.sort_unstable();
-    ProbeTimingSummary {
-        min: values[0],
-        p50: percentile(&values, 50),
-        p95: percentile(&values, 95),
-        p99: percentile(&values, 99),
-        max: values[values.len() - 1],
-    }
-}
-
-fn percentile(values: &[u64], percentile: u32) -> u64 {
-    debug_assert!(!values.is_empty());
-    let index = ((values.len() - 1) as u64 * u64::from(percentile) / 100) as usize;
-    values[index]
-}
-
 fn print_json(value: &impl Serialize) -> Result<(), String> {
     let json = serde_json::to_string(value).map_err(|error| error.to_string())?;
     println!("{json}");
@@ -402,46 +250,6 @@ mod tests {
 
         assert_eq!(&input[..4], &[0.25, 0.25, 0.0, 0.0]);
         assert_eq!(&input[4..], &[0.0, 0.0, 0.0, 0.0]);
-    }
-
-    #[test]
-    fn summarizes_process_timings() {
-        assert_eq!(
-            timing_summary(vec![10, 50, 30, 20, 40]),
-            ProbeTimingSummary {
-                min: 10,
-                p50: 30,
-                p95: 40,
-                p99: 40,
-                max: 50
-            }
-        );
-    }
-
-    #[test]
-    fn observes_output_block_audio_diagnostics() {
-        let mut summary = RuntimeProbeProcessSummary::default();
-
-        observe_output_block(&mut summary, 0, &[0.0, 0.0]);
-        observe_output_block(&mut summary, 1, &[0.5, -1.25, f32::NAN, f32::INFINITY]);
-        summary.output_rms = output_rms(summary.output_energy, summary.finite_output_samples);
-
-        assert_eq!(summary.finite_output_samples, 4);
-        assert_eq!(summary.non_finite_output_samples, 2);
-        assert_eq!(summary.clipped_output_samples, 1);
-        assert_eq!(summary.silent_output_blocks, 1);
-        assert_eq!(summary.non_zero_output_blocks, 1);
-        assert_eq!(summary.first_non_zero_output_block, Some(1));
-        assert_eq!(summary.max_output_peak_block, Some(1));
-        assert_eq!(summary.max_output_peak, 1.25);
-        assert!((summary.output_energy - 1.8125).abs() < f64::EPSILON);
-        assert!((summary.output_rms - (1.8125_f64 / 4.0).sqrt()).abs() < f64::EPSILON);
-
-        let value = serde_json::to_value(summary).expect("summary json");
-        assert_eq!(value["finiteOutputSamples"], 4);
-        assert_eq!(value["nonFiniteOutputSamples"], 2);
-        assert_eq!(value["firstNonZeroOutputBlock"], 1);
-        assert_eq!(value["maxOutputPeakBlock"], 1);
     }
 
     #[test]

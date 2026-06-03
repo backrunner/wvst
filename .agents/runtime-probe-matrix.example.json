@@ -45,6 +45,9 @@
       "expectations": {
         "expectedStatus": "passed",
         "requireNonZeroOutput": true,
+        "requireNoteResponse": true,
+        "maxNoteToAudioFrames": 2048,
+        "maxNoteToAudioMicros": 50000,
         "maxNonFiniteOutputSamples": 0,
         "maxClippedOutputSamples": 0,
         "minOutputRmsMilli": 1,

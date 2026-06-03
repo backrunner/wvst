@@ -13,6 +13,7 @@ mod ipc;
 mod runtime_probe;
 mod runtime_probe_error;
 mod runtime_probe_options;
+mod runtime_probe_process;
 mod vst3_error_data;
 
 fn main() {
