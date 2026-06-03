@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use std::process::Command;
-use std::time::Instant;
+use std::{path::PathBuf, process::Command, time::Instant};
+
+use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeProbeCase {
@@ -242,7 +242,8 @@ impl RuntimeProbeExecutor for ProcessRuntimeProbeExecutor {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RuntimeProbeStatus {
     #[default]
     Passed,
@@ -250,7 +251,8 @@ pub enum RuntimeProbeStatus {
     LaunchFailed,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeProbeResult {
     pub case_name: String,
     pub plugin_path: PathBuf,
@@ -268,7 +270,8 @@ impl RuntimeProbeResult {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeProbeMatrixReport {
     pub results: Vec<RuntimeProbeResult>,
     pub passed: usize,
