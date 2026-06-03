@@ -786,6 +786,10 @@ dependencies = [
 [[package]]
 name = "wvst-packager"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "wvst-process-supervision"

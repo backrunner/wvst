@@ -14,5 +14,9 @@ path = "src/lib.rs"
 name = "wvst-packager"
 path = "src/main.rs"
 
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 [lints]
 workspace = true
