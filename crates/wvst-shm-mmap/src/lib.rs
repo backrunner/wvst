@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 use memmap2::{MmapMut, MmapOptions};
 use wvst_shm_transport::{SharedAudioLayoutError, SharedAudioTransportLayout};
 
+mod cursor;
+
+pub use cursor::SharedAudioAtomicCursor;
+
 #[derive(Debug)]
 pub struct SharedAudioMmap {
     path: PathBuf,
@@ -84,6 +88,16 @@ impl SharedAudioMmap {
 
     pub fn file(&self) -> &File {
         &self.file
+    }
+
+    pub fn input_atomic_cursor(&self) -> Result<SharedAudioAtomicCursor<'_>, SharedAudioMmapError> {
+        SharedAudioAtomicCursor::from_memory(&self.memory, self.layout.input).map_err(Into::into)
+    }
+
+    pub fn output_atomic_cursor(
+        &self,
+    ) -> Result<SharedAudioAtomicCursor<'_>, SharedAudioMmapError> {
+        SharedAudioAtomicCursor::from_memory(&self.memory, self.layout.output).map_err(Into::into)
     }
 }
 
