@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use serde_json::{Value, json};
 
 use super::{
@@ -125,13 +127,25 @@ pub async fn handle_stream_shared_memory_process(
         return response_instance_error(id, error);
     }
 
+    let started_at = Instant::now();
     match context
         .workers
         .process_shared_memory(params.instance_id, params.frames)
         .await
     {
-        Ok(result) => response_result(id, result),
-        Err(error) => response_worker_supervisor_error(id, error),
+        Ok(result) => {
+            context.metrics.record_shared_memory_process_success(
+                result.get("frames").and_then(Value::as_u64).unwrap_or(0),
+                started_at.elapsed().as_micros() as u64,
+            );
+            response_result(id, result)
+        }
+        Err(error) => {
+            context
+                .metrics
+                .record_shared_memory_process_failure(started_at.elapsed().as_micros() as u64);
+            response_worker_supervisor_error(id, error)
+        }
     }
 }
 

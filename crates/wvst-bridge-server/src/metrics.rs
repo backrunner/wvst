@@ -32,8 +32,12 @@ pub struct BridgeMetrics {
     audio_frames_out_of_order: AtomicU64,
     audio_frames_late: AtomicU64,
     audio_backpressure_drops: AtomicU64,
+    shared_memory_process_blocks: AtomicU64,
+    shared_memory_process_frames: AtomicU64,
+    shared_memory_process_failures: AtomicU64,
     audio_route_latency: LatencyHistogram,
     audio_interarrival_jitter: LatencyHistogram,
+    shared_memory_process_latency: LatencyHistogram,
 }
 
 const LATENCY_BUCKETS_US: [u64; 13] = [
@@ -78,8 +82,12 @@ impl BridgeMetrics {
             audio_frames_out_of_order: AtomicU64::new(0),
             audio_frames_late: AtomicU64::new(0),
             audio_backpressure_drops: AtomicU64::new(0),
+            shared_memory_process_blocks: AtomicU64::new(0),
+            shared_memory_process_frames: AtomicU64::new(0),
+            shared_memory_process_failures: AtomicU64::new(0),
             audio_route_latency: LatencyHistogram::new(),
             audio_interarrival_jitter: LatencyHistogram::new(),
+            shared_memory_process_latency: LatencyHistogram::new(),
         }
     }
 
@@ -154,6 +162,20 @@ impl BridgeMetrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn record_shared_memory_process_success(&self, frames: u64, latency_us: u64) {
+        self.shared_memory_process_blocks
+            .fetch_add(1, Ordering::Relaxed);
+        self.shared_memory_process_frames
+            .fetch_add(frames, Ordering::Relaxed);
+        self.shared_memory_process_latency.record(latency_us);
+    }
+
+    pub fn record_shared_memory_process_failure(&self, latency_us: u64) {
+        self.shared_memory_process_failures
+            .fetch_add(1, Ordering::Relaxed);
+        self.shared_memory_process_latency.record(latency_us);
+    }
+
     pub fn record_audio_stream_observation(&self, observation: AudioStreamObservation) {
         if observation.sequence_gap > 0 {
             self.audio_sequence_gap_events
@@ -201,8 +223,14 @@ impl BridgeMetrics {
             audio_frames_out_of_order: self.audio_frames_out_of_order.load(Ordering::Relaxed),
             audio_frames_late: self.audio_frames_late.load(Ordering::Relaxed),
             audio_backpressure_drops: self.audio_backpressure_drops.load(Ordering::Relaxed),
+            shared_memory_process_blocks: self.shared_memory_process_blocks.load(Ordering::Relaxed),
+            shared_memory_process_frames: self.shared_memory_process_frames.load(Ordering::Relaxed),
+            shared_memory_process_failures: self
+                .shared_memory_process_failures
+                .load(Ordering::Relaxed),
             audio_route_latency: self.audio_route_latency.snapshot(),
             audio_interarrival_jitter: self.audio_interarrival_jitter.snapshot(),
+            shared_memory_process_latency: self.shared_memory_process_latency.snapshot(),
         }
     }
 }
@@ -263,8 +291,12 @@ pub struct BridgeMetricsSnapshot {
     pub audio_frames_out_of_order: u64,
     pub audio_frames_late: u64,
     pub audio_backpressure_drops: u64,
+    pub shared_memory_process_blocks: u64,
+    pub shared_memory_process_frames: u64,
+    pub shared_memory_process_failures: u64,
     pub audio_route_latency: LatencySnapshot,
     pub audio_interarrival_jitter: LatencySnapshot,
+    pub shared_memory_process_latency: LatencySnapshot,
 }
 
 #[derive(Debug)]
@@ -422,5 +454,21 @@ mod tests {
         assert_eq!(snapshot.worker_forced_kill_requests, 1);
         assert_eq!(snapshot.worker_wait_successes, 1);
         assert_eq!(snapshot.worker_wait_timeouts, 1);
+    }
+
+    #[test]
+    fn reports_shared_memory_process_counters() {
+        let metrics = BridgeMetrics::new();
+
+        metrics.record_shared_memory_process_success(128, 250);
+        metrics.record_shared_memory_process_success(64, 700);
+        metrics.record_shared_memory_process_failure(1_200);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.shared_memory_process_blocks, 2);
+        assert_eq!(snapshot.shared_memory_process_frames, 192);
+        assert_eq!(snapshot.shared_memory_process_failures, 1);
+        assert_eq!(snapshot.shared_memory_process_latency.count, 3);
+        assert_eq!(snapshot.shared_memory_process_latency.p50_us, Some(1_000));
     }
 }

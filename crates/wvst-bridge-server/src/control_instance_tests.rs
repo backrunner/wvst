@@ -649,6 +649,27 @@ async fn creates_lists_and_destroys_instance() {
         process_shared_memory_value["result"]["transport"],
         "file-backed-mmap"
     );
+    let shared_memory_metrics_value = request_json(
+        r#"{"id":78,"method":"bridge.metrics","params":{}}"#,
+        context,
+    )
+    .await;
+    assert_eq!(
+        shared_memory_metrics_value["result"]["sharedMemoryProcessBlocks"],
+        1
+    );
+    assert_eq!(
+        shared_memory_metrics_value["result"]["sharedMemoryProcessFrames"],
+        2
+    );
+    assert_eq!(
+        shared_memory_metrics_value["result"]["sharedMemoryProcessFailures"],
+        0
+    );
+    assert_eq!(
+        shared_memory_metrics_value["result"]["sharedMemoryProcessLatency"]["count"],
+        1
+    );
 
     let stop_request = serde_json::json!({
         "id": 7,
