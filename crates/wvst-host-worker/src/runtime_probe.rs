@@ -8,6 +8,7 @@ use wvst_vst3_host::{
     create_vst3_component_instance,
 };
 
+use crate::runtime_probe_controller::controller_summary as runtime_probe_controller_summary;
 use crate::runtime_probe_error::{
     RUNTIME_PROBE_REPORT_SCHEMA_VERSION, RuntimeProbeFailure, vst3_control, vst3_init, vst3_process,
 };
@@ -50,7 +51,9 @@ fn runtime_probe_report(args: &[String]) -> Result<Value, RuntimeProbeFailure> {
 
     vst3_init("component.initialize", loaded.instance_mut().initialize())?;
     vst3_init("controller.initialize", loaded.initialize_controller())?;
-    let parameter_count = vst3_init("controller.parameters", loaded.parameters())?.len();
+    let parameters = vst3_init("controller.parameters", loaded.parameters())?;
+    let parameter_count = parameters.len();
+    let controller_summary = runtime_probe_controller_summary(&loaded, &parameters);
     let input_buses = vst3_init(
         "component.audio-buses.input",
         loaded.instance_mut().audio_buses(Vst3BusDirection::Input),
@@ -98,6 +101,7 @@ fn runtime_probe_report(args: &[String]) -> Result<Value, RuntimeProbeFailure> {
             "parameterChanges": options.parameter_changes.iter().map(parameter_change_json).collect::<Vec<_>>()
         },
         "controllerClassId": controller_class_id,
+        "controller": controller_summary,
         "parameters": {
             "count": parameter_count
         },

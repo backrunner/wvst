@@ -11,6 +11,7 @@ use wvst_vst3_host::{
 
 mod ipc;
 mod runtime_probe;
+mod runtime_probe_controller;
 mod runtime_probe_error;
 mod runtime_probe_options;
 mod runtime_probe_process;
