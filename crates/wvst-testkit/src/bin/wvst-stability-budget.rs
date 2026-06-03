@@ -9,7 +9,7 @@ use wvst_testkit::stability_budget::{
 };
 
 const USAGE: &str = "\
-usage: wvst-stability-budget --snapshot <latency-snapshot.json> --budget <budget.json> [--webaudio <loopback-metrics-or-browser-smoke.json>] [--bridge <bridge-metrics.json>]
+usage: wvst-stability-budget --snapshot <latency-snapshot.json> --budget <budget.json> [--webaudio <loopback-metrics-or-browser-smoke.json>] [--bridge <bridge-metrics-or-web-bridge-smoke.json>]
 
 Evaluates a WVST latency/stability snapshot against a JSON stability budget and writes a JSON report to stdout.
 ";

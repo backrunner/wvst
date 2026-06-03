@@ -410,13 +410,14 @@ fn select_class<'a>(
     let Some(requested_class_id) = requested_class_id else {
         return Ok(plugin.classes.first());
     };
+    if requested_class_id.is_empty() {
+        return Err(InstanceError::ClassNotFound(requested_class_id.to_string()));
+    }
 
-    plugin
+    Ok(plugin
         .classes
         .iter()
-        .find(|class| class.class_id.as_deref() == Some(requested_class_id))
-        .ok_or_else(|| InstanceError::ClassNotFound(requested_class_id.to_string()))
-        .map(Some)
+        .find(|class| class.class_id.as_deref() == Some(requested_class_id)))
 }
 
 fn is_reclaimable_idle_worker(record: &InstanceRecord) -> bool {

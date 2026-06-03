@@ -27,6 +27,20 @@ fn creates_multiple_records_for_same_plugin() {
 }
 
 #[test]
+fn accepts_explicit_class_id_missing_from_scanner_metadata() {
+    let registry = InstanceRegistry::new();
+    let mut plugin = plugin();
+    plugin.classes[0].class_id = None;
+
+    let record = registry
+        .create(create_params(), &plugin)
+        .expect("instance with factory class id");
+
+    assert_eq!(record.class_id.as_deref(), Some("class-a"));
+    assert_eq!(record.class_name, None);
+}
+
+#[test]
 fn destroys_record_by_instance_id() {
     let registry = InstanceRegistry::new();
     let plugin = plugin();

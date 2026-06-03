@@ -47,6 +47,33 @@ on:
         description: Minimum browser smoke round-trip samples.
         required: false
         default: "8"
+      bridge_web_smoke:
+        description: Run the configurable browser-to-Bridge-to-VST3 smoke and upload its report.
+        required: false
+        type: boolean
+        default: false
+      bridge_web_smoke_plugin_path:
+        description: VST3 bundle path for the browser-to-Bridge smoke.
+        required: false
+      bridge_web_smoke_class_id:
+        description: Optional VST3 class id for the browser-to-Bridge smoke.
+        required: false
+      bridge_web_smoke_input_channels:
+        description: Input channel count for the browser-to-Bridge smoke.
+        required: false
+        default: "2"
+      bridge_web_smoke_output_channels:
+        description: Output channel count for the browser-to-Bridge smoke.
+        required: false
+        default: "2"
+      bridge_web_smoke_duration_ms:
+        description: Browser-to-Bridge smoke collection duration in milliseconds.
+        required: false
+        default: "1000"
+      bridge_web_smoke_min_round_trips:
+        description: Minimum browser-to-Bridge smoke round-trip samples.
+        required: false
+        default: "8"
 
 jobs:
   evidence:
@@ -63,18 +90,18 @@ jobs:
         run: cargo build --workspace --bins --release
 
       - name: Set up Node.js for browser evidence
-        if: ${{ inputs.browser_smoke }}
+        if: ${{ inputs.browser_smoke || inputs.bridge_web_smoke }}
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
 
       - name: Install browser evidence dependencies
-        if: ${{ inputs.browser_smoke }}
+        if: ${{ inputs.browser_smoke || inputs.bridge_web_smoke }}
         run: npm ci
 
       - name: Install browser evidence runtime
-        if: ${{ inputs.browser_smoke }}
+        if: ${{ inputs.browser_smoke || inputs.bridge_web_smoke }}
         run: npx playwright install chromium
 
       - name: Run evidence gates
@@ -91,6 +118,13 @@ jobs:
           BROWSER_SMOKE: ${{ inputs.browser_smoke }}
           BROWSER_SMOKE_DURATION_MS: ${{ inputs.browser_smoke_duration_ms }}
           BROWSER_SMOKE_MIN_ROUND_TRIPS: ${{ inputs.browser_smoke_min_round_trips }}
+          BRIDGE_WEB_SMOKE: ${{ inputs.bridge_web_smoke }}
+          BRIDGE_WEB_SMOKE_PLUGIN_PATH: ${{ inputs.bridge_web_smoke_plugin_path }}
+          BRIDGE_WEB_SMOKE_CLASS_ID: ${{ inputs.bridge_web_smoke_class_id }}
+          BRIDGE_WEB_SMOKE_INPUT_CHANNELS: ${{ inputs.bridge_web_smoke_input_channels }}
+          BRIDGE_WEB_SMOKE_OUTPUT_CHANNELS: ${{ inputs.bridge_web_smoke_output_channels }}
+          BRIDGE_WEB_SMOKE_DURATION_MS: ${{ inputs.bridge_web_smoke_duration_ms }}
+          BRIDGE_WEB_SMOKE_MIN_ROUND_TRIPS: ${{ inputs.bridge_web_smoke_min_round_trips }}
         run: |
           set -euo pipefail
           mkdir -p evidence
@@ -102,6 +136,24 @@ jobs:
             WVST_BROWSER_SMOKE_DURATION_MS="${BROWSER_SMOKE_DURATION_MS}" \
             WVST_BROWSER_SMOKE_MIN_ROUND_TRIPS="${BROWSER_SMOKE_MIN_ROUND_TRIPS}" \
               npm run smoke:browser:web
+            ran_gate=1
+          fi
+
+          if [ "${BRIDGE_WEB_SMOKE}" = "true" ]; then
+            if [ -z "${BRIDGE_WEB_SMOKE_PLUGIN_PATH}" ]; then
+              echo "bridge_web_smoke_plugin_path is required when bridge_web_smoke is true" >&2
+              exit 2
+            fi
+            WVST_BRIDGE_SERVER=target/release/wvst-bridge-server \
+            WVST_HOST_WORKER=target/release/wvst-host-worker \
+            WVST_BRIDGE_SMOKE_REPORT=evidence/web-bridge-smoke.json \
+            WVST_BRIDGE_SMOKE_PLUGIN_PATH="${BRIDGE_WEB_SMOKE_PLUGIN_PATH}" \
+            WVST_BRIDGE_SMOKE_CLASS_ID="${BRIDGE_WEB_SMOKE_CLASS_ID}" \
+            WVST_BRIDGE_SMOKE_INPUT_CHANNELS="${BRIDGE_WEB_SMOKE_INPUT_CHANNELS}" \
+            WVST_BRIDGE_SMOKE_OUTPUT_CHANNELS="${BRIDGE_WEB_SMOKE_OUTPUT_CHANNELS}" \
+            WVST_BRIDGE_SMOKE_DURATION_MS="${BRIDGE_WEB_SMOKE_DURATION_MS}" \
+            WVST_BRIDGE_SMOKE_MIN_ROUND_TRIPS="${BRIDGE_WEB_SMOKE_MIN_ROUND_TRIPS}" \
+              npm run smoke:bridge:web
             ran_gate=1
           fi
 
@@ -124,11 +176,18 @@ jobs:
             if [ -z "${webaudio_metrics}" ] && [ "${BROWSER_SMOKE}" = "true" ]; then
               webaudio_metrics="evidence/browser-smoke.json"
             fi
+            if [ -z "${webaudio_metrics}" ] && [ "${BRIDGE_WEB_SMOKE}" = "true" ]; then
+              webaudio_metrics="evidence/web-bridge-smoke.json"
+            fi
             if [ -n "${webaudio_metrics}" ]; then
               args+=(--webaudio "${webaudio_metrics}")
             fi
-            if [ -n "${BRIDGE_METRICS}" ]; then
-              args+=(--bridge "${BRIDGE_METRICS}")
+            bridge_metrics="${BRIDGE_METRICS}"
+            if [ -z "${bridge_metrics}" ] && [ "${BRIDGE_WEB_SMOKE}" = "true" ]; then
+              bridge_metrics="evidence/web-bridge-smoke.json"
+            fi
+            if [ -n "${bridge_metrics}" ]; then
+              args+=(--bridge "${bridge_metrics}")
             fi
             cargo run -p wvst-testkit --bin wvst-stability-budget --release -- "${args[@]}" \
               | tee evidence/stability-budget-report.json

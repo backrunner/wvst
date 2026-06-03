@@ -526,6 +526,37 @@ fn normalizes_bridge_metrics_from_json_rpc_and_pump_status() {
 }
 
 #[test]
+fn normalizes_bridge_metrics_from_web_bridge_smoke_report() {
+    let report = json!({
+        "ok": true,
+        "mode": "bridge-vst3",
+        "metrics": {
+            "inputFrames": 128,
+            "outputFrames": 128,
+            "underflows": 0,
+            "overflows": 0
+        },
+        "bridgeMetrics": {
+            "sharedMemoryPumpEventsEnqueued": 4,
+            "sharedMemoryPumpEventsDrained": 3,
+            "sharedMemoryProcessLatency": {
+                "count": 5,
+                "p50Us": 300,
+                "p95Us": 700,
+                "p99Us": 900
+            }
+        }
+    });
+
+    let metrics = BridgeStabilityMetrics::from_json_str(&report.to_string())
+        .expect("web bridge smoke report");
+
+    assert_eq!(metrics.shared_memory_pump_events_enqueued, 4);
+    assert_eq!(metrics.shared_memory_pump_events_drained, 3);
+    assert_eq!(metrics.shared_memory_process_latency.p95_us, Some(700));
+}
+
+#[test]
 fn normalizes_bridge_metrics_from_pump_status_result() {
     let bridge = json!({
         "jsonrpc": "2.0",
