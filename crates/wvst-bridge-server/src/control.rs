@@ -413,8 +413,26 @@ pub(crate) async fn handle_control_text(
             .await,
             session_authorized,
         ),
+        "instance.connection.notifyComponentAndRefresh" => ControlResponse::new(
+            control_instances::handle_instance_notify_component_and_refresh(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.connection.notifyController" => ControlResponse::new(
             control_instances::handle_instance_notify_controller(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "instance.connection.notifyControllerAndRefresh" => ControlResponse::new(
+            control_instances::handle_instance_notify_controller_and_refresh(
                 request.id,
                 request.params,
                 context,

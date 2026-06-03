@@ -395,6 +395,50 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(notify_controller_value["result"]["attributeCount"], 0);
     assert_eq!(notify_controller_value["result"]["notified"], true);
 
+    let notify_component_refresh_request = serde_json::json!({
+        "id": 46,
+        "method": "instance.connection.notifyComponentAndRefresh",
+        "params": {
+            "instanceId": instance_id,
+            "messageId": "TextMessage",
+            "attributes": {
+                "answer": { "type": "int", "value": 42 }
+            }
+        }
+    })
+    .to_string();
+    let notify_component_refresh_value =
+        request_json(&notify_component_refresh_request, context).await;
+    assert_eq!(
+        notify_component_refresh_value["result"]["notifyComponent"]["target"],
+        "component"
+    );
+    assert_eq!(
+        notify_component_refresh_value["result"]["metadata"]["parameters"][0]["id"],
+        42
+    );
+
+    let notify_controller_refresh_request = serde_json::json!({
+        "id": 47,
+        "method": "instance.connection.notifyControllerAndRefresh",
+        "params": {
+            "instanceId": instance_id,
+            "messageId": "TextMessage",
+            "includeWorkerMetrics": false
+        }
+    })
+    .to_string();
+    let notify_controller_refresh_value =
+        request_json(&notify_controller_refresh_request, context).await;
+    assert_eq!(
+        notify_controller_refresh_value["result"]["notifyController"]["target"],
+        "controller"
+    );
+    assert_eq!(
+        notify_controller_refresh_value["result"]["metadata"]["worker"],
+        Value::Null
+    );
+
     let invalid_notify_request = serde_json::json!({
         "id": 40,
         "method": "instance.connection.notifyComponent",

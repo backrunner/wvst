@@ -321,6 +321,27 @@ impl WorkerSupervisor {
         .await
     }
 
+    pub async fn notify_component_and_refresh(
+        &self,
+        instance_id: u64,
+        message_id: String,
+        attributes: Value,
+        include_state: bool,
+        include_worker_metrics: bool,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.write_then_refresh(
+            instance_id,
+            WorkerBatchRequest::new(
+                "instance.connection.notifyComponent",
+                json!({ "instanceId": instance_id, "messageId": message_id, "attributes": attributes }),
+            ),
+            "notifyComponent",
+            include_state,
+            include_worker_metrics,
+        )
+        .await
+    }
+
     pub async fn notify_controller(
         &self,
         instance_id: u64,
@@ -331,6 +352,27 @@ impl WorkerSupervisor {
             instance_id,
             "instance.connection.notifyController",
             json!({ "instanceId": instance_id, "messageId": message_id, "attributes": attributes }),
+        )
+        .await
+    }
+
+    pub async fn notify_controller_and_refresh(
+        &self,
+        instance_id: u64,
+        message_id: String,
+        attributes: Value,
+        include_state: bool,
+        include_worker_metrics: bool,
+    ) -> Result<Value, WorkerSupervisorError> {
+        self.write_then_refresh(
+            instance_id,
+            WorkerBatchRequest::new(
+                "instance.connection.notifyController",
+                json!({ "instanceId": instance_id, "messageId": message_id, "attributes": attributes }),
+            ),
+            "notifyController",
+            include_state,
+            include_worker_metrics,
         )
         .await
     }
