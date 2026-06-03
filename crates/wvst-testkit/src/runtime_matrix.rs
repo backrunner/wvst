@@ -298,6 +298,7 @@ pub struct RuntimeProbeMatrixReport {
     pub passed: usize,
     pub failed: usize,
     pub launch_failed: usize,
+    pub audio_health: RuntimeProbeAudioHealthSummary,
 }
 
 impl RuntimeProbeMatrixReport {
@@ -305,6 +306,7 @@ impl RuntimeProbeMatrixReport {
         let passed = results.iter().filter(|result| result.passed()).count();
         let failed = count_status(&results, RuntimeProbeStatus::Failed);
         let launch_failed = count_status(&results, RuntimeProbeStatus::LaunchFailed);
+        let audio_health = RuntimeProbeAudioHealthSummary::from_results(&results);
 
         Self {
             schema_version: RUNTIME_PROBE_MATRIX_REPORT_SCHEMA_VERSION,
@@ -312,6 +314,7 @@ impl RuntimeProbeMatrixReport {
             passed,
             failed,
             launch_failed,
+            audio_health,
         }
     }
 
@@ -320,11 +323,96 @@ impl RuntimeProbeMatrixReport {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeProbeAudioHealthSummary {
+    pub reported_cases: usize,
+    pub fully_silent_cases: usize,
+    pub non_zero_cases: usize,
+    pub non_finite_cases: usize,
+    pub clipped_cases: usize,
+    pub total_non_finite_output_samples: u64,
+    pub total_clipped_output_samples: u64,
+    pub total_silent_output_blocks: u64,
+    pub max_output_peak: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_peak_case: Option<String>,
+    pub max_output_rms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_rms_case: Option<String>,
+}
+
+impl RuntimeProbeAudioHealthSummary {
+    fn from_results(results: &[RuntimeProbeResult]) -> Self {
+        let mut summary = Self::default();
+
+        for result in results {
+            let Some(process) = result
+                .probe_report
+                .as_ref()
+                .and_then(|report| report.get("process"))
+            else {
+                continue;
+            };
+
+            summary.reported_cases += 1;
+            let total_blocks = u64_field(process, "totalBlocks");
+            let silent_blocks = u64_field(process, "silentOutputBlocks");
+            let non_zero_blocks = u64_field(process, "nonZeroOutputBlocks");
+            let non_finite_samples = u64_field(process, "nonFiniteOutputSamples");
+            let clipped_samples = u64_field(process, "clippedOutputSamples");
+            let peak = f64_field(process, "maxOutputPeak");
+            let rms = f64_field(process, "outputRms");
+
+            if total_blocks > 0 && silent_blocks == total_blocks {
+                summary.fully_silent_cases += 1;
+            }
+            if non_zero_blocks > 0 {
+                summary.non_zero_cases += 1;
+            }
+            if non_finite_samples > 0 {
+                summary.non_finite_cases += 1;
+            }
+            if clipped_samples > 0 {
+                summary.clipped_cases += 1;
+            }
+            summary.total_non_finite_output_samples = summary
+                .total_non_finite_output_samples
+                .saturating_add(non_finite_samples);
+            summary.total_clipped_output_samples = summary
+                .total_clipped_output_samples
+                .saturating_add(clipped_samples);
+            summary.total_silent_output_blocks = summary
+                .total_silent_output_blocks
+                .saturating_add(silent_blocks);
+
+            if peak > summary.max_output_peak {
+                summary.max_output_peak = peak;
+                summary.max_output_peak_case = Some(result.case_name.clone());
+            }
+            if rms > summary.max_output_rms {
+                summary.max_output_rms = rms;
+                summary.max_output_rms_case = Some(result.case_name.clone());
+            }
+        }
+
+        summary
+    }
+}
+
 fn count_status(results: &[RuntimeProbeResult], status: RuntimeProbeStatus) -> usize {
     results
         .iter()
         .filter(|result| result.status == status)
         .count()
+}
+
+fn u64_field(value: &Value, field: &str) -> u64 {
+    value.get(field).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn f64_field(value: &Value, field: &str) -> f64 {
+    value.get(field).and_then(Value::as_f64).unwrap_or(0.0)
 }
 
 #[cfg(test)]

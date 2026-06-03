@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 
 #[derive(Default)]
 struct RecordingExecutor {
@@ -93,6 +94,70 @@ fn summarizes_failed_and_launch_failed_cases() {
     assert_eq!(report.launch_failed, 1);
     assert_eq!(report.results[0].case_name, "broken");
     assert_eq!(report.results[1].class_id, "class-b");
+}
+
+#[test]
+fn summarizes_probe_audio_health() {
+    let report = RuntimeProbeMatrixReport::new(vec![
+        RuntimeProbeResult {
+            case_name: "silent-effect".to_string(),
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": true,
+                "process": {
+                    "totalBlocks": 2,
+                    "silentOutputBlocks": 2,
+                    "nonZeroOutputBlocks": 0,
+                    "nonFiniteOutputSamples": 0,
+                    "clippedOutputSamples": 0,
+                    "maxOutputPeak": 0.0,
+                    "outputRms": 0.0
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        },
+        RuntimeProbeResult {
+            case_name: "hot-synth".to_string(),
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": true,
+                "process": {
+                    "totalBlocks": 3,
+                    "silentOutputBlocks": 1,
+                    "nonZeroOutputBlocks": 2,
+                    "nonFiniteOutputSamples": 4,
+                    "clippedOutputSamples": 2,
+                    "maxOutputPeak": 1.25,
+                    "outputRms": 0.5
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        },
+    ]);
+
+    assert_eq!(report.audio_health.reported_cases, 2);
+    assert_eq!(report.audio_health.fully_silent_cases, 1);
+    assert_eq!(report.audio_health.non_zero_cases, 1);
+    assert_eq!(report.audio_health.non_finite_cases, 1);
+    assert_eq!(report.audio_health.clipped_cases, 1);
+    assert_eq!(report.audio_health.total_silent_output_blocks, 3);
+    assert_eq!(report.audio_health.total_non_finite_output_samples, 4);
+    assert_eq!(report.audio_health.total_clipped_output_samples, 2);
+    assert_eq!(report.audio_health.max_output_peak, 1.25);
+    assert_eq!(
+        report.audio_health.max_output_peak_case.as_deref(),
+        Some("hot-synth")
+    );
+    assert_eq!(report.audio_health.max_output_rms, 0.5);
+    assert_eq!(
+        report.audio_health.max_output_rms_case.as_deref(),
+        Some("hot-synth")
+    );
+
+    let value = serde_json::to_value(&report).expect("report json");
+    assert_eq!(value["audioHealth"]["reportedCases"], 2);
+    assert_eq!(value["audioHealth"]["fullySilentCases"], 1);
+    assert_eq!(value["audioHealth"]["maxOutputPeakCase"], "hot-synth");
 }
 
 #[test]
