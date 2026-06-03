@@ -192,6 +192,7 @@ function stopAllAudioStreams() {
 }
 
 const AUDIO_POLL_INTERVAL_MS = 1;
+const MAX_AUDIO_PUMP_QUANTA_PER_TICK = 8;
 const MAX_PENDING_MIDI_EVENTS = 4_096;
 const MAX_PENDING_PARAMETER_EVENTS = 4_096;
 
@@ -329,19 +330,33 @@ class AudioStreamPump {
     }
 
     try {
-      const inputSequence = Atomics.load(this.counters, LoopbackCounter.InputSequence);
-      const consumedSequence = Atomics.load(
-        this.counters,
-        LoopbackCounter.InputConsumedSequence,
-      );
-      if (inputSequence > consumedSequence) {
+      let processed = 0;
+      while (!this.stopped && processed < MAX_AUDIO_PUMP_QUANTA_PER_TICK) {
+        const inputSequence = Atomics.load(this.counters, LoopbackCounter.InputSequence);
+        const consumedSequence = Atomics.load(
+          this.counters,
+          LoopbackCounter.InputConsumedSequence,
+        );
+        if (inputSequence <= consumedSequence) {
+          break;
+        }
         await this.processNextInput(inputSequence, consumedSequence);
+        processed += 1;
       }
     } catch {
       Atomics.add(this.counters, LoopbackCounter.Overflows, 1);
     } finally {
-      this.schedule();
+      const delay = this.pendingInputQuanta() > 0 ? 0 : AUDIO_POLL_INTERVAL_MS;
+      this.schedule(delay);
     }
+  }
+
+  private pendingInputQuanta(): number {
+    return Math.max(
+      0,
+      Atomics.load(this.counters, LoopbackCounter.InputSequence) -
+        Atomics.load(this.counters, LoopbackCounter.InputConsumedSequence),
+    );
   }
 
   private async processNextInput(
