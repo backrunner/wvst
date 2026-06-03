@@ -1,0 +1,120 @@
+name: WVST Evidence Gates
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: Runner label with the required plugins, browser metrics, package artifacts, or OS install state.
+        required: true
+        default: self-hosted
+      runtime_matrix_manifest:
+        description: Path to a runtime-probe matrix manifest on the runner.
+        required: false
+      host_worker:
+        description: Path to wvst-host-worker. Defaults to target/release/wvst-host-worker after build.
+        required: false
+      latency_snapshot:
+        description: Path to latency snapshot JSON.
+        required: false
+      stability_budget:
+        description: Path to stability budget JSON.
+        required: false
+      webaudio_metrics:
+        description: Optional WebAudio metrics JSON.
+        required: false
+      bridge_metrics:
+        description: Optional Bridge metrics JSON.
+        required: false
+      package_manifest:
+        description: Path to wvst-package-manifest.json.
+        required: false
+      package_verify_report:
+        description: Path to wvst-verify-report.json.
+        required: false
+      package_budget:
+        description: Optional package evidence budget JSON.
+        required: false
+
+jobs:
+  evidence:
+    name: Evidence
+    runs-on: ${{ inputs.runner_label }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Build evidence binaries
+        run: cargo build --workspace --bins --release
+
+      - name: Run evidence gates
+        env:
+          RUNTIME_MATRIX_MANIFEST: ${{ inputs.runtime_matrix_manifest }}
+          HOST_WORKER: ${{ inputs.host_worker }}
+          LATENCY_SNAPSHOT: ${{ inputs.latency_snapshot }}
+          STABILITY_BUDGET: ${{ inputs.stability_budget }}
+          WEBAUDIO_METRICS: ${{ inputs.webaudio_metrics }}
+          BRIDGE_METRICS: ${{ inputs.bridge_metrics }}
+          PACKAGE_MANIFEST: ${{ inputs.package_manifest }}
+          PACKAGE_VERIFY_REPORT: ${{ inputs.package_verify_report }}
+          PACKAGE_BUDGET: ${{ inputs.package_budget }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+
+          ran_gate=0
+
+          if [ -n "${RUNTIME_MATRIX_MANIFEST}" ]; then
+            worker="${HOST_WORKER:-target/release/wvst-host-worker}"
+            cargo run -p wvst-testkit --bin wvst-runtime-matrix --release -- \
+              --worker "${worker}" \
+              --manifest "${RUNTIME_MATRIX_MANIFEST}" \
+              | tee evidence/runtime-matrix-report.json
+            ran_gate=1
+          fi
+
+          if [ -n "${LATENCY_SNAPSHOT}" ] || [ -n "${STABILITY_BUDGET}" ] || [ -n "${WEBAUDIO_METRICS}" ] || [ -n "${BRIDGE_METRICS}" ]; then
+            if [ -z "${LATENCY_SNAPSHOT}" ] || [ -z "${STABILITY_BUDGET}" ]; then
+              echo "latency_snapshot and stability_budget are required for the stability gate" >&2
+              exit 2
+            fi
+            args=(--snapshot "${LATENCY_SNAPSHOT}" --budget "${STABILITY_BUDGET}")
+            if [ -n "${WEBAUDIO_METRICS}" ]; then
+              args+=(--webaudio "${WEBAUDIO_METRICS}")
+            fi
+            if [ -n "${BRIDGE_METRICS}" ]; then
+              args+=(--bridge "${BRIDGE_METRICS}")
+            fi
+            cargo run -p wvst-testkit --bin wvst-stability-budget --release -- "${args[@]}" \
+              | tee evidence/stability-budget-report.json
+            ran_gate=1
+          fi
+
+          if [ -n "${PACKAGE_MANIFEST}" ] || [ -n "${PACKAGE_VERIFY_REPORT}" ] || [ -n "${PACKAGE_BUDGET}" ]; then
+            if [ -z "${PACKAGE_MANIFEST}" ] || [ -z "${PACKAGE_VERIFY_REPORT}" ]; then
+              echo "package_manifest and package_verify_report are required for the package evidence gate" >&2
+              exit 2
+            fi
+            args=(--manifest "${PACKAGE_MANIFEST}" --verify-report "${PACKAGE_VERIFY_REPORT}")
+            if [ -n "${PACKAGE_BUDGET}" ]; then
+              args+=(--budget "${PACKAGE_BUDGET}")
+            fi
+            cargo run -p wvst-testkit --bin wvst-package-evidence --release -- "${args[@]}" \
+              | tee evidence/package-evidence-report.json
+            ran_gate=1
+          fi
+
+          if [ "${ran_gate}" -eq 0 ]; then
+            echo "provide at least one evidence input group" >&2
+            exit 2
+          fi
+
+      - name: Upload evidence reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wvst-evidence
+          path: evidence/*.json
+          if-no-files-found: ignore
