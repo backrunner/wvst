@@ -42,11 +42,11 @@ on:
       browser_smoke_duration_ms:
         description: Browser smoke collection duration in milliseconds.
         required: false
-        default: "750"
+        default: "1800000"
       browser_smoke_min_round_trips:
         description: Minimum browser smoke round-trip samples.
         required: false
-        default: "8"
+        default: "1000"
       bridge_web_smoke:
         description: Run the configurable browser-to-Bridge-to-VST3 smoke and upload its report.
         required: false
@@ -66,14 +66,20 @@ on:
         description: Output channel count for the browser-to-Bridge smoke.
         required: false
         default: "2"
+      bridge_web_smoke_input_bus_index:
+        description: Optional VST3 input bus index for the browser-to-Bridge smoke.
+        required: false
+      bridge_web_smoke_output_bus_index:
+        description: Optional VST3 output bus index for the browser-to-Bridge smoke.
+        required: false
       bridge_web_smoke_duration_ms:
         description: Browser-to-Bridge smoke collection duration in milliseconds.
         required: false
-        default: "1000"
+        default: "1800000"
       bridge_web_smoke_min_round_trips:
         description: Minimum browser-to-Bridge smoke round-trip samples.
         required: false
-        default: "8"
+        default: "1000"
 
 jobs:
   evidence:
@@ -123,6 +129,8 @@ jobs:
           BRIDGE_WEB_SMOKE_CLASS_ID: ${{ inputs.bridge_web_smoke_class_id }}
           BRIDGE_WEB_SMOKE_INPUT_CHANNELS: ${{ inputs.bridge_web_smoke_input_channels }}
           BRIDGE_WEB_SMOKE_OUTPUT_CHANNELS: ${{ inputs.bridge_web_smoke_output_channels }}
+          BRIDGE_WEB_SMOKE_INPUT_BUS_INDEX: ${{ inputs.bridge_web_smoke_input_bus_index }}
+          BRIDGE_WEB_SMOKE_OUTPUT_BUS_INDEX: ${{ inputs.bridge_web_smoke_output_bus_index }}
           BRIDGE_WEB_SMOKE_DURATION_MS: ${{ inputs.bridge_web_smoke_duration_ms }}
           BRIDGE_WEB_SMOKE_MIN_ROUND_TRIPS: ${{ inputs.bridge_web_smoke_min_round_trips }}
         run: |
@@ -151,6 +159,8 @@ jobs:
             WVST_BRIDGE_SMOKE_CLASS_ID="${BRIDGE_WEB_SMOKE_CLASS_ID}" \
             WVST_BRIDGE_SMOKE_INPUT_CHANNELS="${BRIDGE_WEB_SMOKE_INPUT_CHANNELS}" \
             WVST_BRIDGE_SMOKE_OUTPUT_CHANNELS="${BRIDGE_WEB_SMOKE_OUTPUT_CHANNELS}" \
+            WVST_BRIDGE_SMOKE_INPUT_BUS_INDEX="${BRIDGE_WEB_SMOKE_INPUT_BUS_INDEX}" \
+            WVST_BRIDGE_SMOKE_OUTPUT_BUS_INDEX="${BRIDGE_WEB_SMOKE_OUTPUT_BUS_INDEX}" \
             WVST_BRIDGE_SMOKE_DURATION_MS="${BRIDGE_WEB_SMOKE_DURATION_MS}" \
             WVST_BRIDGE_SMOKE_MIN_ROUND_TRIPS="${BRIDGE_WEB_SMOKE_MIN_ROUND_TRIPS}" \
               npm run smoke:bridge:web
@@ -176,7 +186,8 @@ jobs:
               stability_budget="evidence/bridge-web-smoke-budget.json"
               cat > "${stability_budget}" <<'JSON'
           {
-            "minObservations": 8,
+            "minRunDurationMillis": 1800000,
+            "minObservations": 1000,
             "maxDroppedFrames": 0,
             "maxTimeoutFrames": 0,
             "maxLateFrames": 0,
@@ -191,7 +202,7 @@ jobs:
             "maxWebAudioEndToEndRoundTripP95Us": 10000,
             "maxPendingInputQuanta": 0,
             "maxPendingOutputQuanta": 8,
-            "minBridgeAudioFramesRouted": 8,
+            "minBridgeAudioFramesRouted": 1000,
             "maxBridgeAudioBackpressureDrops": 0,
             "maxBridgeAudioFrameRouteFailures": 0,
             "maxBridgeAudioSequenceGapEvents": 0,

@@ -17,6 +17,8 @@ pub struct LatencySnapshotInput {
     pub schema_version: u16,
     pub config: LatencyHarnessConfig,
     #[serde(default)]
+    pub run_duration_millis: Option<u64>,
+    #[serde(default)]
     pub start_sequence: u64,
     #[serde(default)]
     pub start_frame_time: u64,
@@ -63,7 +65,9 @@ impl LatencySnapshotInput {
             }
         }
 
-        Ok(harness.snapshot())
+        let mut snapshot = harness.snapshot();
+        snapshot.run_duration_millis = self.run_duration_millis;
+        Ok(snapshot)
     }
 }
 
@@ -156,6 +160,7 @@ impl WebBridgeSmokeLatencyReport {
 
         Ok(LatencySnapshot {
             config: LatencyHarnessConfig::new(self.sample_rate, self.config.frames),
+            run_duration_millis: self.config.duration_ms,
             observations: observations as usize,
             dropped_frames,
             sequence_gap_events: bridge.audio_sequence_gap_events,
@@ -179,6 +184,8 @@ impl WebBridgeSmokeLatencyReport {
 #[serde(rename_all = "camelCase")]
 struct WebBridgeSmokeConfig {
     frames: u16,
+    #[serde(default)]
+    duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -482,7 +489,8 @@ mod tests {
             "mode": "bridge-vst3",
             "sampleRate": 48000,
             "config": {
-                "frames": 128
+                "frames": 128,
+                "durationMs": 1800000
             },
             "metrics": {
                 "droppedInputQuanta": 1,
@@ -516,6 +524,7 @@ mod tests {
 
         assert_eq!(snapshot.config.sample_rate_hz(), 48_000);
         assert_eq!(snapshot.config.block_frames(), 128);
+        assert_eq!(snapshot.run_duration_millis, Some(1_800_000));
         assert_eq!(snapshot.observations, 10);
         assert_eq!(snapshot.dropped_frames, 10);
         assert_eq!(snapshot.timeout_frames, 3);

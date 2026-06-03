@@ -160,7 +160,7 @@ impl StabilityRunner {
         let mut frame_time = self.config.start_frame_time();
         let block_frames = u64::from(self.config.latency().block_frames());
         let target_blocks = self.config.target_blocks();
-        let mut executed_blocks = 0;
+        let mut executed_blocks = 0_u64;
 
         for _ in 0..target_blocks {
             let step = StabilityStep {
@@ -188,13 +188,27 @@ impl StabilityRunner {
             frame_time = frame_time.saturating_add(block_frames);
         }
 
+        let elapsed_audio_frames = executed_blocks.saturating_mul(block_frames);
+        let mut snapshot = harness.snapshot();
+        snapshot.run_duration_millis = Some(frames_to_millis(
+            elapsed_audio_frames,
+            self.config.latency().sample_rate_hz(),
+        ));
+
         StabilityRunReport {
             config: self.config,
             executed_blocks,
-            elapsed_audio_frames: executed_blocks.saturating_mul(block_frames),
-            snapshot: harness.snapshot(),
+            elapsed_audio_frames,
+            snapshot,
         }
     }
+}
+
+fn frames_to_millis(frames: u64, sample_rate_hz: u32) -> u64 {
+    if sample_rate_hz == 0 {
+        return 0;
+    }
+    frames.saturating_mul(1_000) / u64::from(sample_rate_hz)
 }
 
 fn record_outcome(
@@ -248,6 +262,7 @@ mod tests {
 
         assert_eq!(report.executed_blocks, 3);
         assert_eq!(report.elapsed_audio_frames, 384);
+        assert_eq!(report.snapshot.run_duration_millis, Some(8));
         assert_eq!(report.snapshot.observations, 3);
         assert_eq!(report.snapshot.route_latency_us.p50, Some(511));
         assert_eq!(report.snapshot.round_trip_frames.p99, Some(128));

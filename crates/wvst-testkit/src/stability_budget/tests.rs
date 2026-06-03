@@ -12,6 +12,7 @@ use crate::stability::{
 fn passes_when_snapshot_stays_inside_budget() {
     let report = passing_report();
     let budget = StabilityBudget::default()
+        .min_run_duration_millis(8)
         .min_observations(3)
         .max_dropped_frames(0)
         .max_timeout_frames(0)
@@ -24,6 +25,39 @@ fn passes_when_snapshot_stays_inside_budget() {
 
     assert!(budget_report.passed);
     assert!(budget_report.violations.is_empty());
+}
+
+#[test]
+fn reports_short_run_duration_when_budget_requires_long_window() {
+    let report = passing_report();
+    let budget = StabilityBudget::default().min_run_duration_millis(30 * 60 * 1_000);
+
+    let budget_report = report.evaluate_budget(budget);
+
+    assert_eq!(
+        budget_report.violations,
+        vec![StabilityBudgetViolation::MinimumNotMet {
+            metric: "runDurationMillis",
+            min: 1_800_000,
+            actual: 8,
+        }]
+    );
+}
+
+#[test]
+fn reports_missing_run_duration_when_budget_requires_it() {
+    let mut snapshot = passing_report().snapshot;
+    snapshot.run_duration_millis = None;
+    let budget = StabilityBudget::default().min_run_duration_millis(1_000);
+
+    let budget_report = StabilityBudgetReport::from_snapshot(&snapshot, budget);
+
+    assert_eq!(
+        budget_report.violations,
+        vec![StabilityBudgetViolation::MetricMissing {
+            metric: "runDurationMillis",
+        }]
+    );
 }
 
 #[test]

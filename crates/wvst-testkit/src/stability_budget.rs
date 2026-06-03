@@ -12,6 +12,7 @@ pub use webaudio::WebAudioLoopbackMetrics;
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StabilityBudget {
+    pub min_run_duration_millis: Option<u64>,
     pub min_observations: Option<usize>,
     pub max_dropped_frames: Option<u64>,
     pub max_timeout_frames: Option<u64>,
@@ -87,6 +88,11 @@ pub struct StabilityBudget {
 }
 
 impl StabilityBudget {
+    pub const fn min_run_duration_millis(mut self, millis: u64) -> Self {
+        self.min_run_duration_millis = Some(millis);
+        self
+    }
+
     pub const fn min_observations(mut self, observations: usize) -> Self {
         self.min_observations = Some(observations);
         self
@@ -215,6 +221,13 @@ impl StabilityBudgetReport {
         bridge: Option<BridgeStabilityMetrics>,
     ) -> Self {
         let mut violations = Vec::new();
+
+        push_optional_min(
+            &mut violations,
+            "runDurationMillis",
+            snapshot.run_duration_millis,
+            budget.min_run_duration_millis,
+        );
 
         if let Some(min) = budget.min_observations
             && snapshot.observations < min
@@ -386,6 +399,26 @@ fn push_max(
             max,
             actual,
         });
+    }
+}
+
+fn push_optional_min(
+    violations: &mut Vec<StabilityBudgetViolation>,
+    metric: &'static str,
+    actual: Option<u64>,
+    min: Option<u64>,
+) {
+    let Some(min) = min else {
+        return;
+    };
+    match actual {
+        Some(actual) if actual < min => violations.push(StabilityBudgetViolation::MinimumNotMet {
+            metric,
+            min,
+            actual,
+        }),
+        Some(_) => {}
+        None => violations.push(StabilityBudgetViolation::MetricMissing { metric }),
     }
 }
 

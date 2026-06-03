@@ -72,6 +72,8 @@ pub struct LatencyPercentiles {
 #[serde(rename_all = "camelCase")]
 pub struct LatencySnapshot {
     pub config: LatencyHarnessConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_duration_millis: Option<u64>,
     pub observations: usize,
     pub dropped_frames: u64,
     pub sequence_gap_events: u64,
@@ -159,6 +161,7 @@ impl LatencyHarness {
 
         LatencySnapshot {
             config: self.config,
+            run_duration_millis: None,
             observations: self.observations.len(),
             dropped_frames: self.dropped_frames,
             sequence_gap_events: self.sequence_gap_events,

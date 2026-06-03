@@ -377,6 +377,7 @@ mod tests {
     #[test]
     fn evaluates_web_bridge_smoke_payloads_as_all_metric_inputs() {
         let budget = json!({
+            "minRunDurationMillis": 1800000,
             "minObservations": 4,
             "maxDroppedFrames": 0,
             "maxProcessErrorFrames": 0,
@@ -395,7 +396,8 @@ mod tests {
             "mode": "bridge-vst3",
             "sampleRate": 48000,
             "config": {
-                "frames": 128
+                "frames": 128,
+                "durationMs": 1800000
             },
             "metrics": {
                 "inputFrames": 512,
