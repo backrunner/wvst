@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WVST Effect</title>
+    <link rel="stylesheet" href="../shared.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "@wvst/web": "/packages/wvst-web/dist/index.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <aside>
+        <h1>WVST Effect</h1>
+        <label>Bridge endpoint <input id="endpoint" value="ws://127.0.0.1:35876" /></label>
+        <label>Token <input id="token" autocomplete="off" /></label>
+        <div class="actions">
+          <button id="connect">Connect</button>
+          <button id="rescan" disabled>Rescan</button>
+        </div>
+        <div id="status" class="status">Idle</div>
+
+        <h2>Plugin</h2>
+        <label>Plugin <select id="plugin"></select></label>
+        <label>Class <select id="class"></select></label>
+        <div class="row">
+          <label>Input channels <input id="inputs" type="number" min="1" max="8" value="2" /></label>
+          <label>Output channels <input id="outputs" type="number" min="1" max="8" value="2" /></label>
+        </div>
+        <label>Frames <input id="frames" type="number" min="32" max="2048" step="32" value="128" /></label>
+
+        <h2>Devices</h2>
+        <label>Input <select id="input-device"></select></label>
+        <label>Output <select id="output-device"></select></label>
+        <div class="actions">
+          <button id="mount" disabled>Mount</button>
+          <button id="stop" disabled>Stop</button>
+        </div>
+      </aside>
+
+      <section>
+        <div class="grid">
+          <div class="panel">
+            <h2>Metrics</h2>
+            <div id="metrics"></div>
+          </div>
+          <div class="panel">
+            <h2>Runtime</h2>
+            <pre id="runtime">{}</pre>
+          </div>
+        </div>
+        <h2>Parameters</h2>
+        <div id="parameters" class="parameters"></div>
+      </section>
+    </main>
+    <script type="module" src="/packages/wvst-web-examples/dist/effect/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "@wvst/web-examples",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Runnable WebAudio examples for the WVST Web SDK.",
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json && rollup -c",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "serve:effect": "node scripts/serve.mjs effect",
+    "serve:instrument": "node scripts/serve.mjs instrument"
+  },
+  "dependencies": {
+    "@wvst/web": "file:../wvst-web"
+  }
+}
