@@ -13,6 +13,7 @@
 - [roadmap.md](roadmap.md)：从 macOS MVP 到跨平台生产可用版本的阶段计划。
 - [development-standards.md](development-standards.md)：Rust/TS 实时音频、高性能、测试、代码规模和提交规范。
 - [implementation-gap-analysis.md](implementation-gap-analysis.md)：当前实现状态、完整能力差距和下一阶段顺序。
+- [runtime-probe-matrix.example.json](runtime-probe-matrix.example.json)：`wvst-testkit` runtime-probe 固定矩阵 manifest 示例，用于接入本机真实 VST3 fixture。
 - [skills/wvst-engineering/SKILL.md](skills/wvst-engineering/SKILL.md)：后续 WVST 开发时应加载的本地 skill。
 
 ## 当前结论

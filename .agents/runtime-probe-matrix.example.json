@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "description": "Example WVST runtime-probe matrix. Replace pluginPath/classId with local third-party VST3 fixtures before running.",
+  "cases": [
+    {
+      "name": "effect-stereo-automation",
+      "pluginPath": "/Library/Audio/Plug-Ins/VST3/ExampleEffect.vst3",
+      "classId": "00000000000000000000000000000000",
+      "sampleRateHz": 48000,
+      "maxBlockFrames": 128,
+      "inputChannels": 2,
+      "outputChannels": 2,
+      "frames": 128,
+      "blocks": 16,
+      "parameterChanges": [
+        {
+          "parameterId": 42,
+          "valueMilli": 500,
+          "sampleOffset": 64
+        }
+      ]
+    },
+    {
+      "name": "instrument-zero-input-note",
+      "pluginPath": "/Library/Audio/Plug-Ins/VST3/ExampleInstrument.vst3",
+      "classId": "00000000000000000000000000000000",
+      "sampleRateHz": 48000,
+      "maxBlockFrames": 128,
+      "inputChannels": 0,
+      "outputChannels": 2,
+      "frames": 128,
+      "blocks": 16,
+      "note": {
+        "pitch": 60,
+        "velocityMilli": 750,
+        "channel": 0
+      }
+    }
+  ]
+}
