@@ -6,8 +6,6 @@ order: 4
 
 # Live Demo
 
-This demo uses the real WVST bridge path. It does not create mock effects when the bridge, browser isolation, or local VST plugins are unavailable.
-
 <WVSTRackDemo locale="en" />
 
 ## Requirements

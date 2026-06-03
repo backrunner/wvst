@@ -6,8 +6,6 @@ order: 4
 
 # Live Demo
 
-这个 demo 使用真实 WVST bridge path。当 bridge、浏览器隔离环境或本地 VST 插件不可用时，它不会创建 mock effect。
-
 <WVSTRackDemo locale="zh" />
 
 ## 前置条件
