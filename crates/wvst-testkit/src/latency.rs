@@ -75,6 +75,7 @@ pub struct LatencySnapshot {
     pub duplicate_frames: u64,
     pub out_of_order_frames: u64,
     pub late_frames: u64,
+    pub timeout_frames: u64,
     pub silence_frames: u64,
     pub process_error_frames: u64,
     pub route_latency_us: LatencyPercentiles,
@@ -94,6 +95,7 @@ pub struct LatencyHarness {
     duplicate_frames: u64,
     out_of_order_frames: u64,
     late_frames: u64,
+    timeout_frames: u64,
     silence_frames: u64,
     process_error_frames: u64,
 }
@@ -111,6 +113,7 @@ impl LatencyHarness {
             duplicate_frames: 0,
             out_of_order_frames: 0,
             late_frames: 0,
+            timeout_frames: 0,
             silence_frames: 0,
             process_error_frames: 0,
         }
@@ -124,6 +127,12 @@ impl LatencyHarness {
 
     pub fn record_drop(&mut self, sequence: u64) {
         self.record_sequence(sequence);
+        self.dropped_frames = self.dropped_frames.saturating_add(1);
+    }
+
+    pub fn record_timeout(&mut self, sequence: u64) {
+        self.record_sequence(sequence);
+        self.timeout_frames = self.timeout_frames.saturating_add(1);
         self.dropped_frames = self.dropped_frames.saturating_add(1);
     }
 
@@ -153,6 +162,7 @@ impl LatencyHarness {
             duplicate_frames: self.duplicate_frames,
             out_of_order_frames: self.out_of_order_frames,
             late_frames: self.late_frames,
+            timeout_frames: self.timeout_frames,
             silence_frames: self.silence_frames,
             process_error_frames: self.process_error_frames,
             route_latency_us,
@@ -266,6 +276,7 @@ mod tests {
         assert_eq!(snapshot.config.block_frames(), 128);
         assert_eq!(snapshot.observations, 3);
         assert_eq!(snapshot.late_frames, 1);
+        assert_eq!(snapshot.timeout_frames, 0);
         assert_eq!(snapshot.silence_frames, 1);
         assert_eq!(snapshot.process_error_frames, 1);
         assert_eq!(snapshot.route_latency_us.p95, Some(1_100));
@@ -299,6 +310,7 @@ mod tests {
             AudioFrameFlags::empty(),
         ));
         harness.record_drop(3);
+        harness.record_timeout(4);
 
         let snapshot = harness.snapshot();
 
@@ -306,6 +318,7 @@ mod tests {
         assert_eq!(snapshot.sequence_gap_frames, 1);
         assert_eq!(snapshot.out_of_order_frames, 1);
         assert_eq!(snapshot.duplicate_frames, 1);
-        assert_eq!(snapshot.dropped_frames, 1);
+        assert_eq!(snapshot.timeout_frames, 1);
+        assert_eq!(snapshot.dropped_frames, 2);
     }
 }
