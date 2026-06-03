@@ -4,6 +4,7 @@ pub mod error;
 pub mod midi_event;
 pub mod parameter_event;
 pub mod worker_audio_ipc;
+pub mod worker_control_batch;
 pub mod worker_control_ipc;
 
 pub use audio_frame::{
@@ -17,6 +18,9 @@ pub use parameter_event::{PARAMETER_AUTOMATION_EVENT_LEN, ParameterAutomationEve
 pub use worker_audio_ipc::{
     WORKER_AUDIO_IPC_HEADER_LEN, WORKER_AUDIO_IPC_MAGIC, WORKER_AUDIO_IPC_MAX_BODY_LEN,
     WORKER_AUDIO_IPC_VERSION, WorkerAudioIpcHeader, WorkerAudioIpcMessage, WorkerAudioMessageKind,
+};
+pub use worker_control_batch::{
+    WORKER_CONTROL_IPC_MAX_BATCH_FRAMES, WorkerControlIpcBatch, WorkerControlIpcBatchRole,
 };
 pub use worker_control_ipc::{
     WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAGIC, WORKER_CONTROL_IPC_MAX_BODY_LEN,

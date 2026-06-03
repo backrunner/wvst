@@ -12,6 +12,8 @@ pub enum WorkerControlMessageKind {
     Request = 1,
     Response = 2,
     ErrorResponse = 3,
+    BatchRequest = 4,
+    BatchResponse = 5,
 }
 
 impl TryFrom<u16> for WorkerControlMessageKind {
@@ -22,6 +24,8 @@ impl TryFrom<u16> for WorkerControlMessageKind {
             1 => Ok(Self::Request),
             2 => Ok(Self::Response),
             3 => Ok(Self::ErrorResponse),
+            4 => Ok(Self::BatchRequest),
+            5 => Ok(Self::BatchResponse),
             other => Err(ProtocolError::InvalidWorkerControlMessageKind(other)),
         }
     }
@@ -177,7 +181,10 @@ fn validate_status_code(
     status_code: u16,
 ) -> Result<(), ProtocolError> {
     match kind {
-        WorkerControlMessageKind::Request | WorkerControlMessageKind::Response
+        WorkerControlMessageKind::Request
+        | WorkerControlMessageKind::Response
+        | WorkerControlMessageKind::BatchRequest
+        | WorkerControlMessageKind::BatchResponse
             if status_code != 0 =>
         {
             Err(ProtocolError::InvalidWorkerControlIpcStatusCode {
@@ -289,6 +296,13 @@ mod tests {
             WorkerControlIpcMessage::new(WorkerControlMessageKind::Response, 1, 1, Vec::new()),
             Err(ProtocolError::InvalidWorkerControlIpcStatusCode {
                 kind: 2,
+                status_code: 1,
+            })
+        ));
+        assert!(matches!(
+            WorkerControlIpcMessage::new(WorkerControlMessageKind::BatchRequest, 1, 1, Vec::new()),
+            Err(ProtocolError::InvalidWorkerControlIpcStatusCode {
+                kind: 4,
                 status_code: 1,
             })
         ));

@@ -860,6 +860,12 @@ fn validate_framed_response_header(
         WorkerControlMessageKind::Request => Err(format!(
             "worker sent request frame while responding to {method}"
         )),
+        WorkerControlMessageKind::BatchRequest => Err(format!(
+            "worker sent batch request frame while responding to {method}"
+        )),
+        WorkerControlMessageKind::BatchResponse => Err(format!(
+            "worker sent batch response frame to non-batch request {method}"
+        )),
     }
 }
 

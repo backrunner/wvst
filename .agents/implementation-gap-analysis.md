@@ -25,7 +25,7 @@
 - Bridge worker supervisor 已提供 quarantine TTL 释放策略，过期释放会清空累计失败计数并可通过事件观测；quarantine error data 与 `worker-quarantined` event 已暴露 `releaseAfterMs`，便于 Web/UI 展示重试倒计时和策略诊断；`worker-recovering` / `worker-recovered` / `worker-recovery-failed` event 已通过 `mode`、`reason` 和结构化 `errorData` 区分手动 restart、heartbeat 自动恢复、重启失败与 processing 恢复失败。
 - Bridge worker supervisor 的 quarantine failure threshold 已可通过 `WVST_WORKER_QUARANTINE_FAILURES`、`BridgeConfig::with_worker_quarantine_failure_threshold()` 和 `BridgeRuntimeBuilder::worker_quarantine_failure_threshold()` 配置；嵌入式宿主可按自身恢复策略调节插件进入 quarantine 前允许的失败次数。
 - Bridge worker supervisor 已提供首版 worker 进程树终止：Unix/macOS 启动 worker 时放入独立 process group，shutdown 时优先向 process group 发终止信号并等待，超时后升级强制 kill；测试覆盖 worker 派生子进程后 destroy 仍能清理进程组。
-- Bridge worker supervisor 生产路径已默认通过 `WVCI` framed control IPC 发送/接收 worker 控制请求；worker hello 会暴露并校验 `framedControlIpcVersion`、`framedControlMaxBodyBytes`、sequence id、status code 和 error response frame capability，测试覆盖真实 worker framed create/destroy passthrough path、版本不匹配和 body cap/capability 不匹配拒绝路径。framed control IPC 已能在 header 层区分 `Response` / `ErrorResponse`，worker JSON-RPC error 会映射到非零 `statusCode`，Bridge 会校验 frame kind、sequence 和 status 后再解析 body。
+- Bridge worker supervisor 生产路径已默认通过 `WVCI` framed control IPC 发送/接收 worker 控制请求；worker hello 会暴露并校验 `framedControlIpcVersion`、`framedControlMaxBodyBytes`、sequence id、status code 和 error response frame capability，并暴露 `framedControlBatching`。测试覆盖真实 worker framed create/destroy passthrough path、版本不匹配和 body cap/capability 不匹配拒绝路径。framed control IPC 已能在 header 层区分 `Response` / `ErrorResponse`，worker JSON-RPC error 会映射到非零 `statusCode`，Bridge 会校验 frame kind、sequence 和 status 后再解析 body；协议和 worker serve-framed 已支持 `BatchRequest` / `BatchResponse`，可在一个外层 frame 内承载多个独立 sequence 的控制请求/响应。
 - Bridge 音频路由现在要求实例处于 `processing` 状态；未 start、已 stop 或处理失败都会返回带 `silence` / `process-error` 的诊断静音帧，而不是继续把音频送进 worker。
 - Instance heartbeat 已避免把正在 `processing` 的实例误降回 `ready`，降低控制面状态刷新对数据面的干扰。
 - Bridge worker supervisor 已校验 `worker.hello` 中的 `ipcVersion`、`instanceLifecycle` 和 `binaryAudioProcess` capability，避免 Bridge 与不兼容 worker 继续创建实例。
@@ -99,9 +99,9 @@
 仍缺少：
 
 - 更完整的 Bridge worker supervisor 生命周期管理已有恢复中状态、事件快照、WebSocket server-push 事件订阅、quarantine 解除策略、worker kill/wait 审计指标、Unix/macOS 进程组终止、Windows Job Object 终止、Unix `RLIMIT_AS` / `RLIMIT_CPU` worker hard cap、Windows Job Object memory/user-time hard cap、Linux cgroup v2 CPU/memory quota 和 framed control IPC 首版；仍缺少 Windows 真实运行验证、Linux cgroup 真实部署验证和更多失败分类。
-- framed control IPC 已替换生产路径 JSON-line 控制面，并已有 schema version、max body、sequence id、status code、error response frame capability 校验、header-level error classification、sequence/status 校验和 body size cap；仍缺少 framed control IPC 的批处理/多路复用。
+- framed control IPC 已替换生产路径 JSON-line 控制面，并已有 schema version、max body、sequence id、status code、error response frame capability 校验、header-level error classification、sequence/status 校验、body size cap，以及 wire-level 批处理/多路复用 frame；仍缺少 Bridge 生产路径对批量 metadata/control refresh 的调度使用。
 - 超时后的全链路 kill/wait 审计已有首版 counters，且 Unix/macOS 已覆盖进程树维度；quarantine 已暴露释放倒计时诊断、可配置失败阈值，restart/recovery 事件已暴露手动/自动模式、触发原因、恢复失败原因和结构化错误，仍缺少基于真实插件压测数据的默认策略校准。
-- worker hello 已有基础 capability negotiation 和 framed control IPC schema/body/capability 校验，实例级 `runtimeCapabilities` 已能按数据面、MIDI、参数自动化和诊断能力暴露首版，且包含 schema version 与 passthrough fallback 原因；worker rejection 已能透传 VST3 runtime init、control 和 `process()` 阶段化失败 data，framed IPC 已能在 header 层标记 worker rejection；仍缺少 framed IPC 的批处理/多路复用和更完整的非 VST3 runtime/control/process 失败分类。
+- worker hello 已有基础 capability negotiation 和 framed control IPC schema/body/capability 校验，实例级 `runtimeCapabilities` 已能按数据面、MIDI、参数自动化和诊断能力暴露首版，且包含 schema version 与 passthrough fallback 原因；worker rejection 已能透传 VST3 runtime init、control 和 `process()` 阶段化失败 data，framed IPC 已能在 header 层标记 worker rejection，并已提供批处理/多路复用 frame；仍缺少 Bridge 层批量调用入口和更完整的非 VST3 runtime/control/process 失败分类。
 
 ### 3. 真实 VST3 component/controller lifecycle
 
@@ -148,6 +148,6 @@
 1. 用真实 macOS VST3 effect/instrument fixture 验证 2-in/2-out process、parameter automation、MIDI mapping 和 zero-input instrument timing。
 2. 用真实第三方插件验证 controller/automation/unit-info/program-data/message notify/typed attribute 兼容性。
 3. 给 worker runtime backend 增加兼容失败诊断，并继续细化 `runtimeCapabilities` 的失败原因和 schema versioning。
-4. 扩展 framed control IPC 的批处理/多路复用和错误分类。
+4. 将 framed control IPC 的批处理/多路复用能力接入 Bridge 批量 metadata/control refresh，并继续扩展错误分类。
 5. 增加 Windows/Linux 真实运行验证、worker supervision 压测、资源上限策略调优和更细粒度 server-push 事件类型。
 6. 将 Bridge audio sequence/late/jitter 指标与 WebAudio worker/worklet underflow/overflow 指标打通，并把 Bridge route latency 扩展到端到端 WebAudio 往返测量。

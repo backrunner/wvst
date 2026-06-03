@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_protocol::{
     WORKER_CONTROL_IPC_HEADER_LEN, WORKER_CONTROL_IPC_MAX_BODY_LEN,
-    WORKER_CONTROL_IPC_SCHEMA_VERSION, WorkerControlIpcHeader, WorkerControlIpcMessage,
-    WorkerControlMessageKind,
+    WORKER_CONTROL_IPC_SCHEMA_VERSION, WorkerControlIpcBatch, WorkerControlIpcBatchRole,
+    WorkerControlIpcHeader, WorkerControlIpcMessage, WorkerControlMessageKind,
 };
 use wvst_scanner::{MetadataSource, PluginClass, PluginDescriptor, PluginFormat};
 use wvst_vst3_host::{
@@ -132,6 +132,17 @@ enum WorkerState {
     Destroyed,
 }
 
+enum FramedControlRequest {
+    Single {
+        sequence: u64,
+        request: String,
+    },
+    Batch {
+        sequence: u64,
+        requests: Vec<(u64, String)>,
+    },
+}
+
 pub fn serve_stdio(audio_connect: Option<String>) -> Result<(), String> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -195,20 +206,41 @@ fn serve_framed_with_audio(
         ipc_audio::spawn_audio_thread(address, Arc::clone(&state));
     }
 
-    while let Some((sequence, request)) = read_control_request(&mut reader)? {
-        let response = {
-            let mut state = state
-                .lock()
-                .map_err(|_| "worker state mutex poisoned".to_string())?;
-            handle_ipc_line(&request, &mut state)
-        };
-        write_control_response(&mut writer, sequence, response)?;
+    while let Some(request) = read_control_request(&mut reader)? {
+        match request {
+            FramedControlRequest::Single { sequence, request } => {
+                let response = {
+                    let mut state = state
+                        .lock()
+                        .map_err(|_| "worker state mutex poisoned".to_string())?;
+                    handle_ipc_line(&request, &mut state)
+                };
+                write_control_response(&mut writer, sequence, response)?;
+            }
+            FramedControlRequest::Batch { sequence, requests } => {
+                let responses = {
+                    let mut state = state
+                        .lock()
+                        .map_err(|_| "worker state mutex poisoned".to_string())?;
+                    requests
+                        .into_iter()
+                        .map(|(child_sequence, request)| {
+                            control_response_message(
+                                child_sequence,
+                                handle_ipc_line(&request, &mut state),
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                };
+                write_control_batch_response(&mut writer, sequence, responses)?;
+            }
+        }
     }
 
     Ok(())
 }
 
-fn read_control_request(reader: &mut impl Read) -> Result<Option<(u64, String)>, String> {
+fn read_control_request(reader: &mut impl Read) -> Result<Option<FramedControlRequest>, String> {
     let mut header_bytes = [0; WORKER_CONTROL_IPC_HEADER_LEN];
     match reader.read_exact(&mut header_bytes) {
         Ok(()) => {}
@@ -217,7 +249,10 @@ fn read_control_request(reader: &mut impl Read) -> Result<Option<(u64, String)>,
     }
     let header =
         WorkerControlIpcHeader::decode(&header_bytes).map_err(|error| error.to_string())?;
-    if header.kind != WorkerControlMessageKind::Request {
+    if !matches!(
+        header.kind,
+        WorkerControlMessageKind::Request | WorkerControlMessageKind::BatchRequest
+    ) {
         return Err(format!(
             "invalid control request frame kind: {:?}",
             header.kind
@@ -241,9 +276,33 @@ fn read_control_request(reader: &mut impl Read) -> Result<Option<(u64, String)>,
         .read_exact(&mut body)
         .map_err(|error| error.to_string())?;
 
+    if header.kind == WorkerControlMessageKind::BatchRequest {
+        return read_control_batch_request(header.sequence, &body).map(Some);
+    }
+
     String::from_utf8(body)
-        .map(|request| Some((header.sequence, request)))
+        .map(|request| {
+            Some(FramedControlRequest::Single {
+                sequence: header.sequence,
+                request,
+            })
+        })
         .map_err(|error| format!("invalid control request utf8: {error}"))
+}
+
+fn read_control_batch_request(sequence: u64, body: &[u8]) -> Result<FramedControlRequest, String> {
+    let batch = WorkerControlIpcBatch::decode_body(WorkerControlIpcBatchRole::Request, body)
+        .map_err(|error| error.to_string())?;
+    let requests = batch
+        .into_messages()
+        .into_iter()
+        .map(|message| {
+            String::from_utf8(message.body)
+                .map(|request| (message.header.sequence, request))
+                .map_err(|error| format!("invalid control batch request utf8: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(FramedControlRequest::Batch { sequence, requests })
 }
 
 fn write_control_response(
@@ -251,18 +310,39 @@ fn write_control_response(
     sequence: u64,
     response: String,
 ) -> Result<(), String> {
-    let status_code = control_response_status_code(&response);
-    let body = response.into_bytes();
-    let message = match status_code {
-        Some(status_code) => WorkerControlIpcMessage::error(sequence, status_code, body),
-        None => WorkerControlIpcMessage::response(sequence, body),
-    }
-    .map_err(|error| error.to_string())?;
+    let message = control_response_message(sequence, response)?;
     let frame = message.encode().map_err(|error| error.to_string())?;
     writer
         .write_all(&frame)
         .map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())
+}
+
+fn write_control_batch_response(
+    writer: &mut impl Write,
+    sequence: u64,
+    responses: Vec<WorkerControlIpcMessage>,
+) -> Result<(), String> {
+    let message = WorkerControlIpcBatch::response_frame(sequence, responses)
+        .map_err(|error| error.to_string())?;
+    let frame = message.encode().map_err(|error| error.to_string())?;
+    writer
+        .write_all(&frame)
+        .map_err(|error| error.to_string())?;
+    writer.flush().map_err(|error| error.to_string())
+}
+
+fn control_response_message(
+    sequence: u64,
+    response: String,
+) -> Result<WorkerControlIpcMessage, String> {
+    let status_code = control_response_status_code(&response);
+    let body = response.into_bytes();
+    match status_code {
+        Some(status_code) => WorkerControlIpcMessage::error(sequence, status_code, body),
+        None => WorkerControlIpcMessage::response(sequence, body),
+    }
+    .map_err(|error| error.to_string())
 }
 
 fn control_response_status_code(response: &str) -> Option<u16> {
@@ -572,6 +652,7 @@ fn worker_hello() -> Value {
             "framedControlSequenceIds": true,
             "framedControlStatusCodes": true,
             "framedControlErrorResponses": true,
+            "framedControlBatching": true,
             "vst3ControlErrors": true,
             "vst3ControlPayloadLimits": true,
             "maxVst3StateBytes": DEFAULT_MAX_VST3_STATE_BYTES
@@ -718,6 +799,10 @@ mod tests {
         );
         assert_eq!(
             value["result"]["capabilities"]["framedControlErrorResponses"],
+            true
+        );
+        assert_eq!(
+            value["result"]["capabilities"]["framedControlBatching"],
             true
         );
         assert_eq!(
@@ -1070,6 +1155,58 @@ mod tests {
             response["result"]["capabilities"]["framedControlErrorResponses"],
             true
         );
+        assert_eq!(
+            response["result"]["capabilities"]["framedControlBatching"],
+            true
+        );
+    }
+
+    #[test]
+    fn serve_framed_round_trips_control_batch_frames() {
+        let first =
+            WorkerControlIpcMessage::request(50, br#"{"id":1,"method":"worker.hello"}"#.to_vec())
+                .expect("first request");
+        let second =
+            WorkerControlIpcMessage::request(51, br#"{"id":2,"method":"missing.method"}"#.to_vec())
+                .expect("second request");
+        let request = WorkerControlIpcBatch::request_frame(500, vec![first, second])
+            .expect("batch request")
+            .encode()
+            .expect("encoded batch request");
+        let mut output = Vec::new();
+
+        serve_framed(&request[..], &mut output).expect("served");
+
+        let header = WorkerControlIpcHeader::decode(&output).expect("batch header");
+        assert_eq!(header.kind, WorkerControlMessageKind::BatchResponse);
+        assert_eq!(header.sequence, 500);
+        let batch = WorkerControlIpcBatch::decode_body(
+            WorkerControlIpcBatchRole::Response,
+            &output[WORKER_CONTROL_IPC_HEADER_LEN..],
+        )
+        .expect("response batch");
+        let messages = batch.messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].header.kind, WorkerControlMessageKind::Response);
+        assert_eq!(messages[0].header.sequence, 50);
+        assert_eq!(
+            messages[1].header.kind,
+            WorkerControlMessageKind::ErrorResponse
+        );
+        assert_eq!(messages[1].header.sequence, 51);
+        assert_eq!(messages[1].header.status_code, 1);
+
+        let first_response: Value =
+            serde_json::from_slice(&messages[0].body).expect("first response");
+        let second_response: Value =
+            serde_json::from_slice(&messages[1].body).expect("second response");
+        assert_eq!(first_response["id"], 1);
+        assert_eq!(
+            first_response["result"]["capabilities"]["framedControlBatching"],
+            true
+        );
+        assert_eq!(second_response["id"], 2);
+        assert_eq!(second_response["error"]["code"], -32601);
     }
 
     #[test]

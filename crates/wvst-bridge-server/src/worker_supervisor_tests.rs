@@ -201,6 +201,15 @@ fn validates_framed_control_response_headers() {
     );
     assert!(
         validate_framed_response_header(
+            &WorkerControlIpcHeader::new(WorkerControlMessageKind::BatchResponse, 0, 7, 0),
+            7,
+            "worker.metrics",
+        )
+        .expect_err("batch response to non-batch request")
+        .contains("batch response")
+    );
+    assert!(
+        validate_framed_response_header(
             &WorkerControlIpcHeader::new(WorkerControlMessageKind::Response, 0, 8, 0),
             7,
             "worker.metrics",

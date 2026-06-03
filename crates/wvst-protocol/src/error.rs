@@ -16,6 +16,7 @@ pub enum ProtocolError {
     InvalidWorkerControlMessageKind(u16),
     InvalidWorkerAudioIpcStatusCode { kind: u16, status_code: u16 },
     InvalidWorkerControlIpcStatusCode { kind: u16, status_code: u16 },
+    InvalidWorkerControlBatch(String),
     InvalidMidiEventKind(u8),
     InvalidMidiChannel(u8),
     InvalidMidiData { field: &'static str, value: u8 },
@@ -70,6 +71,7 @@ impl Display for ProtocolError {
                     "invalid worker control IPC status code {status_code} for kind {kind}"
                 )
             }
+            Self::InvalidWorkerControlBatch(message) => formatter.write_str(message),
             Self::InvalidMidiEventKind(value) => {
                 write!(formatter, "invalid MIDI event kind: {value}")
             }
