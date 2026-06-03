@@ -34,6 +34,7 @@ pub use control::{
     IProgramListData, IProgramListDataVTable, IUnitData, IUnitDataVTable, IUnitInfo,
     IUnitInfoVTable, ParameterInfo, ProgramListInfo, UnitInfo,
 };
+#[allow(unused_imports)]
 pub use factory::{IPluginFactory, IPluginFactoryVTable, PClassInfo, PFactoryInfo};
 #[allow(unused_imports)]
 pub use process::{

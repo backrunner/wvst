@@ -1,3 +1,5 @@
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
+
 use super::*;
 use futures_util::{SinkExt, StreamExt};
 use std::path::PathBuf;

@@ -58,6 +58,7 @@ impl WorkerResourceLimits {
                 .is_none_or(LinuxCgroupLimits::is_empty)
     }
 
+    #[cfg(unix)]
     fn has_unix_rlimits(&self) -> bool {
         self.address_space_bytes.is_some() || self.cpu_time_seconds.is_some()
     }
@@ -156,7 +157,7 @@ pub struct WorkerTerminationTarget {
     #[cfg(unix)]
     process_group_id: Option<u32>,
     #[cfg(target_os = "linux")]
-    cgroup: Option<linux::CgroupHandle>,
+    _cgroup: Option<linux::CgroupHandle>,
     #[cfg(windows)]
     job: Option<windows::JobHandle>,
 }
@@ -176,7 +177,7 @@ impl WorkerTerminationTarget {
         Self::try_from_child_with_limits(child, limits).unwrap_or_else(|_| Self {
             process_group_id: child.id(),
             #[cfg(target_os = "linux")]
-            cgroup: None,
+            _cgroup: None,
         })
     }
 
@@ -192,7 +193,7 @@ impl WorkerTerminationTarget {
         Ok(Self {
             process_group_id: child.id(),
             #[cfg(target_os = "linux")]
-            cgroup,
+            _cgroup: cgroup,
         })
     }
 

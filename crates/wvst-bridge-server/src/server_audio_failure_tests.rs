@@ -1,3 +1,5 @@
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
+
 use super::*;
 use std::path::PathBuf;
 use std::time::Duration;

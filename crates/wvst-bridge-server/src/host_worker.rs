@@ -234,6 +234,8 @@ impl HostWorkerClient {
 
 #[cfg(test)]
 mod tests {
+    #![cfg_attr(not(unix), allow(dead_code))]
+
     use super::*;
 
     #[cfg(unix)]

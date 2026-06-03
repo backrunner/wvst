@@ -55,6 +55,7 @@ pub struct Vst3LoadedComponent {
 }
 
 impl Vst3LoadedComponent {
+    #[cfg(target_os = "macos")]
     fn new(
         instance: Vst3ComponentInstance,
         controller: Option<Vst3EditController>,
@@ -379,6 +380,7 @@ struct Vst3ConnectedPair {
 // mutex.
 unsafe impl Send for Vst3LoadedComponent {}
 
+#[cfg(any(target_os = "macos", test))]
 fn factory_create_instance_tuids(
     class_id: &str,
     interface_id: &str,

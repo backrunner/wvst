@@ -36,6 +36,8 @@ jobs:
   rust-platform:
     name: Rust platform (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: -Dwarnings
     strategy:
       fail-fast: false
       matrix:
