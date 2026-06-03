@@ -123,7 +123,7 @@
 - stream open/close 已有首版控制 API、end-of-stream 诊断帧和 close 后 in-flight drain；仍缺少 WebAudio 端自动重开策略。
 - Web Worker 从 SAB 取音频块并编码发送已有基础 ring-buffer audio pump；仍缺少更完整的延迟配置、调度调优和丢帧策略。
 - Web 设备选择已有底层 helper、高层 session graph helper、capability API、device watcher、sample-rate guard、手动 stream restart 和基础 loopback metrics；仍缺少 sample-rate change 后的自动重建策略和真实端到端设备切换测量。
-- Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge 侧 audio IPC 请求 frame buffer 已随 worker audio connection 复用，避免每个 audio block 重复分配请求 envelope；Bridge/Web 二进制诊断帧已有基础 flags，每 stream backpressure drop 会返回 `silence` / `late` 诊断帧并计数；仍缺少共享内存/更完整预分配响应 buffer、Web worker 侧主动 drop 策略和端到端背压协调。
+- Bridge 到 worker 的二进制 audio IPC 已具备首版；Bridge 侧 audio IPC 请求 frame buffer 已随 worker audio connection 复用，且路由热路径会直接借用 WebSocket binary payload 编码 worker request，避免每个 audio block 额外复制输入帧；Bridge/Web 二进制诊断帧已有基础 flags，每 stream backpressure drop 会返回 `silence` / `late` 诊断帧并计数；仍缺少共享内存/更完整预分配响应 buffer、Web worker 侧主动 drop 策略和端到端背压协调。
 - worker 路径已验证 sample rate / max block / processing state，并预分配输入/输出 sample scratch buffers、复用请求/响应 body buffer；runtime backend 已接入真实 VST `process()`，且 VST3 host 已捕获插件写回的 output events/parameter changes 并编码回 Web 响应帧，最近一次 process 的 output 过滤统计也会进入 runtime diagnostics；当前仍经 worker instance mutex 串行处理、保留 interleaved/planar scratch copy，且未知 VST3 output event type 仍只做过滤不做 Web 侧扩展表达。
 - late/drop/jitter/backpressure 首版 Bridge 诊断指标已完成，`wvst-testkit` 已提供可复用 latency snapshot collector 与 30 分钟 stability runner；仍缺少 WebAudio 端 underflow/overflow 与 Bridge 序号指标的统一策略、真实端到端 WebAudio 往返延迟测量和共享内存数据面。
 

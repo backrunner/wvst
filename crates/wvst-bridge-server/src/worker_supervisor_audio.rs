@@ -29,7 +29,7 @@ impl WorkerSupervisor {
     pub async fn process_audio_frame(
         &self,
         instance_id: u64,
-        frame: Vec<u8>,
+        frame: &[u8],
     ) -> Result<Vec<u8>, WorkerSupervisorError> {
         let Some(process) = self.processes.lock().await.get(&instance_id).cloned() else {
             return Err(WorkerSupervisorError::WorkerMissing { instance_id });
@@ -40,7 +40,7 @@ impl WorkerSupervisor {
             return Err(WorkerSupervisorError::AudioIpcUnavailable { instance_id });
         }
 
-        let sequence = AudioFrameHeader::decode(&frame)
+        let sequence = AudioFrameHeader::decode(frame)
             .map_err(|error| process_guard.protocol_error(error.to_string()))?
             .sequence;
         let response = process_guard
@@ -67,10 +67,10 @@ impl WorkerAudioConnection {
     async fn process_frame(
         &mut self,
         sequence: u64,
-        frame: Vec<u8>,
+        frame: &[u8],
         timeout_duration: std::time::Duration,
     ) -> Result<Vec<u8>, WorkerSupervisorError> {
-        encode_audio_process_request(&mut self.request_buffer, sequence, &frame)?;
+        encode_audio_process_request(&mut self.request_buffer, sequence, frame)?;
 
         timeout(
             timeout_duration,

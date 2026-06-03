@@ -396,7 +396,7 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteRes
 
     let processed = match state
         .workers
-        .process_audio_frame(instance.instance_id, payload.to_vec())
+        .process_audio_frame(instance.instance_id, payload)
         .await
     {
         Ok(processed) => processed,
