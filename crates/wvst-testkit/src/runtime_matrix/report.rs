@@ -3,7 +3,9 @@ use std::{collections::BTreeMap, path::PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::RUNTIME_PROBE_MATRIX_REPORT_SCHEMA_VERSION;
+use super::{
+    RUNTIME_PROBE_MATRIX_REPORT_SCHEMA_VERSION, note_timing::RuntimeProbeNoteTimingHealthSummary,
+};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -365,6 +367,7 @@ pub struct RuntimeProbeMatrixReport {
     pub launch_failed: usize,
     pub expectation_failed: usize,
     pub audio_health: RuntimeProbeAudioHealthSummary,
+    pub note_timing: RuntimeProbeNoteTimingHealthSummary,
     pub diagnostics: RuntimeProbeDiagnosticsSummary,
 }
 
@@ -375,6 +378,7 @@ impl RuntimeProbeMatrixReport {
         let launch_failed = count_status(&results, RuntimeProbeStatus::LaunchFailed);
         let expectation_failed = count_status(&results, RuntimeProbeStatus::ExpectationFailed);
         let audio_health = RuntimeProbeAudioHealthSummary::from_results(&results);
+        let note_timing = RuntimeProbeNoteTimingHealthSummary::from_results(&results);
         let diagnostics = RuntimeProbeDiagnosticsSummary::from_results(&results);
 
         Self {
@@ -385,6 +389,7 @@ impl RuntimeProbeMatrixReport {
             launch_failed,
             expectation_failed,
             audio_health,
+            note_timing,
             diagnostics,
         }
     }

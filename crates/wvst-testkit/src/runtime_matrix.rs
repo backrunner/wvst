@@ -2,8 +2,10 @@ use std::{path::PathBuf, process::Command, time::Instant};
 
 use serde_json::Value;
 
+mod note_timing;
 mod report;
 
+pub use note_timing::RuntimeProbeNoteTimingHealthSummary;
 pub use report::{
     RuntimeProbeAudioHealthSummary, RuntimeProbeDiagnosticsSummary, RuntimeProbeExpectations,
     RuntimeProbeMatrixReport, RuntimeProbeResult, RuntimeProbeStatus,

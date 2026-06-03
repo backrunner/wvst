@@ -162,6 +162,99 @@ fn summarizes_probe_audio_health() {
 }
 
 #[test]
+fn summarizes_probe_note_timing_health() {
+    let report = RuntimeProbeMatrixReport::new(vec![
+        RuntimeProbeResult {
+            case_name: "fast-synth".to_string(),
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": true,
+                "process": {
+                    "noteTiming": {
+                        "sampleRateHz": 48000,
+                        "notePresent": true,
+                        "noteOnAbsoluteFrame": 0,
+                        "firstNonZeroOutputAbsoluteFrame": 128,
+                        "framesFromNoteOnToFirstNonZeroOutput": 128,
+                        "microsFromNoteOnToFirstNonZeroOutput": 2666
+                    }
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        },
+        RuntimeProbeResult {
+            case_name: "slow-synth".to_string(),
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": true,
+                "process": {
+                    "noteTiming": {
+                        "sampleRateHz": 48000,
+                        "notePresent": true,
+                        "noteOnAbsoluteFrame": 0,
+                        "firstNonZeroOutputAbsoluteFrame": 1024,
+                        "framesFromNoteOnToFirstNonZeroOutput": 1024,
+                        "microsFromNoteOnToFirstNonZeroOutput": 21333
+                    }
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        },
+        RuntimeProbeResult {
+            case_name: "silent-synth".to_string(),
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": true,
+                "process": {
+                    "noteTiming": {
+                        "sampleRateHz": 48000,
+                        "notePresent": true,
+                        "noteOnAbsoluteFrame": 0,
+                        "firstNonZeroOutputAbsoluteFrame": null,
+                        "framesFromNoteOnToFirstNonZeroOutput": null,
+                        "microsFromNoteOnToFirstNonZeroOutput": null
+                    }
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        },
+        RuntimeProbeResult {
+            case_name: "effect-no-note".to_string(),
+            probe_report: Some(json!({
+                "schemaVersion": 1,
+                "ok": true,
+                "process": {
+                    "noteTiming": {
+                        "sampleRateHz": 48000,
+                        "notePresent": false
+                    }
+                }
+            })),
+            ..RuntimeProbeResult::default()
+        },
+    ]);
+
+    assert_eq!(report.note_timing.reported_cases, 4);
+    assert_eq!(report.note_timing.note_input_cases, 3);
+    assert_eq!(report.note_timing.note_response_cases, 2);
+    assert_eq!(report.note_timing.missing_note_response_cases, 1);
+    assert_eq!(report.note_timing.max_note_to_audio_frames, Some(1024));
+    assert_eq!(
+        report.note_timing.max_note_to_audio_frames_case.as_deref(),
+        Some("slow-synth")
+    );
+    assert_eq!(report.note_timing.max_note_to_audio_micros, Some(21333));
+
+    let value = serde_json::to_value(&report).expect("report json");
+    assert_eq!(value["noteTiming"]["reportedCases"], 4);
+    assert_eq!(value["noteTiming"]["noteResponseCases"], 2);
+    assert_eq!(
+        value["noteTiming"]["maxNoteToAudioFramesCase"],
+        "slow-synth"
+    );
+}
+
+#[test]
 fn marks_audio_expectation_failures() {
     let mut executor = RecordingExecutor {
         results: vec![RuntimeProbeResult {
