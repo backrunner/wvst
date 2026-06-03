@@ -9,6 +9,9 @@ use wvst_vst3_host::{
     Vst3ProcessingConfig, create_vst3_component_instance,
 };
 
+use crate::runtime_probe_error::{
+    RUNTIME_PROBE_REPORT_SCHEMA_VERSION, RuntimeProbeFailure, vst3_control, vst3_init, vst3_process,
+};
 use crate::runtime_probe_options::{
     ProbeNote, ProbeParameterChange, RuntimeProbeOptions, probe_events, probe_parameter_changes,
 };
@@ -39,53 +42,57 @@ struct ProbeTimingSummary {
 }
 
 pub fn runtime_probe(args: &[String]) -> Result<(), String> {
-    let options = RuntimeProbeOptions::parse(args)?;
-    let config = Vst3ProcessingConfig::new(
-        options.sample_rate,
-        options.max_block_frames,
-        options.input_channels,
-        options.output_channels,
-    )
-    .map_err(|error| error.to_string())?;
-    let mut loaded =
-        create_vst3_component_instance(&options.bundle_path, &options.class_id, config)
-            .map_err(|error| error.to_string())?;
-    let controller_class_id = loaded
-        .instance()
-        .controller_class_id()
-        .map_err(|error| error.to_string())?;
+    match runtime_probe_report(args) {
+        Ok(report) => print_json(&report),
+        Err(error) => {
+            print_json(&error.to_report())?;
+            Err(error.message)
+        }
+    }
+}
 
-    loaded
-        .instance_mut()
-        .initialize()
-        .map_err(|error| error.to_string())?;
-    loaded
-        .initialize_controller()
-        .map_err(|error| error.to_string())?;
-    let parameter_count = loaded
-        .parameters()
-        .map_err(|error| error.to_string())?
-        .len();
-    let input_buses = loaded
-        .instance_mut()
-        .audio_buses(Vst3BusDirection::Input)
-        .map_err(|error| error.to_string())?;
-    let output_buses = loaded
-        .instance_mut()
-        .audio_buses(Vst3BusDirection::Output)
-        .map_err(|error| error.to_string())?;
-    loaded
-        .instance_mut()
-        .setup_processing()
-        .map_err(|error| error.to_string())?;
-    loaded
-        .instance_mut()
-        .activate()
-        .map_err(|error| error.to_string())?;
-    loaded
-        .instance_mut()
-        .start_processing()
-        .map_err(|error| error.to_string())?;
+fn runtime_probe_report(args: &[String]) -> Result<Value, RuntimeProbeFailure> {
+    let options = RuntimeProbeOptions::parse(args).map_err(|error| {
+        RuntimeProbeFailure::plain("runtime-probe-options", "options.parse", error)
+    })?;
+    let config = vst3_init(
+        "processing.config",
+        Vst3ProcessingConfig::new(
+            options.sample_rate,
+            options.max_block_frames,
+            options.input_channels,
+            options.output_channels,
+        ),
+    )?;
+    let mut loaded = vst3_init(
+        "component.create",
+        create_vst3_component_instance(&options.bundle_path, &options.class_id, config),
+    )?;
+    let controller_class_id = vst3_init(
+        "component.controller-class-id",
+        loaded.instance().controller_class_id(),
+    )?;
+
+    vst3_init("component.initialize", loaded.instance_mut().initialize())?;
+    vst3_init("controller.initialize", loaded.initialize_controller())?;
+    let parameter_count = vst3_init("controller.parameters", loaded.parameters())?.len();
+    let input_buses = vst3_init(
+        "component.audio-buses.input",
+        loaded.instance_mut().audio_buses(Vst3BusDirection::Input),
+    )?;
+    let output_buses = vst3_init(
+        "component.audio-buses.output",
+        loaded.instance_mut().audio_buses(Vst3BusDirection::Output),
+    )?;
+    vst3_init(
+        "component.setup-processing",
+        loaded.instance_mut().setup_processing(),
+    )?;
+    vst3_init("component.activate", loaded.instance_mut().activate())?;
+    vst3_init(
+        "component.start-processing",
+        loaded.instance_mut().start_processing(),
+    )?;
 
     let process_result = run_process_blocks(&mut loaded, &options);
     let latency_samples = loaded.instance().latency_samples();
@@ -96,14 +103,16 @@ pub fn runtime_probe(args: &[String]) -> Result<(), String> {
         Ok(summary) => summary,
         Err(error) => {
             if let Err(cleanup_error) = cleanup_result {
-                return Err(format!("{error}; cleanup failed: {cleanup_error}"));
+                return Err(error.with_cleanup(cleanup_error));
             }
             return Err(error);
         }
     };
     cleanup_result?;
 
-    print_json(&json!({
+    Ok(json!({
+        "schemaVersion": RUNTIME_PROBE_REPORT_SCHEMA_VERSION,
+        "ok": true,
         "bundlePath": options.bundle_path,
         "classId": options.class_id,
         "processing": config,
@@ -129,24 +138,21 @@ pub fn runtime_probe(args: &[String]) -> Result<(), String> {
     }))
 }
 
-fn stop_and_terminate(loaded: &mut wvst_vst3_host::Vst3LoadedComponent) -> Result<(), String> {
-    loaded
-        .instance_mut()
-        .stop_processing()
-        .map_err(|error| error.to_string())?;
-    loaded
-        .terminate_controller()
-        .map_err(|error| error.to_string())?;
-    loaded
-        .instance_mut()
-        .terminate()
-        .map_err(|error| error.to_string())
+fn stop_and_terminate(
+    loaded: &mut wvst_vst3_host::Vst3LoadedComponent,
+) -> Result<(), RuntimeProbeFailure> {
+    vst3_control(
+        "component.stop-processing",
+        loaded.instance_mut().stop_processing(),
+    )?;
+    vst3_control("controller.terminate", loaded.terminate_controller())?;
+    vst3_control("component.terminate", loaded.instance_mut().terminate())
 }
 
 fn run_process_blocks(
     loaded: &mut wvst_vst3_host::Vst3LoadedComponent,
     options: &RuntimeProbeOptions,
-) -> Result<RuntimeProbeProcessSummary, String> {
+) -> Result<RuntimeProbeProcessSummary, RuntimeProbeFailure> {
     let frames = usize::from(options.frames);
     let input_len = frames * usize::from(options.input_channels);
     let output_len = frames * usize::from(options.output_channels);
@@ -174,17 +180,19 @@ fn run_process_blocks(
         let events = probe_events(options, block_index);
         let parameter_changes = probe_parameter_changes(options, block_index);
         let started = Instant::now();
-        loaded
-            .instance_mut()
-            .process_interleaved_f32_with_io_events_and_parameters(
-                frames,
-                &input,
-                &events,
-                &parameter_changes,
-                &mut output,
-                &mut process_output,
-            )
-            .map_err(|error| error.to_string())?;
+        vst3_process(
+            "component.process",
+            loaded
+                .instance_mut()
+                .process_interleaved_f32_with_io_events_and_parameters(
+                    frames,
+                    &input,
+                    &events,
+                    &parameter_changes,
+                    &mut output,
+                    &mut process_output,
+                ),
+        )?;
         process_micros.push(started.elapsed().as_micros() as u64);
 
         let output_peak = output
@@ -348,6 +356,28 @@ mod tests {
                 p99: 40,
                 max: 50
             }
+        );
+    }
+
+    #[test]
+    fn reports_invalid_config_as_structured_failure() {
+        let args = vec![
+            "/tmp/Test.vst3".to_string(),
+            "class-a".to_string(),
+            "--sample-rate".to_string(),
+            "0".to_string(),
+        ];
+        let failure = runtime_probe_report(&args).expect_err("invalid config");
+        let report = failure.to_report();
+
+        assert_eq!(report["schemaVersion"], 1);
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["data"]["kind"], "vst3-runtime-init");
+        assert_eq!(report["data"]["stage"], "processing.config");
+        assert_eq!(report["data"]["hostError"], "invalid-sample-rate");
+        assert_eq!(
+            report["data"]["compatibility"]["category"],
+            "processing-configuration"
         );
     }
 }

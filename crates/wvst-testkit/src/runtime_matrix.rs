@@ -1,6 +1,7 @@
 use std::{path::PathBuf, process::Command, time::Instant};
 
 use serde::Serialize;
+use serde_json::Value;
 
 pub const RUNTIME_PROBE_MATRIX_REPORT_SCHEMA_VERSION: u16 = 1;
 
@@ -224,17 +225,23 @@ impl RuntimeProbeExecutor for ProcessRuntimeProbeExecutor {
             .args(&invocation.args)
             .output()
         {
-            Ok(output) => RuntimeProbeResult {
-                status: if output.status.success() {
-                    RuntimeProbeStatus::Passed
-                } else {
-                    RuntimeProbeStatus::Failed
-                },
-                exit_code: output.status.code(),
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                ..RuntimeProbeResult::default()
-            },
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                RuntimeProbeResult {
+                    status: if output.status.success() {
+                        RuntimeProbeStatus::Passed
+                    } else {
+                        RuntimeProbeStatus::Failed
+                    },
+                    exit_code: output.status.code(),
+                    probe_report: parse_probe_report(&stdout)
+                        .or_else(|| parse_probe_report(&stderr)),
+                    stdout,
+                    stderr,
+                    ..RuntimeProbeResult::default()
+                }
+            }
             Err(error) => RuntimeProbeResult {
                 status: RuntimeProbeStatus::LaunchFailed,
                 stderr: error.to_string(),
@@ -242,6 +249,15 @@ impl RuntimeProbeExecutor for ProcessRuntimeProbeExecutor {
             },
         }
     }
+}
+
+fn parse_probe_report(text: &str) -> Option<Value> {
+    text.lines().find_map(|line| {
+        let value = serde_json::from_str::<Value>(line).ok()?;
+        let schema_version = value.get("schemaVersion")?.as_u64()?;
+        value.get("ok")?.as_bool()?;
+        (schema_version == 1).then_some(value)
+    })
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -253,7 +269,7 @@ pub enum RuntimeProbeStatus {
     LaunchFailed,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeProbeResult {
     pub case_name: String,
@@ -263,6 +279,8 @@ pub struct RuntimeProbeResult {
     pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe_report: Option<Value>,
     pub duration_millis: u64,
 }
 
@@ -272,7 +290,7 @@ impl RuntimeProbeResult {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeProbeMatrixReport {
     pub schema_version: u16,

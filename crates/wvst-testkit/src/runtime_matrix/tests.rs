@@ -94,3 +94,16 @@ fn summarizes_failed_and_launch_failed_cases() {
     assert_eq!(report.results[0].case_name, "broken");
     assert_eq!(report.results[1].class_id, "class-b");
 }
+
+#[test]
+fn parses_runtime_probe_json_report_from_output() {
+    let report = parse_probe_report(
+        "worker banner\n{\"schemaVersion\":1,\"ok\":false,\"data\":{\"kind\":\"vst3-runtime-init\"}}\n",
+    )
+    .expect("probe report");
+
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["data"]["kind"], "vst3-runtime-init");
+    assert!(parse_probe_report("{\"schemaVersion\":2,\"ok\":false}").is_none());
+    assert!(parse_probe_report("plain stderr").is_none());
+}

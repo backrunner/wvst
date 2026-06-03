@@ -11,7 +11,9 @@ use wvst_vst3_host::{
 
 mod ipc;
 mod runtime_probe;
+mod runtime_probe_error;
 mod runtime_probe_options;
+mod vst3_error_data;
 
 fn main() {
     let exit_code = match run(std::env::args().skip(1).collect()) {
