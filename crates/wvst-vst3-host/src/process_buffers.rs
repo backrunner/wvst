@@ -191,6 +191,18 @@ impl Vst3ProcessBuffers {
             .output_events_into(self.prepared_frames, destination)
     }
 
+    pub fn output_events_and_advanced_into(
+        &self,
+        destination: &mut Vec<Vst3OutputEvent>,
+        advanced_destination: &mut Vec<crate::Vst3AdvancedOutputEvent>,
+    ) -> Vst3OutputEventStats {
+        self.output_events.output_events_and_advanced_into(
+            self.prepared_frames,
+            destination,
+            advanced_destination,
+        )
+    }
+
     pub fn output_parameter_changes(&self) -> Vec<Vst3ParameterChange> {
         self.output_parameter_changes.changes()
     }

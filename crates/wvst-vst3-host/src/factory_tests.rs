@@ -7,8 +7,8 @@ use crate::vst3_abi::{
     FUnknown, IAudioProcessor, IAudioProcessorVTable, IComponent, IComponentHandler,
     IComponentVTable, IConnectionPoint, IConnectionPointVTable, IEditController,
     IEditControllerVTable, IMessage, K_RESULT_FALSE, K_RESULT_OK, ParameterInfo, ProcessData,
-    ProcessSetup, SpeakerArrangement, TUid, VST3_FUNKNOWN_IID, VST3_I_CONNECTION_POINT_IID,
-    VST3_SAMPLE_32, parse_tuid_hex,
+    ProcessSetup, SpeakerArrangement, TUid, VST3_FUNKNOWN_IID, VST3_I_COMPONENT_IID,
+    VST3_I_CONNECTION_POINT_IID, VST3_SAMPLE_32, parse_tuid_hex,
 };
 
 #[test]
@@ -38,12 +38,25 @@ fn rejects_invalid_runtime_class_id_before_loading_bundle() {
 }
 
 #[test]
+fn factory_create_instance_ids_are_tuid_bytes() {
+    let (class_tuid, interface_tuid) =
+        factory_create_instance_tuids("5653544e6952367265616b746f722036", VST3_I_COMPONENT_IID)
+            .expect("factory create ids");
+
+    assert_eq!(class_tuid, *b"VSTNiR6reaktor 6");
+    assert_eq!(
+        interface_tuid,
+        parse_tuid_hex(VST3_I_COMPONENT_IID).expect("component iid")
+    );
+}
+
+#[test]
 fn loaded_component_connects_and_disconnects_controller_connection_points() {
     let mut component_point = FakeConnectionPoint::new();
     let mut controller_point = FakeConnectionPoint::new();
     let mut component = FakeComponent::new(component_point.raw_connection_point());
     let mut processor = FakeProcessor::new();
-    let mut controller = FakeEditController::new(controller_point.raw_connection_point());
+    let mut fake_controller = FakeEditController::new(controller_point.raw_connection_point());
     let config = crate::Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
     let instance = unsafe {
         Vst3ComponentInstance::from_raw_parts(
@@ -53,8 +66,8 @@ fn loaded_component_connects_and_disconnects_controller_connection_points() {
         )
     }
     .expect("component instance");
-    let controller =
-        unsafe { Vst3EditController::from_raw(controller.raw_controller()) }.expect("controller");
+    let controller = unsafe { Vst3EditController::from_raw(fake_controller.raw_controller()) }
+        .expect("controller");
     let mut loaded = Vst3LoadedComponent::new_for_test(instance, Some(controller));
 
     loaded
@@ -69,6 +82,17 @@ fn loaded_component_connects_and_disconnects_controller_connection_points() {
     assert_eq!(controller_point.add_ref_calls, 1);
     assert_eq!(component_point.connect_calls, 1);
     assert_eq!(controller_point.connect_calls, 1);
+    assert_eq!(component.get_state_calls, 1);
+    assert_eq!(fake_controller.component_state_sync_calls, 1);
+    assert_eq!(
+        loaded.controller_component_state_sync(),
+        Some(&Vst3ControllerComponentStateSync {
+            attempted: true,
+            success: true,
+            component_state_bytes: Some(0),
+            error: None,
+        })
+    );
     assert_eq!(
         component_point.last_other,
         controller_point.raw_connection_point().cast()
@@ -76,6 +100,20 @@ fn loaded_component_connects_and_disconnects_controller_connection_points() {
     assert_eq!(
         controller_point.last_other,
         component_point.raw_connection_point().cast()
+    );
+
+    loaded
+        .set_component_state(&[1, 2, 3])
+        .expect("component state restore");
+    assert_eq!(fake_controller.component_state_sync_calls, 2);
+    assert_eq!(
+        loaded.controller_component_state_sync(),
+        Some(&Vst3ControllerComponentStateSync {
+            attempted: true,
+            success: true,
+            component_state_bytes: Some(3),
+            error: None,
+        })
     );
 
     loaded.terminate_controller().expect("controller terminate");
@@ -165,6 +203,7 @@ struct FakeComponent {
     component: IComponent,
     connection_point: *mut IConnectionPoint,
     initialize_calls: u32,
+    get_state_calls: u32,
     release_calls: u32,
 }
 
@@ -176,6 +215,7 @@ impl FakeComponent {
             },
             connection_point,
             initialize_calls: 0,
+            get_state_calls: 0,
             release_calls: 0,
         }
     }
@@ -211,6 +251,7 @@ struct FakeEditController {
     controller: IEditController,
     connection_point: *mut IConnectionPoint,
     initialize_calls: u32,
+    component_state_sync_calls: u32,
     terminate_calls: u32,
     release_calls: u32,
 }
@@ -223,6 +264,7 @@ impl FakeEditController {
             },
             connection_point,
             initialize_calls: 0,
+            component_state_sync_calls: 0,
             terminate_calls: 0,
             release_calls: 0,
         }
@@ -430,7 +472,9 @@ unsafe extern "system" fn fake_set_state(_this: *mut IComponent, _state: *mut c_
     K_RESULT_OK
 }
 
-unsafe extern "system" fn fake_get_state(_this: *mut IComponent, _state: *mut c_void) -> i32 {
+unsafe extern "system" fn fake_get_state(this: *mut IComponent, _state: *mut c_void) -> i32 {
+    let fake = unsafe { fake_component_mut(this) };
+    fake.get_state_calls += 1;
     K_RESULT_OK
 }
 
@@ -556,9 +600,11 @@ unsafe extern "system" fn fake_controller_terminate(this: *mut IEditController) 
 }
 
 unsafe extern "system" fn fake_controller_set_component_state(
-    _this: *mut IEditController,
+    this: *mut IEditController,
     _state: *mut crate::vst3_abi::IBStream,
 ) -> i32 {
+    let fake = unsafe { fake_controller_mut(this) };
+    fake.component_state_sync_calls += 1;
     K_RESULT_OK
 }
 

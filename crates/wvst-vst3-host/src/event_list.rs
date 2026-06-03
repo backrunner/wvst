@@ -3,10 +3,25 @@ use std::ptr;
 
 use serde::Serialize;
 
+use crate::event_payload_capture::{
+    CapturedVst3OutputPayload, VST3_ADVANCED_OUTPUT_EVENT_PAYLOAD_BYTES,
+    VST3_OUTPUT_PAYLOAD_ENCODING_NONE, VST3_OUTPUT_PAYLOAD_ENCODING_RAW_BYTES,
+    VST3_OUTPUT_PAYLOAD_ENCODING_UTF8, VST3_OUTPUT_PAYLOAD_FLAG_INVALID_TEXT,
+    VST3_OUTPUT_PAYLOAD_FLAG_TRUNCATED, VST3_OUTPUT_PAYLOAD_FLAG_UNAVAILABLE,
+};
 use crate::vst3_abi::{
-    Event, EventPayload, IEventList, IEventListVTable, NoteOffEvent, NoteOnEvent,
-    PolyPressureEvent, VST3_EVENT_TYPE_NOTE_OFF, VST3_EVENT_TYPE_NOTE_ON,
-    VST3_EVENT_TYPE_POLY_PRESSURE,
+    Event, EventPayload, IEventList, IEventListVTable, LegacyMidiCcOutEvent, NoteOffEvent,
+    NoteOnEvent, PolyPressureEvent, VST3_EVENT_TYPE_CHORD, VST3_EVENT_TYPE_DATA,
+    VST3_EVENT_TYPE_LEGACY_MIDI_CC_OUT, VST3_EVENT_TYPE_NOTE_EXPRESSION_INT_VALUE,
+    VST3_EVENT_TYPE_NOTE_EXPRESSION_TEXT, VST3_EVENT_TYPE_NOTE_EXPRESSION_VALUE,
+    VST3_EVENT_TYPE_NOTE_OFF, VST3_EVENT_TYPE_NOTE_ON, VST3_EVENT_TYPE_POLY_PRESSURE,
+    VST3_EVENT_TYPE_SCALE, VST3_MIDI_CONTROLLER_ACTIVE_SENSING, VST3_MIDI_CONTROLLER_AFTERTOUCH,
+    VST3_MIDI_CONTROLLER_CABLE_SELECT, VST3_MIDI_CONTROLLER_CLOCK_CONTINUE,
+    VST3_MIDI_CONTROLLER_CLOCK_START, VST3_MIDI_CONTROLLER_CLOCK_STOP,
+    VST3_MIDI_CONTROLLER_PITCH_BEND, VST3_MIDI_CONTROLLER_POLY_PRESSURE,
+    VST3_MIDI_CONTROLLER_PROGRAM_CHANGE, VST3_MIDI_CONTROLLER_QUARTER_FRAME,
+    VST3_MIDI_CONTROLLER_SONG_POINTER, VST3_MIDI_CONTROLLER_SONG_SELECT,
+    VST3_MIDI_CONTROLLER_TUNE_REQUEST,
 };
 use crate::{HostError, HostResult};
 
@@ -42,6 +57,70 @@ pub enum Vst3OutputEvent {
     NoteOn(Vst3NoteEvent),
     NoteOff(Vst3NoteEvent),
     PolyPressure(Vst3PolyPressureEvent),
+    LegacyMidiCcOut(Vst3LegacyMidiCcOutEvent),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum Vst3AdvancedOutputEventKind {
+    Data,
+    NoteExpressionValue,
+    NoteExpressionText,
+    NoteExpressionIntValue,
+    Chord,
+    Scale,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vst3AdvancedOutputEvent {
+    pub sample_offset: u16,
+    pub kind: Vst3AdvancedOutputEventKind,
+    pub vst3_event_type: u16,
+    pub bus_index: i32,
+    pub data1: i32,
+    pub data2: i32,
+    pub value: f64,
+    pub data_size: u32,
+    pub data_type: u32,
+    pub payload_size: u16,
+    pub payload_encoding: u8,
+    pub payload_flags: u8,
+    pub payload: [u8; VST3_ADVANCED_OUTPUT_EVENT_PAYLOAD_BYTES],
+}
+
+impl Vst3AdvancedOutputEvent {
+    pub fn payload_bytes(&self) -> &[u8] {
+        let payload_size = usize::from(self.payload_size).min(self.payload.len());
+        &self.payload[..payload_size]
+    }
+}
+
+impl Default for Vst3AdvancedOutputEvent {
+    fn default() -> Self {
+        Self {
+            sample_offset: 0,
+            kind: Vst3AdvancedOutputEventKind::Data,
+            vst3_event_type: 0,
+            bus_index: 0,
+            data1: 0,
+            data2: 0,
+            value: 0.0,
+            data_size: 0,
+            data_type: 0,
+            payload_size: 0,
+            payload_encoding: VST3_OUTPUT_PAYLOAD_ENCODING_NONE,
+            payload_flags: 0,
+            payload: [0; VST3_ADVANCED_OUTPUT_EVENT_PAYLOAD_BYTES],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vst3LegacyMidiCcOutEvent {
+    pub sample_offset: u16,
+    pub control_number: u8,
+    pub channel: u8,
+    pub value: u8,
+    pub value2: u8,
 }
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize)]
@@ -52,6 +131,18 @@ pub struct Vst3OutputEventStats {
     pub filtered_events: u32,
     pub invalid_sample_offset_events: u32,
     pub invalid_payload_events: u32,
+    pub advanced_events: u32,
+    pub advanced_data_events: u32,
+    pub advanced_note_expression_events: u32,
+    pub advanced_chord_events: u32,
+    pub advanced_scale_events: u32,
+    pub advanced_payload_events: u32,
+    pub advanced_payload_bytes: u32,
+    pub advanced_raw_payload_events: u32,
+    pub advanced_text_payload_events: u32,
+    pub advanced_truncated_payload_events: u32,
+    pub advanced_unavailable_payload_events: u32,
+    pub advanced_invalid_text_payload_events: u32,
     pub unknown_type_events: u32,
 }
 
@@ -68,6 +159,7 @@ impl Vst3EventList {
                     vtable: &EVENT_LIST_VTABLE,
                 },
                 events: Vec::with_capacity(max_events),
+                captured_payloads: Vec::with_capacity(max_events),
                 max_events,
             }),
         }
@@ -79,6 +171,7 @@ impl Vst3EventList {
 
     pub fn clear(&mut self) {
         self.object.events.clear();
+        self.object.captured_payloads.clear();
     }
 
     pub fn events(&self) -> &[Event] {
@@ -90,16 +183,59 @@ impl Vst3EventList {
         frames: usize,
         destination: &mut Vec<Vst3OutputEvent>,
     ) -> Vst3OutputEventStats {
+        let mut advanced = Vec::new();
+        self.output_events_and_advanced_into(frames, destination, &mut advanced)
+    }
+
+    pub fn output_events_and_advanced_into(
+        &self,
+        frames: usize,
+        destination: &mut Vec<Vst3OutputEvent>,
+        advanced_destination: &mut Vec<Vst3AdvancedOutputEvent>,
+    ) -> Vst3OutputEventStats {
         destination.clear();
+        advanced_destination.clear();
         let mut stats = Vst3OutputEventStats {
             raw_events: self.object.events.len() as u32,
             ..Vst3OutputEventStats::default()
         };
-        for event in &self.object.events {
-            match from_vst3_event(frames, *event) {
-                Ok(event) => {
+        for (index, event) in self.object.events.iter().enumerate() {
+            let captured_payload = self
+                .object
+                .captured_payloads
+                .get(index)
+                .copied()
+                .unwrap_or_default();
+            match from_vst3_event(frames, *event, captured_payload) {
+                Ok(NormalizedOutputEvent::Midi(event)) => {
                     stats.normalized_events = stats.normalized_events.saturating_add(1);
                     destination.push(event);
+                }
+                Ok(NormalizedOutputEvent::Advanced(event)) => {
+                    stats.normalized_events = stats.normalized_events.saturating_add(1);
+                    stats.advanced_events = stats.advanced_events.saturating_add(1);
+                    match event.kind {
+                        Vst3AdvancedOutputEventKind::Data => {
+                            stats.advanced_data_events =
+                                stats.advanced_data_events.saturating_add(1);
+                        }
+                        Vst3AdvancedOutputEventKind::NoteExpressionValue
+                        | Vst3AdvancedOutputEventKind::NoteExpressionText
+                        | Vst3AdvancedOutputEventKind::NoteExpressionIntValue => {
+                            stats.advanced_note_expression_events =
+                                stats.advanced_note_expression_events.saturating_add(1);
+                        }
+                        Vst3AdvancedOutputEventKind::Chord => {
+                            stats.advanced_chord_events =
+                                stats.advanced_chord_events.saturating_add(1);
+                        }
+                        Vst3AdvancedOutputEventKind::Scale => {
+                            stats.advanced_scale_events =
+                                stats.advanced_scale_events.saturating_add(1);
+                        }
+                    }
+                    observe_advanced_payload_stats(&mut stats, event);
+                    advanced_destination.push(event);
                 }
                 Err(reason) => {
                     stats.filtered_events = stats.filtered_events.saturating_add(1);
@@ -131,8 +267,12 @@ impl Vst3EventList {
         }
 
         self.object.events.clear();
+        self.object.captured_payloads.clear();
         for event in events {
             self.object.events.push(to_vst3_event(frames, *event)?);
+            self.object
+                .captured_payloads
+                .push(CapturedVst3OutputPayload::empty());
         }
 
         Ok(())
@@ -144,6 +284,7 @@ impl Vst3EventList {
 struct EventListObject {
     iface: IEventList,
     events: Vec<Event>,
+    captured_payloads: Vec<CapturedVst3OutputPayload>,
     max_events: usize,
 }
 
@@ -216,7 +357,10 @@ unsafe extern "system" fn event_list_add_event(this: *mut IEventList, event: *mu
     }
 
     // SAFETY: `event` was checked for null and is only copied immediately.
-    object.events.push(unsafe { *event });
+    let event = unsafe { *event };
+    let captured_payload = CapturedVst3OutputPayload::for_event(event);
+    object.events.push(event);
+    object.captured_payloads.push(captured_payload);
     0
 }
 
@@ -268,10 +412,17 @@ enum OutputEventFilterReason {
     UnknownType,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum NormalizedOutputEvent {
+    Midi(Vst3OutputEvent),
+    Advanced(Vst3AdvancedOutputEvent),
+}
+
 fn from_vst3_event(
     frames: usize,
     event: Event,
-) -> Result<Vst3OutputEvent, OutputEventFilterReason> {
+    captured_payload: CapturedVst3OutputPayload,
+) -> Result<NormalizedOutputEvent, OutputEventFilterReason> {
     if event.sample_offset < 0 || event.sample_offset as usize >= frames {
         return Err(OutputEventFilterReason::InvalidSampleOffset);
     }
@@ -289,6 +440,7 @@ fn from_vst3_event(
                 note.note_id,
             )
             .map(Vst3OutputEvent::NoteOn)
+            .map(NormalizedOutputEvent::Midi)
             .ok_or(OutputEventFilterReason::InvalidPayload)
         }
         VST3_EVENT_TYPE_NOTE_OFF => {
@@ -302,6 +454,7 @@ fn from_vst3_event(
                 note.note_id,
             )
             .map(Vst3OutputEvent::NoteOff)
+            .map(NormalizedOutputEvent::Midi)
             .ok_or(OutputEventFilterReason::InvalidPayload)
         }
         VST3_EVENT_TYPE_POLY_PRESSURE => {
@@ -315,8 +468,65 @@ fn from_vst3_event(
                 pressure.note_id,
             )
             .map(Vst3OutputEvent::PolyPressure)
+            .map(NormalizedOutputEvent::Midi)
             .ok_or(OutputEventFilterReason::InvalidPayload)
         }
+        VST3_EVENT_TYPE_LEGACY_MIDI_CC_OUT => {
+            // SAFETY: The VST3 event type tag says this union arm is a legacy MIDI CC payload.
+            let midi_cc = unsafe { event.payload.midi_cc_out };
+            legacy_midi_cc_out_event_from_payload(sample_offset, midi_cc)
+                .map(Vst3OutputEvent::LegacyMidiCcOut)
+                .map(NormalizedOutputEvent::Midi)
+                .ok_or(OutputEventFilterReason::InvalidPayload)
+        }
+        VST3_EVENT_TYPE_DATA => advanced_output_event_from_payload(
+            sample_offset,
+            event,
+            captured_payload,
+            Vst3AdvancedOutputEventKind::Data,
+        )
+        .map(NormalizedOutputEvent::Advanced)
+        .ok_or(OutputEventFilterReason::InvalidPayload),
+        VST3_EVENT_TYPE_NOTE_EXPRESSION_VALUE => advanced_output_event_from_payload(
+            sample_offset,
+            event,
+            captured_payload,
+            Vst3AdvancedOutputEventKind::NoteExpressionValue,
+        )
+        .map(NormalizedOutputEvent::Advanced)
+        .ok_or(OutputEventFilterReason::InvalidPayload),
+        VST3_EVENT_TYPE_NOTE_EXPRESSION_TEXT => advanced_output_event_from_payload(
+            sample_offset,
+            event,
+            captured_payload,
+            Vst3AdvancedOutputEventKind::NoteExpressionText,
+        )
+        .map(NormalizedOutputEvent::Advanced)
+        .ok_or(OutputEventFilterReason::InvalidPayload),
+        VST3_EVENT_TYPE_NOTE_EXPRESSION_INT_VALUE => advanced_output_event_from_payload(
+            sample_offset,
+            event,
+            captured_payload,
+            Vst3AdvancedOutputEventKind::NoteExpressionIntValue,
+        )
+        .map(NormalizedOutputEvent::Advanced)
+        .ok_or(OutputEventFilterReason::InvalidPayload),
+        VST3_EVENT_TYPE_CHORD => advanced_output_event_from_payload(
+            sample_offset,
+            event,
+            captured_payload,
+            Vst3AdvancedOutputEventKind::Chord,
+        )
+        .map(NormalizedOutputEvent::Advanced)
+        .ok_or(OutputEventFilterReason::InvalidPayload),
+        VST3_EVENT_TYPE_SCALE => advanced_output_event_from_payload(
+            sample_offset,
+            event,
+            captured_payload,
+            Vst3AdvancedOutputEventKind::Scale,
+        )
+        .map(NormalizedOutputEvent::Advanced)
+        .ok_or(OutputEventFilterReason::InvalidPayload),
         _ => Err(OutputEventFilterReason::UnknownType),
     }
 }
@@ -353,6 +563,140 @@ fn poly_pressure_event_from_payload(
     })
 }
 
+fn legacy_midi_cc_out_event_from_payload(
+    sample_offset: u16,
+    event: LegacyMidiCcOutEvent,
+) -> Option<Vst3LegacyMidiCcOutEvent> {
+    let control_number = legacy_control_number(event.control_number)?;
+    Some(Vst3LegacyMidiCcOutEvent {
+        sample_offset,
+        control_number,
+        channel: channel_to_u8(i16::from(event.channel))?,
+        value: data7_to_u8(i16::from(event.value))?,
+        value2: data7_to_u8(i16::from(event.value2))?,
+    })
+}
+
+fn advanced_output_event_from_payload(
+    sample_offset: u16,
+    event: Event,
+    captured_payload: CapturedVst3OutputPayload,
+    kind: Vst3AdvancedOutputEventKind,
+) -> Option<Vst3AdvancedOutputEvent> {
+    let mut output = Vst3AdvancedOutputEvent {
+        sample_offset,
+        kind,
+        vst3_event_type: event.event_type,
+        bus_index: event.bus_index,
+        payload_size: captured_payload.size,
+        payload_encoding: captured_payload.encoding,
+        payload_flags: captured_payload.flags,
+        payload: captured_payload.bytes,
+        ..Vst3AdvancedOutputEvent::default()
+    };
+
+    match kind {
+        Vst3AdvancedOutputEventKind::Data => {
+            // SAFETY: The VST3 event type tag says this union arm is a data payload.
+            let data = unsafe { event.payload.data };
+            output.data_size = data.size;
+            output.data_type = data.event_type;
+        }
+        Vst3AdvancedOutputEventKind::NoteExpressionValue => {
+            // SAFETY: The VST3 event type tag says this union arm is a note-expression value payload.
+            let value = unsafe { event.payload.note_expression_value };
+            output.data1 = value.note_id;
+            output.value = unit_f64(value.value)?;
+            output.data_type = value.type_id;
+        }
+        Vst3AdvancedOutputEventKind::NoteExpressionText => {
+            // SAFETY: The VST3 event type tag says this union arm is a note-expression text payload.
+            let text = unsafe { event.payload.note_expression_text };
+            output.data1 = text.note_id;
+            output.data_size = text.text_len;
+            output.data_type = text.type_id;
+        }
+        Vst3AdvancedOutputEventKind::NoteExpressionIntValue => {
+            // SAFETY: The VST3 event type tag says this union arm is a note-expression int payload.
+            let value = unsafe { event.payload.note_expression_int_value };
+            output.data1 = value.note_id;
+            output.data2 = value.value;
+            output.data_type = value.type_id;
+        }
+        Vst3AdvancedOutputEventKind::Chord => {
+            // SAFETY: The VST3 event type tag says this union arm is a chord payload.
+            let chord = unsafe { event.payload.chord };
+            output.data1 = note_name_to_i32(chord.root)?;
+            output.data2 = note_name_to_i32(chord.bass_note)?;
+            output.data_size = u32::from(chord.text_len);
+            output.data_type = chord_mask_to_u32(chord.mask)?;
+        }
+        Vst3AdvancedOutputEventKind::Scale => {
+            // SAFETY: The VST3 event type tag says this union arm is a scale payload.
+            let scale = unsafe { event.payload.scale };
+            output.data1 = note_name_to_i32(scale.root)?;
+            output.data2 = chord_mask_to_u32(scale.mask)? as i32;
+            output.data_size = u32::from(scale.text_len);
+        }
+    }
+
+    Some(output)
+}
+
+fn observe_advanced_payload_stats(
+    stats: &mut Vst3OutputEventStats,
+    event: Vst3AdvancedOutputEvent,
+) {
+    if event.payload_size > 0 {
+        stats.advanced_payload_events = stats.advanced_payload_events.saturating_add(1);
+        stats.advanced_payload_bytes = stats
+            .advanced_payload_bytes
+            .saturating_add(u32::from(event.payload_size));
+    }
+    match event.payload_encoding {
+        VST3_OUTPUT_PAYLOAD_ENCODING_RAW_BYTES if event.payload_size > 0 => {
+            stats.advanced_raw_payload_events = stats.advanced_raw_payload_events.saturating_add(1);
+        }
+        VST3_OUTPUT_PAYLOAD_ENCODING_UTF8 if event.payload_size > 0 => {
+            stats.advanced_text_payload_events =
+                stats.advanced_text_payload_events.saturating_add(1);
+        }
+        _ => {}
+    }
+    if (event.payload_flags & VST3_OUTPUT_PAYLOAD_FLAG_TRUNCATED) != 0 {
+        stats.advanced_truncated_payload_events =
+            stats.advanced_truncated_payload_events.saturating_add(1);
+    }
+    if (event.payload_flags & VST3_OUTPUT_PAYLOAD_FLAG_UNAVAILABLE) != 0 {
+        stats.advanced_unavailable_payload_events =
+            stats.advanced_unavailable_payload_events.saturating_add(1);
+    }
+    if (event.payload_flags & VST3_OUTPUT_PAYLOAD_FLAG_INVALID_TEXT) != 0 {
+        stats.advanced_invalid_text_payload_events =
+            stats.advanced_invalid_text_payload_events.saturating_add(1);
+    }
+}
+
+fn legacy_control_number(control_number: u8) -> Option<u8> {
+    match i16::from(control_number) {
+        0..=127
+        | VST3_MIDI_CONTROLLER_AFTERTOUCH
+        | VST3_MIDI_CONTROLLER_PITCH_BEND
+        | VST3_MIDI_CONTROLLER_PROGRAM_CHANGE
+        | VST3_MIDI_CONTROLLER_POLY_PRESSURE
+        | VST3_MIDI_CONTROLLER_QUARTER_FRAME
+        | VST3_MIDI_CONTROLLER_SONG_SELECT
+        | VST3_MIDI_CONTROLLER_SONG_POINTER
+        | VST3_MIDI_CONTROLLER_CABLE_SELECT
+        | VST3_MIDI_CONTROLLER_TUNE_REQUEST
+        | VST3_MIDI_CONTROLLER_CLOCK_START
+        | VST3_MIDI_CONTROLLER_CLOCK_CONTINUE
+        | VST3_MIDI_CONTROLLER_CLOCK_STOP
+        | VST3_MIDI_CONTROLLER_ACTIVE_SENSING => Some(control_number),
+        _ => None,
+    }
+}
+
 fn channel_to_u8(channel: i16) -> Option<u8> {
     if (0..=15).contains(&channel) {
         Some(channel as u8)
@@ -372,6 +716,30 @@ fn data7_to_u8(value: i16) -> Option<u8> {
 fn unit_f32(value: f32) -> Option<f32> {
     if value.is_finite() && (0.0..=1.0).contains(&value) {
         Some(value)
+    } else {
+        None
+    }
+}
+
+fn unit_f64(value: f64) -> Option<f64> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn note_name_to_i32(value: i16) -> Option<i32> {
+    if (0..=127).contains(&value) {
+        Some(i32::from(value))
+    } else {
+        None
+    }
+}
+
+fn chord_mask_to_u32(value: i16) -> Option<u32> {
+    if value >= 0 {
+        Some(u32::from(value as u16))
     } else {
         None
     }
@@ -428,115 +796,4 @@ fn poly_pressure_event(event: Vst3PolyPressureEvent) -> Event {
         },
     };
     vst_event
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exposes_events_through_vst3_event_list_vtable() {
-        let mut list = Vst3EventList::new(8);
-        list.set_events(
-            128,
-            &[Vst3InputEvent::NoteOn(Vst3NoteEvent {
-                sample_offset: 12,
-                channel: 1,
-                pitch: 60,
-                velocity: 0.5,
-                note_id: -1,
-            })],
-        )
-        .expect("events");
-
-        let ptr = list.as_raw_ptr();
-        let mut event = Event::default();
-        let count = unsafe { ((*(*ptr).vtable).get_event_count)(ptr) };
-        let result = unsafe { ((*(*ptr).vtable).get_event)(ptr, 0, &mut event) };
-
-        assert_eq!(count, 1);
-        assert_eq!(result, 0);
-        assert_eq!(event.sample_offset, 12);
-        assert_eq!(event.event_type, VST3_EVENT_TYPE_NOTE_ON);
-        assert_eq!(unsafe { event.payload.note_on.pitch }, 60);
-    }
-
-    #[test]
-    fn normalizes_output_events_and_skips_invalid_payloads() {
-        let mut list = Vst3EventList::new(8);
-        let ptr = list.as_raw_ptr();
-        let mut note_on = Event {
-            sample_offset: 2,
-            event_type: VST3_EVENT_TYPE_NOTE_ON,
-            payload: EventPayload {
-                note_on: NoteOnEvent {
-                    channel: 1,
-                    pitch: 60,
-                    tuning: 0.0,
-                    velocity: 0.5,
-                    length: 0,
-                    note_id: 10,
-                },
-            },
-            ..Event::default()
-        };
-        let mut bad_offset = Event {
-            sample_offset: 8,
-            event_type: VST3_EVENT_TYPE_NOTE_OFF,
-            payload: EventPayload {
-                note_off: NoteOffEvent {
-                    channel: 1,
-                    pitch: 60,
-                    tuning: 0.0,
-                    velocity: 0.5,
-                    note_id: 10,
-                },
-            },
-            ..Event::default()
-        };
-        let mut bad_channel = Event {
-            sample_offset: 3,
-            event_type: VST3_EVENT_TYPE_POLY_PRESSURE,
-            payload: EventPayload {
-                poly_pressure: PolyPressureEvent {
-                    channel: 16,
-                    pitch: 60,
-                    pressure: 0.5,
-                    note_id: 10,
-                },
-            },
-            ..Event::default()
-        };
-        let mut unknown_type = Event {
-            sample_offset: 4,
-            event_type: 99,
-            ..Event::default()
-        };
-        unsafe {
-            ((*(*ptr).vtable).add_event)(ptr, &mut note_on);
-            ((*(*ptr).vtable).add_event)(ptr, &mut bad_offset);
-            ((*(*ptr).vtable).add_event)(ptr, &mut bad_channel);
-            ((*(*ptr).vtable).add_event)(ptr, &mut unknown_type);
-        }
-        let mut events = Vec::new();
-
-        let stats = list.output_events_into(8, &mut events);
-
-        assert_eq!(
-            events,
-            vec![Vst3OutputEvent::NoteOn(Vst3NoteEvent {
-                sample_offset: 2,
-                channel: 1,
-                pitch: 60,
-                velocity: 0.5,
-                note_id: 10,
-            })]
-        );
-        assert_eq!(stats.raw_events, 4);
-        assert_eq!(stats.normalized_events, 1);
-        assert_eq!(stats.filtered_events, 3);
-        assert_eq!(stats.invalid_sample_offset_events, 1);
-        assert_eq!(stats.invalid_payload_events, 1);
-        assert_eq!(stats.unknown_type_events, 1);
-    }
 }

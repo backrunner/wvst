@@ -2,14 +2,55 @@ use std::ffi::c_void;
 use std::ptr;
 use std::ptr::NonNull;
 
+use serde::Serialize;
+
 use crate::vst3_abi::{
     IAudioProcessor, IAudioProcessorVTable, IProcessContextRequirements, K_RESULT_FALSE,
-    K_RESULT_OK, ProcessSetup, VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID, VST3_SAMPLE_32,
-    VST3_SPEAKER_30_CINE, VST3_SPEAKER_40_MUSIC, VST3_SPEAKER_50, VST3_SPEAKER_51,
+    K_RESULT_OK, ProcessSetup, VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID, VST3_INFINITE_TAIL_SAMPLES,
+    VST3_SAMPLE_32, VST3_SPEAKER_30_CINE, VST3_SPEAKER_40_MUSIC, VST3_SPEAKER_50, VST3_SPEAKER_51,
     VST3_SPEAKER_61_CINE, VST3_SPEAKER_71_CINE, VST3_SPEAKER_MONO, VST3_SPEAKER_STEREO,
     parse_tuid_hex,
 };
 use crate::{HostError, HostResult, Vst3ProcessBuffers, Vst3ProcessingConfig};
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Vst3TailKind {
+    None,
+    Finite,
+    Infinite,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vst3TailSamples {
+    pub samples: u32,
+    pub kind: Vst3TailKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finite_samples: Option<u32>,
+}
+
+impl Vst3TailSamples {
+    pub const fn from_raw(samples: u32) -> Self {
+        match samples {
+            0 => Self {
+                samples,
+                kind: Vst3TailKind::None,
+                finite_samples: Some(0),
+            },
+            VST3_INFINITE_TAIL_SAMPLES => Self {
+                samples,
+                kind: Vst3TailKind::Infinite,
+                finite_samples: None,
+            },
+            samples => Self {
+                samples,
+                kind: Vst3TailKind::Finite,
+                finite_samples: Some(samples),
+            },
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Vst3AudioProcessor {
@@ -121,6 +162,10 @@ impl Vst3AudioProcessor {
         // SAFETY: vtable and processor were validated by from_raw; this VST3
         // query takes no additional pointers.
         unsafe { (vtable.get_tail_samples)(processor) }
+    }
+
+    pub fn tail_info(&self) -> Vst3TailSamples {
+        Vst3TailSamples::from_raw(self.tail_samples())
     }
 
     fn call_result(

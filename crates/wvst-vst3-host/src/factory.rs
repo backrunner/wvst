@@ -35,9 +35,21 @@ pub struct Vst3ComponentProbe {
     pub created: bool,
 }
 
+#[derive(Debug, Default, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vst3ControllerComponentStateSync {
+    pub attempted: bool,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub component_state_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 pub struct Vst3LoadedComponent {
     instance: Vst3ComponentInstance,
     controller: Option<Vst3EditController>,
+    controller_component_state_sync: Option<Vst3ControllerComponentStateSync>,
     connection_points: Option<Vst3ConnectedPair>,
     _module: Option<platform::LoadedPluginModule>,
 }
@@ -51,6 +63,7 @@ impl Vst3LoadedComponent {
         Self {
             instance,
             controller,
+            controller_component_state_sync: None,
             connection_points: None,
             _module: Some(module),
         }
@@ -64,6 +77,7 @@ impl Vst3LoadedComponent {
         Self {
             instance,
             controller,
+            controller_component_state_sync: None,
             connection_points: None,
             _module: None,
         }
@@ -86,8 +100,10 @@ impl Vst3LoadedComponent {
     }
 
     pub fn initialize_controller(&mut self) -> HostResult<()> {
-        if let Some(controller) = self.controller.as_mut() {
+        if self.controller.is_some() {
+            let controller = self.controller.as_mut().expect("controller checked");
             controller.initialize()?;
+            self.controller_component_state_sync = Some(self.sync_controller_component_state());
             self.connect_component_controller()?;
         }
         Ok(())
@@ -124,6 +140,14 @@ impl Vst3LoadedComponent {
             .map(Vst3EditController::component_handler_snapshot)
     }
 
+    pub fn connection_points_connected(&self) -> bool {
+        self.connection_points.is_some()
+    }
+
+    pub fn controller_component_state_sync(&self) -> Option<&Vst3ControllerComponentStateSync> {
+        self.controller_component_state_sync.as_ref()
+    }
+
     pub fn notify_component(&self, message: &mut Vst3HostMessage) -> HostResult<Option<()>> {
         let Some(connection_points) = self.connection_points.as_ref() else {
             return Ok(None);
@@ -142,10 +166,7 @@ impl Vst3LoadedComponent {
 
     pub fn set_component_state(&mut self, state: &[u8]) -> HostResult<()> {
         self.instance.set_state(state)?;
-        if let Some(controller) = self.controller.as_ref() {
-            controller.set_component_state(state)?;
-        }
-        Ok(())
+        self.apply_controller_component_state(state)
     }
 
     pub fn set_controller_state(&mut self, state: &[u8]) -> HostResult<()> {
@@ -153,6 +174,51 @@ impl Vst3LoadedComponent {
             controller.set_state(state)?;
         }
         Ok(())
+    }
+
+    fn sync_controller_component_state(&mut self) -> Vst3ControllerComponentStateSync {
+        let state = match self.instance.get_state() {
+            Ok(state) => state,
+            Err(error) => {
+                return Vst3ControllerComponentStateSync {
+                    attempted: true,
+                    error: Some(error.to_string()),
+                    ..Vst3ControllerComponentStateSync::default()
+                };
+            }
+        };
+        let _ = self.apply_controller_component_state(&state);
+        self.controller_component_state_sync
+            .clone()
+            .unwrap_or_default()
+    }
+
+    fn apply_controller_component_state(&mut self, state: &[u8]) -> HostResult<()> {
+        let component_state_bytes = Some(state.len());
+        let Some(controller) = self.controller.as_ref() else {
+            self.controller_component_state_sync = None;
+            return Ok(());
+        };
+        match controller.set_component_state(state) {
+            Ok(()) => {
+                self.controller_component_state_sync = Some(Vst3ControllerComponentStateSync {
+                    attempted: true,
+                    success: true,
+                    component_state_bytes,
+                    error: None,
+                });
+                Ok(())
+            }
+            Err(error) => {
+                self.controller_component_state_sync = Some(Vst3ControllerComponentStateSync {
+                    attempted: true,
+                    success: false,
+                    component_state_bytes,
+                    error: Some(error.to_string()),
+                });
+                Err(error)
+            }
+        }
     }
 
     pub fn select_unit(&self, unit_id: i32) -> HostResult<Option<i32>> {
@@ -312,6 +378,18 @@ struct Vst3ConnectedPair {
 // calls, and WVST workers additionally serialize access with their instance
 // mutex.
 unsafe impl Send for Vst3LoadedComponent {}
+
+fn factory_create_instance_tuids(
+    class_id: &str,
+    interface_id: &str,
+) -> HostResult<([u8; 16], [u8; 16])> {
+    let class_tuid = crate::vst3_abi::parse_tuid_hex(class_id)
+        .ok_or_else(|| crate::HostError::InvalidClassId(class_id.to_string()))?;
+    let interface_tuid = crate::vst3_abi::parse_tuid_hex(interface_id)
+        .ok_or_else(|| crate::HostError::InvalidInterfaceId(interface_id.to_string()))?;
+
+    Ok((class_tuid, interface_tuid))
+}
 
 pub fn load_vst3_factory_info(
     bundle_path: impl AsRef<std::path::Path>,
@@ -656,20 +734,19 @@ mod platform {
             interface_id: &str,
         ) -> HostResult<Vst3UnknownInstance> {
             let vtable = self.vtable()?;
-            let class_id_string = CString::new(class_id)
-                .map_err(|error| HostError::ModuleLoadFailed(error.to_string()))?;
-            let interface_id_string = CString::new(interface_id)
-                .map_err(|error| HostError::ModuleLoadFailed(error.to_string()))?;
+            let (class_tuid, interface_tuid) =
+                super::factory_create_instance_tuids(class_id, interface_id)?;
             let mut object: *mut c_void = std::ptr::null_mut();
 
             // SAFETY: `self.factory` is a valid IPluginFactory pointer. The class
-            // and interface ids are NUL-terminated FUID strings, and `object`
-            // points to writable stack storage for the returned FUnknown pointer.
+            // and interface ids point to stable 16-byte TUID buffers for the
+            // duration of the call, and `object` points to writable stack storage
+            // for the returned FUnknown pointer.
             let result = unsafe {
                 ((*vtable).create_instance)(
                     self.factory,
-                    class_id_string.as_ptr(),
-                    interface_id_string.as_ptr(),
+                    class_tuid.as_ptr().cast(),
+                    interface_tuid.as_ptr().cast(),
                     &mut object,
                 )
             };

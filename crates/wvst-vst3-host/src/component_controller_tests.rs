@@ -1,6 +1,8 @@
 use std::ffi::c_void;
 
-use crate::vst3_abi::{FUnknown, IComponent, IComponentVTable, K_RESULT_OK, TUid};
+use crate::vst3_abi::{
+    FUnknown, IComponent, IComponentVTable, K_NOT_IMPLEMENTED, K_RESULT_FALSE, K_RESULT_OK, TUid,
+};
 
 use super::*;
 
@@ -26,6 +28,17 @@ fn treats_zero_controller_class_id_as_missing() {
         unsafe { Vst3ComponentHandle::from_raw(component.raw_component()) }.expect("handle");
 
     assert_eq!(handle.controller_class_id().expect("controller"), None);
+}
+
+#[test]
+fn treats_optional_controller_result_codes_as_missing() {
+    for result in [K_RESULT_FALSE, K_NOT_IMPLEMENTED] {
+        let mut component = FakeComponent::new([0; 16], result);
+        let handle =
+            unsafe { Vst3ComponentHandle::from_raw(component.raw_component()) }.expect("handle");
+
+        assert_eq!(handle.controller_class_id().expect("controller"), None);
+    }
 }
 
 #[test]

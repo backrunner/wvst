@@ -2,7 +2,14 @@ use std::ffi::c_void;
 
 pub const VST3_EVENT_TYPE_NOTE_ON: u16 = 0;
 pub const VST3_EVENT_TYPE_NOTE_OFF: u16 = 1;
+pub const VST3_EVENT_TYPE_DATA: u16 = 2;
 pub const VST3_EVENT_TYPE_POLY_PRESSURE: u16 = 3;
+pub const VST3_EVENT_TYPE_NOTE_EXPRESSION_VALUE: u16 = 4;
+pub const VST3_EVENT_TYPE_NOTE_EXPRESSION_TEXT: u16 = 5;
+pub const VST3_EVENT_TYPE_CHORD: u16 = 6;
+pub const VST3_EVENT_TYPE_SCALE: u16 = 7;
+pub const VST3_EVENT_TYPE_NOTE_EXPRESSION_INT_VALUE: u16 = 8;
+pub const VST3_EVENT_TYPE_LEGACY_MIDI_CC_OUT: u16 = 65_535;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -56,6 +63,12 @@ pub union EventPayload {
     pub note_off: NoteOffEvent,
     pub data: DataEvent,
     pub poly_pressure: PolyPressureEvent,
+    pub note_expression_value: NoteExpressionValueEvent,
+    pub note_expression_text: NoteExpressionTextEvent,
+    pub note_expression_int_value: NoteExpressionIntValueEvent,
+    pub chord: ChordEvent,
+    pub scale: ScaleEvent,
+    pub midi_cc_out: LegacyMidiCcOutEvent,
     pub raw: [u64; 4],
 }
 
@@ -101,4 +114,57 @@ pub struct PolyPressureEvent {
     pub pitch: i16,
     pub pressure: f32,
     pub note_id: i32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoteExpressionValueEvent {
+    pub type_id: u32,
+    pub note_id: i32,
+    pub value: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoteExpressionTextEvent {
+    pub type_id: u32,
+    pub note_id: i32,
+    pub text_len: u32,
+    pub text: *const u16,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoteExpressionIntValueEvent {
+    pub type_id: u32,
+    pub note_id: i32,
+    pub value: i32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChordEvent {
+    pub root: i16,
+    pub bass_note: i16,
+    pub mask: i16,
+    pub text_len: u16,
+    pub text: *const u16,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScaleEvent {
+    pub root: i16,
+    pub mask: i16,
+    pub text_len: u16,
+    pub text: *const u16,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LegacyMidiCcOutEvent {
+    pub control_number: u8,
+    pub channel: i8,
+    pub value: i8,
+    pub value2: i8,
 }

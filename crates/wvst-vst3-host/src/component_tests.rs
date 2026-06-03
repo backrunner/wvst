@@ -10,7 +10,7 @@ use crate::vst3_abi::{
     VST3_BUS_FLAG_DEFAULT_ACTIVE, VST3_BUS_TYPE_MAIN, VST3_EVENT_TYPE_POLY_PRESSURE,
     VST3_MEDIA_TYPE_AUDIO, VST3_SAMPLE_32, VST3_SPEAKER_STEREO,
 };
-use crate::{Vst3OutputEvent, Vst3PolyPressureEvent};
+use crate::{Vst3OutputEvent, Vst3PolyPressureEvent, Vst3TailKind};
 
 use super::*;
 
@@ -60,6 +60,14 @@ fn drives_component_lifecycle_and_audio_process_path() {
     assert!(processor.processing);
     assert_eq!(instance.latency_samples(), 32);
     assert_eq!(instance.tail_samples(), 64);
+    assert_eq!(
+        instance.tail_info(),
+        Vst3TailSamples {
+            samples: 64,
+            kind: Vst3TailKind::Finite,
+            finite_samples: Some(64),
+        }
+    );
 
     let mut output = [0.0; 4];
     instance
@@ -83,6 +91,65 @@ fn drives_component_lifecycle_and_audio_process_path() {
     drop(instance);
     assert_eq!(component.release_calls, 1);
     assert_eq!(processor.release_calls, 1);
+}
+
+#[test]
+fn reports_selected_audio_buses_for_runtime_diagnostics() {
+    let mut component = FakeComponent::new();
+    let mut processor = FakeProcessor::new();
+    let config = Vst3ProcessingConfig::new(48_000, 128, 2, 2).expect("config");
+    let mut instance = unsafe {
+        Vst3ComponentInstance::from_raw_parts(
+            component.raw_component(),
+            processor.raw_processor(),
+            config,
+        )
+    }
+    .expect("instance");
+
+    instance.initialize().expect("initialize");
+    let selected = instance.selected_audio_buses().expect("selected buses");
+
+    let input = selected.input.expect("input bus");
+    assert_eq!(input.direction, Vst3BusDirection::Input);
+    assert_eq!(input.requested_channels, 2);
+    assert_eq!(input.selected_index, 0);
+    assert_eq!(input.selected.expect("selected input").channel_count, 2);
+    assert_eq!(input.available.len(), 1);
+
+    assert_eq!(selected.output.direction, Vst3BusDirection::Output);
+    assert_eq!(selected.output.requested_channels, 2);
+    assert_eq!(selected.output.selected_index, 0);
+    assert_eq!(
+        selected
+            .output
+            .selected
+            .expect("selected output")
+            .channel_count,
+        2
+    );
+}
+
+#[test]
+fn selected_audio_buses_omit_zero_input_bus() {
+    let mut component = FakeComponent::new();
+    let mut processor = FakeProcessor::new();
+    let config = Vst3ProcessingConfig::new(48_000, 128, 0, 2).expect("config");
+    let mut instance = unsafe {
+        Vst3ComponentInstance::from_raw_parts(
+            component.raw_component(),
+            processor.raw_processor(),
+            config,
+        )
+    }
+    .expect("instance");
+
+    instance.initialize().expect("initialize");
+    let selected = instance.selected_audio_buses().expect("selected buses");
+
+    assert!(selected.input.is_none());
+    assert_eq!(selected.output.selected_index, 0);
+    assert_eq!(selected.output.available.len(), 1);
 }
 
 #[test]

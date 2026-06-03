@@ -7,8 +7,9 @@ use crate::vst3_abi::{
     IProcessContextRequirements, IProcessContextRequirementsVTable, K_RESULT_FALSE, K_RESULT_OK,
     ParamId, PolyPressureEvent, ProcessData, ProcessSetup, SpeakerArrangement,
     VST3_EVENT_TYPE_POLY_PRESSURE, VST3_I_PROCESS_CONTEXT_REQUIREMENTS_IID,
-    VST3_PROCESS_CONTEXT_NEED_TEMPO, VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE, VST3_SAMPLE_32,
-    VST3_SPEAKER_51, VST3_SPEAKER_STEREO, parse_tuid_hex,
+    VST3_INFINITE_TAIL_SAMPLES, VST3_PROCESS_CONTEXT_NEED_TEMPO,
+    VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE, VST3_SAMPLE_32, VST3_SPEAKER_51, VST3_SPEAKER_STEREO,
+    parse_tuid_hex,
 };
 
 use super::*;
@@ -38,6 +39,14 @@ fn sets_up_processes_and_releases_audio_processor() {
     assert_eq!(processor.latency_samples(), 64);
     assert_eq!(processor.tail_samples(), 128);
     assert_eq!(
+        processor.tail_info(),
+        Vst3TailSamples {
+            samples: 128,
+            kind: Vst3TailKind::Finite,
+            finite_samples: Some(128),
+        }
+    );
+    assert_eq!(
         processor.process_context_requirements(),
         Some(VST3_PROCESS_CONTEXT_NEED_TEMPO | VST3_PROCESS_CONTEXT_NEED_TIME_SIGNATURE)
     );
@@ -65,6 +74,34 @@ fn sets_up_processes_and_releases_audio_processor() {
     drop(processor);
 
     assert_eq!(fake.release_calls, 1);
+}
+
+#[test]
+fn classifies_tail_samples() {
+    assert_eq!(
+        Vst3TailSamples::from_raw(0),
+        Vst3TailSamples {
+            samples: 0,
+            kind: Vst3TailKind::None,
+            finite_samples: Some(0),
+        }
+    );
+    assert_eq!(
+        Vst3TailSamples::from_raw(64),
+        Vst3TailSamples {
+            samples: 64,
+            kind: Vst3TailKind::Finite,
+            finite_samples: Some(64),
+        }
+    );
+    assert_eq!(
+        Vst3TailSamples::from_raw(VST3_INFINITE_TAIL_SAMPLES),
+        Vst3TailSamples {
+            samples: VST3_INFINITE_TAIL_SAMPLES,
+            kind: Vst3TailKind::Infinite,
+            finite_samples: None,
+        }
+    );
 }
 
 #[test]

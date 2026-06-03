@@ -2,15 +2,16 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use crate::vst3_abi::{
-    BusInfo, FUnknown, IComponent, IComponentVTable, K_RESULT_FALSE, K_RESULT_OK, TUid,
-    VST3_I_PROGRAM_LIST_DATA_IID, VST3_I_UNIT_DATA_IID, VST3_MEDIA_TYPE_AUDIO, parse_tuid_hex,
-    tuid_hex,
+    BusInfo, FUnknown, IComponent, IComponentVTable, K_NOT_IMPLEMENTED, K_RESULT_FALSE,
+    K_RESULT_OK, TUid, VST3_I_PROGRAM_LIST_DATA_IID, VST3_I_UNIT_DATA_IID, VST3_MEDIA_TYPE_AUDIO,
+    parse_tuid_hex, tuid_hex,
 };
 use crate::{
     DEFAULT_MAX_VST3_STATE_BYTES, HostError, HostResult, Vst3AudioBusInfo, Vst3AudioProcessor,
     Vst3BusDirection, Vst3BusType, Vst3ConnectionPoint, Vst3HostContext, Vst3InputEvent,
     Vst3Lifecycle, Vst3LifecycleState, Vst3ParameterChange, Vst3ProcessBuffers, Vst3ProcessOutput,
-    Vst3ProcessingConfig, Vst3ProgramListData, Vst3UnitData, state_stream::Vst3StateStream,
+    Vst3ProcessingConfig, Vst3ProgramListData, Vst3TailSamples, Vst3UnitData,
+    state_stream::Vst3StateStream,
 };
 
 #[derive(Debug)]
@@ -21,6 +22,21 @@ pub struct Vst3ComponentInstance {
     lifecycle: Vst3Lifecycle,
     buffers: Vst3ProcessBuffers,
     processing_config: Vst3ProcessingConfig,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Vst3SelectedAudioBuses {
+    pub input: Option<Vst3SelectedAudioBus>,
+    pub output: Vst3SelectedAudioBus,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Vst3SelectedAudioBus {
+    pub direction: Vst3BusDirection,
+    pub requested_channels: u16,
+    pub selected_index: i32,
+    pub selected: Option<Vst3AudioBusInfo>,
+    pub available: Vec<Vst3AudioBusInfo>,
 }
 
 impl Vst3ComponentInstance {
@@ -77,6 +93,42 @@ impl Vst3ComponentInstance {
             ],
         )?;
         self.component.audio_buses(direction)
+    }
+
+    pub fn selected_audio_buses(&mut self) -> HostResult<Vst3SelectedAudioBuses> {
+        let input = if self.processing_config.input_channels == 0 {
+            None
+        } else {
+            Some(self.selected_audio_bus(
+                Vst3BusDirection::Input,
+                self.processing_config.input_channels,
+            )?)
+        };
+        let output = self.selected_audio_bus(
+            Vst3BusDirection::Output,
+            self.processing_config.output_channels,
+        )?;
+        Ok(Vst3SelectedAudioBuses { input, output })
+    }
+
+    fn selected_audio_bus(
+        &mut self,
+        direction: Vst3BusDirection,
+        requested_channels: u16,
+    ) -> HostResult<Vst3SelectedAudioBus> {
+        let available = self.audio_buses(direction)?;
+        let selected_index = select_audio_bus_index(&available, requested_channels);
+        let selected = available
+            .iter()
+            .find(|bus| bus.index == selected_index)
+            .cloned();
+        Ok(Vst3SelectedAudioBus {
+            direction,
+            requested_channels,
+            selected_index,
+            selected,
+            available,
+        })
     }
 
     pub fn controller_class_id(&self) -> HostResult<Option<String>> {
@@ -229,8 +281,10 @@ impl Vst3ComponentInstance {
             parameter_changes,
             output,
         )?;
-        process_output.diagnostics.output_events =
-            self.buffers.output_events_into(&mut process_output.events);
+        process_output.diagnostics.output_events = self.buffers.output_events_and_advanced_into(
+            &mut process_output.events,
+            &mut process_output.advanced_events,
+        );
         process_output.diagnostics.output_parameter_changes = self
             .buffers
             .output_parameter_changes_into(&mut process_output.parameter_changes);
@@ -271,6 +325,10 @@ impl Vst3ComponentInstance {
 
     pub fn tail_samples(&self) -> u32 {
         self.processor.tail_samples()
+    }
+
+    pub fn tail_info(&self) -> Vst3TailSamples {
+        self.processor.tail_info()
     }
 
     pub fn process_context_requirements(&self) -> Option<u32> {
@@ -373,14 +431,14 @@ impl Vst3ComponentHandle {
             // is writable stack storage for the component's controller TUID.
             (self.vtable().get_controller_class_id)(self.component.as_ptr(), &mut class_id)
         };
-        if result != K_RESULT_OK {
-            return Err(HostError::ComponentCallFailed {
+        match result {
+            K_RESULT_OK => Ok((class_id != [0; 16]).then(|| tuid_hex(&class_id))),
+            K_RESULT_FALSE | K_NOT_IMPLEMENTED => Ok(None),
+            result => Err(HostError::ComponentCallFailed {
                 method: "getControllerClassId",
                 result,
-            });
+            }),
         }
-
-        Ok((class_id != [0; 16]).then(|| tuid_hex(&class_id)))
     }
 
     fn get_state(&self) -> HostResult<Vec<u8>> {
