@@ -2,6 +2,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod linux;
+
+pub use linux::{
+    DEFAULT_SYSTEMD_SERVICE_NAME, LinuxPackageConfig, LinuxPackageManifest, build_linux_package,
+    default_linux_install_prefix, default_systemd_user_unit_path,
+};
+
 pub const DEFAULT_LAUNCHD_LABEL: &str = "top.backrunner.wvst.bridge";
 pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:35876";
 
