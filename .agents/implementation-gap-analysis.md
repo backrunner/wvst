@@ -59,6 +59,7 @@
 - `wvst-vst3-host` 已加入 VST3 host-owned `ProcessContext` 和 `IProcessContextRequirements` 查询，`ProcessData.process_context` 指向稳定堆内存并随 block 推进 sample timeline、tempo、拍号和 musical position；worker diagnostics 已暴露插件声明的 process context requirements bitmask。
 - `wvst-vst3-host` 已加入 `Vst3AudioProcessor` facade，能封装 owned `IAudioProcessor` 指针并调用 `canProcessSampleSize`、`setupProcessing`、`setProcessing`、`process`、latency/tail 查询；fake ABI fixture 已覆盖真实 `ProcessData` 指针链路。
 - `wvst-vst3-host` 已加入 `Vst3ComponentInstance` holder，能持有 owned `IComponent` + `Vst3AudioProcessor`，并将 initialize、setupProcessing、setActive、setProcessing、process、terminate 串入 `Vst3Lifecycle`；fake component/processor fixture 已覆盖完整生命周期和错误传播。
+- `wvst-host-worker runtime-probe <plugin.vst3> <class-id>` 已提供隔离进程内真实 VST3 runtime smoke 入口，可按指定 sample rate、block size、输入/输出通道和 frames 创建 component/controller、完成 setup/activate/start/process/stop/terminate，并输出参数数量、audio bus、latency/tail、process context requirements 和 output event/parameter diagnostics JSON，便于后续第三方插件兼容验证自动化。
 - `wvst-vst3-host` 已接入基础 audio bus 配置：`setupProcessing` 前调用 `setBusArrangements` 设置 mono/stereo 或 zero-input instrument arrangement，`activate/terminate` 会开关主 audio input/output bus，并覆盖 `setActive` 失败后的 bus rollback。
 - `wvst-vst3-host` 已补入 VST3 `BusInfo` ABI 和 `Vst3AudioBusInfo` safe facade，component holder 可查询 audio input/output bus count、channel count、bus type、default active flag 和 UTF-16 bus name。
 - component holder 的 audio bus activation 已从固定 index 0 改为基于查询结果选择 bus：优先匹配目标 channel count 的 main bus，其次 default-active main bus，再回退到第一个可用 bus。
@@ -112,7 +113,7 @@
 
 - 更完整的多 bus arrangement 和 process buffer 映射；当前 holder 已提供基础 `IHostApplication`、host-created `IMessage` / `IAttributeList`、audio bus 查询、selected-bus activation，并支持单个主 bus 的 mono/stereo/常见 3.0 到 7.1 speaker arrangement。
 - `IEditController`、`IComponentHandler`/`IComponentHandler2` callback 事件记录与 Bridge server-push、`IConnectionPoint` connect/disconnect/notify、参数列表、unit/program metadata、normalized 参数读写、带顺序校验的 UI 参数 edit gesture、normalized/plain/display string 转换、component/controller state get/set 聚合、unit selection、unit-by-bus、program/unit data 读写以及 parameter-change queue/sample-accurate automation 已有首版；metadata invalidation 已能区分 metadata refresh、audio graph rebuild 和 component reload policy；仍缺少真实第三方 controller/automation/unit-info/program-data/message notify/connection-point 兼容验证，以及真实 host latency/bus 变化后的应用层重建测量。
-- 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、process context、latency/tail 主要由 fake ABI fixture、worker passthrough 和 Bridge runtime-info 传播测试覆盖。
+- 真实第三方插件兼容验证仍不足；当前 `setProcessing`、`process`、process context、latency/tail 主要由 fake ABI fixture、worker passthrough、Bridge runtime-info 传播测试和可对真实 bundle 执行的 `runtime-probe` smoke 入口覆盖，仍需要纳入固定第三方插件矩阵与长时稳定性记录。
 
 ### 4. 低延迟音频数据面
 
@@ -146,7 +147,7 @@
 
 ## 建议下一阶段
 
-1. 用真实 macOS VST3 effect/instrument fixture 验证 2-in/2-out process、parameter automation、MIDI mapping 和 zero-input instrument timing。
+1. 用 `wvst-host-worker runtime-probe` 接入真实 macOS VST3 effect/instrument fixture，验证 2-in/2-out process、parameter automation、MIDI mapping 和 zero-input instrument timing。
 2. 用真实第三方插件验证 controller/automation/unit-info/program-data/message notify/typed attribute 兼容性。
 3. 给 worker runtime backend 增加兼容失败诊断，并继续细化 `runtimeCapabilities` 的失败原因和 schema versioning。
 4. 将 framed control IPC 的批处理/多路复用能力继续扩展到更多 Bridge metadata/control 组合调用，并继续扩展错误分类。
