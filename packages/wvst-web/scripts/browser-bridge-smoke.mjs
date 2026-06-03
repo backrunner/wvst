@@ -23,6 +23,12 @@ const smokeConfig = {
     allowZero: true,
   }),
   outputChannels: integerFromEnv("WVST_BRIDGE_SMOKE_OUTPUT_CHANNELS", 2),
+  inputBusIndex: optionalIntegerFromEnv("WVST_BRIDGE_SMOKE_INPUT_BUS_INDEX", {
+    allowZero: true,
+  }),
+  outputBusIndex: optionalIntegerFromEnv("WVST_BRIDGE_SMOKE_OUTPUT_BUS_INDEX", {
+    allowZero: true,
+  }),
   capacityQuanta: integerFromEnv("WVST_BRIDGE_SMOKE_CAPACITY_QUANTA", 64),
   durationMs: integerFromEnv("WVST_BRIDGE_SMOKE_DURATION_MS", 1_000),
   pollMs: integerFromEnv("WVST_BRIDGE_SMOKE_POLL_MS", 5),
@@ -172,6 +178,8 @@ try {
       maxBlockFrames: result.config.frames,
       inputChannels: result.config.inputChannels,
       outputChannels: result.config.outputChannels,
+      inputBusIndex: result.config.inputBusIndex,
+      outputBusIndex: result.config.outputBusIndex,
     });
     await client.instances.start({ instanceId: created.instanceId });
     instance = await client.instances.openStream({ instanceId: created.instanceId });
@@ -552,6 +560,14 @@ function integerFromEnv(name, fallback, options = {}) {
     throw new Error(`${name} must be ${label}`);
   }
   return parsed;
+}
+
+function optionalIntegerFromEnv(name, options = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || raw.length === 0) {
+    return undefined;
+  }
+  return integerFromEnv(name, 0, options);
 }
 
 function booleanFromEnv(name, fallback) {

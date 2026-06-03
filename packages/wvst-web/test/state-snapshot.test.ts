@@ -88,6 +88,26 @@ describe("WVST state snapshots", () => {
     );
   });
 
+  it("includes explicit bus selection in compatibility checks", () => {
+    const routed = { ...descriptor, inputBusIndex: 1, outputBusIndex: 2 };
+    const snapshot = createWVSTInstanceStateSnapshot(
+      {
+        instanceId: descriptor.instanceId,
+        componentStateBase64: "Y29tcA==",
+        controllerStateBase64: null,
+      },
+      routed,
+    );
+
+    const result = checkWVSTInstanceStateSnapshotCompatibility(snapshot, descriptor);
+
+    expect(result.compatible).toBe(false);
+    expect(result.reasons).toEqual([
+      "inputBusIndex mismatch: expected 1, got unset",
+      "outputBusIndex mismatch: expected 2, got unset",
+    ]);
+  });
+
   it("rejects empty snapshots without component or controller state", () => {
     expect(() =>
       instanceStateSnapshotToSetStateOptions(1, {

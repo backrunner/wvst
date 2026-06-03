@@ -14,6 +14,7 @@ import {
   fillSelect,
   optionValue,
   readInteger,
+  readOptionalInteger,
   readOptionalText,
   readText,
   renderMetrics,
@@ -127,6 +128,7 @@ async function mount(): Promise<void> {
     maxBlockFrames: readInteger("frames", 128),
     inputChannels: 0,
     outputChannels: readInteger("outputs", 2),
+    outputBusIndex: readOptionalInteger("output-bus"),
   });
   await clients.client.instances.start({ instanceId: created.instanceId });
   instance = await clients.client.instances.openStream({ instanceId: created.instanceId });

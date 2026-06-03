@@ -1,13 +1,14 @@
-import type {
-  BridgeEvent,
-  JsonValue,
-  Vst3ComponentHandlerEventKind,
-  Vst3RestartFlags,
-} from "../client/transport.js";
+import type { BridgeEvent } from "../client/transport.js";
 import type {
   StreamSharedMemoryPumpStatusResult,
   StreamSharedMemoryStatusResult,
 } from "./shared-memory.js";
+import type {
+  InstanceWorkerMetrics,
+  RuntimeCapabilities,
+  RuntimeTailInfo,
+} from "./runtime-diagnostics.js";
+import type { Vst3ParameterInfo } from "./parameters.js";
 
 export interface InstanceCreateOptions {
   pluginId: string;
@@ -16,6 +17,8 @@ export interface InstanceCreateOptions {
   maxBlockFrames: number;
   inputChannels: number;
   outputChannels: number;
+  inputBusIndex?: number;
+  outputBusIndex?: number;
 }
 
 export interface InstanceDescriptor {
@@ -29,6 +32,8 @@ export interface InstanceDescriptor {
   maxBlockFrames: number;
   inputChannels: number;
   outputChannels: number;
+  inputBusIndex?: number;
+  outputBusIndex?: number;
   state:
     | "allocated"
     | "starting"
@@ -56,58 +61,6 @@ export interface InstanceDescriptor {
   tailInfo: RuntimeTailInfo;
 }
 
-export interface RuntimeTailInfo {
-  samples: number;
-  kind: "none" | "finite" | "infinite";
-  finiteSamples?: number;
-}
-
-export interface RuntimeCapabilities {
-  schemaVersion: number;
-  binaryAudioProcess: boolean;
-  componentState: boolean;
-  controller: boolean;
-  controllerState: boolean;
-  parameters: boolean;
-  parameterAutomation: boolean;
-  units: boolean;
-  unitProgramData: boolean;
-  programListData: boolean;
-  unitData: boolean;
-  midiMapping: boolean;
-  outputEvents: boolean;
-  outputParameterChanges: boolean;
-  componentHandlerEvents: boolean;
-  connectionPoints: boolean;
-  processContext: boolean;
-  unavailable?: RuntimeCapabilityDiagnostic[];
-}
-
-export interface RuntimeCapabilityDiagnostic {
-  capability:
-    | "component-state"
-    | "controller"
-    | "controller-state"
-    | "parameters"
-    | "units"
-    | "unit-program-data"
-    | "program-list-data"
-    | "unit-data"
-    | "midi-mapping"
-    | "component-handler-events"
-    | "connection-points"
-    | "process-context"
-    | "output-events"
-    | "output-parameter-changes";
-  reason:
-    | "controller-unavailable"
-    | "interface-unavailable"
-    | "feature-unavailable"
-    | "probe-failed";
-  message?: string;
-  hint: string;
-}
-
 export interface InstanceStatusOptions {
   instanceId: number;
 }
@@ -115,93 +68,6 @@ export interface InstanceStatusOptions {
 export type InstanceUnitsOptions = InstanceStatusOptions;
 
 export type Vst3AudioBusDirection = "input" | "output";
-
-export interface InstanceParametersOptions {
-  instanceId: number;
-}
-
-export interface Vst3ParameterInfo {
-  id: number;
-  title: string | null;
-  shortTitle: string | null;
-  units: string | null;
-  stepCount: number;
-  defaultNormalizedValue: number;
-  unitId: number;
-  flags: Vst3ParameterFlags;
-}
-
-export interface Vst3ParameterFlags {
-  raw: number;
-  canAutomate: boolean;
-  readOnly: boolean;
-  wrapAround: boolean;
-  list: boolean;
-  hidden: boolean;
-  programChange: boolean;
-  bypass: boolean;
-}
-
-export interface InstanceParametersResult {
-  instanceId: number;
-  parameters: Vst3ParameterInfo[];
-}
-
-export interface InstanceParameterGetOptions {
-  instanceId: number;
-  parameterId: number;
-}
-
-export interface InstanceParameterGetResult {
-  instanceId: number;
-  parameterId: number;
-  valueNormalized: number;
-}
-
-export interface InstanceParameterInfoOptions extends InstanceParameterGetOptions {
-  valueNormalized?: number;
-}
-
-export interface InstanceParameterInfoResult extends InstanceParameterGetResult {
-  valuePlain: number | null;
-  valueString: string | null;
-}
-
-export interface InstanceParameterValueByStringOptions extends InstanceParameterGetOptions {
-  value: string;
-}
-
-export type InstanceParameterValueByStringResult = InstanceParameterInfoResult;
-
-export interface InstanceParameterNormalizedByPlainOptions extends InstanceParameterGetOptions {
-  valuePlain: number;
-}
-
-export type InstanceParameterNormalizedByPlainResult = InstanceParameterInfoResult;
-
-export interface InstanceParameterSetOptions extends InstanceParameterGetOptions {
-  valueNormalized: number;
-}
-
-export type InstanceParameterSetResult = InstanceParameterGetResult;
-
-export type InstanceParameterBeginEditOptions = InstanceParameterGetOptions;
-
-export interface InstanceParameterEditResult {
-  instanceId: number;
-  parameterId: number;
-  editKind: "begin-edit" | "perform-edit" | "end-edit";
-  valueNormalized: number | null;
-}
-
-export interface InstanceParameterPerformEditOptions extends InstanceParameterGetOptions {
-  valueNormalized: number;
-}
-
-export type InstanceParameterBeginEditResult = InstanceParameterEditResult;
-export type InstanceParameterPerformEditResult = InstanceParameterEditResult;
-export type InstanceParameterEndEditOptions = InstanceParameterGetOptions;
-export type InstanceParameterEndEditResult = InstanceParameterEditResult;
 
 export interface Vst3UnitMetadata {
   units: Vst3UnitInfoEntry[];
@@ -354,79 +220,6 @@ export type Vst3MessageAttribute =
   | { type: "string"; value: string }
   | { type: "binary"; valueBase64: string };
 
-export interface InstanceWorkerMetrics {
-  ipcVersion: number;
-  instances: number;
-  processingInstances: number;
-  runtime?: InstanceWorkerRuntimeMetrics[];
-  [key: string]: JsonValue | InstanceWorkerRuntimeMetrics[] | undefined;
-}
-
-export interface InstanceWorkerRuntimeMetrics {
-  streamId: number;
-  backend: string;
-  runtimeCapabilities: RuntimeCapabilities;
-  latencySamples: number;
-  tailSamples: number;
-  tailInfo: RuntimeTailInfo;
-  diagnostics?: InstanceWorkerRuntimeDiagnostics;
-}
-
-export interface InstanceWorkerRuntimeDiagnostics {
-  componentHandler?: Vst3ComponentHandlerSnapshot | null;
-  connectionPoints?: Vst3ConnectionPointDiagnostics | null;
-  processContextRequirements?: number;
-  audioBuses?: Vst3WorkerAudioBusDiagnostics | null;
-}
-
-export interface Vst3ConnectionPointDiagnostics {
-  connected: boolean;
-}
-
-export interface Vst3WorkerAudioBusDiagnostics {
-  input?: Vst3WorkerSelectedAudioBus | null;
-  output: Vst3WorkerSelectedAudioBus;
-}
-
-export interface Vst3WorkerSelectedAudioBus {
-  direction: "input" | "output";
-  requestedChannels: number;
-  selectedIndex: number;
-  selected?: Vst3WorkerAudioBusInfo | null;
-  available: Vst3WorkerAudioBusInfo[];
-}
-
-export interface Vst3WorkerAudioBusInfo {
-  index: number;
-  direction: "input" | "output";
-  channelCount: number;
-  busType: Vst3WorkerAudioBusType;
-  defaultActive: boolean;
-  controlVoltage: boolean;
-  name?: string;
-}
-
-export type Vst3WorkerAudioBusType =
-  | { kind: "main" }
-  | { kind: "aux" }
-  | { kind: "unknown"; raw: number };
-
-export interface Vst3ComponentHandlerSnapshot {
-  totalEvents: number;
-  recentEvents: Vst3ComponentHandlerEvent[];
-}
-
-export interface Vst3ComponentHandlerEvent {
-  sequence: number;
-  kind: Vst3ComponentHandlerEventKind;
-  parameterId?: number;
-  valueNormalized?: number;
-  flags?: number;
-  restartFlags?: Vst3RestartFlags;
-  dirty?: boolean;
-  editorName?: string;
-}
-
 export interface InstanceStatusResult {
   instance: InstanceDescriptor;
   worker: InstanceWorkerMetrics;
@@ -487,14 +280,6 @@ export interface InstanceDestroyResult {
 
 export interface StreamLifecycleOptions {
   instanceId: number;
-}
-
-export interface InstanceParameterEditOptions extends InstanceParameterSetOptions {}
-
-export interface InstanceParameterEditAggregateResult extends InstanceParameterSetResult {
-  beginEdit: InstanceParameterBeginEditResult | null;
-  performEdit: InstanceParameterPerformEditResult | null;
-  endEdit: InstanceParameterEndEditResult | null;
 }
 
 export interface InstanceRefreshRequestOptions {

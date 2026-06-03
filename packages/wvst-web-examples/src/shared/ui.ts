@@ -20,6 +20,20 @@ export function readInteger(id: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+export function readOptionalInteger(id: string): number | undefined {
+  const raw = element<HTMLInputElement>(id).value.trim();
+  if (raw.length === 0) {
+    return undefined;
+  }
+
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`#${id} must be a non-negative integer`);
+  }
+
+  return value;
+}
+
 export function setStatus(message: string, kind: "idle" | "ok" | "error" = "idle"): void {
   const status = element<HTMLDivElement>("status");
   status.textContent = message;

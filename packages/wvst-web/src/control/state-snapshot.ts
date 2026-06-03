@@ -14,6 +14,8 @@ export interface WVSTInstanceStateSnapshot {
   maxBlockFrames?: number;
   inputChannels?: number;
   outputChannels?: number;
+  inputBusIndex?: number;
+  outputBusIndex?: number;
   componentStateBase64: string | null;
   controllerStateBase64: string | null;
 }
@@ -35,6 +37,8 @@ export function createWVSTInstanceStateSnapshot(
     maxBlockFrames: descriptor?.maxBlockFrames,
     inputChannels: descriptor?.inputChannels,
     outputChannels: descriptor?.outputChannels,
+    inputBusIndex: descriptor?.inputBusIndex,
+    outputBusIndex: descriptor?.outputBusIndex,
     componentStateBase64: state.componentStateBase64,
     controllerStateBase64: state.controllerStateBase64,
   };
@@ -92,6 +96,13 @@ export function checkWVSTInstanceStateSnapshotCompatibility(
   );
   checkNumberField(reasons, "inputChannels", snapshot.inputChannels, descriptor.inputChannels);
   checkNumberField(reasons, "outputChannels", snapshot.outputChannels, descriptor.outputChannels);
+  checkNumberField(reasons, "inputBusIndex", snapshot.inputBusIndex, descriptor.inputBusIndex);
+  checkNumberField(
+    reasons,
+    "outputBusIndex",
+    snapshot.outputBusIndex,
+    descriptor.outputBusIndex,
+  );
 
   return {
     compatible: reasons.length === 0,
@@ -114,8 +125,12 @@ function checkNumberField(
   reasons: string[],
   field: string,
   expected: number | undefined,
-  actual: number,
+  actual: number | undefined,
 ): void {
+  if (expected !== undefined && actual === undefined) {
+    reasons.push(`${field} mismatch: expected ${expected}, got unset`);
+    return;
+  }
   if (expected !== undefined && expected !== actual) {
     reasons.push(`${field} mismatch: expected ${expected}, got ${actual}`);
   }

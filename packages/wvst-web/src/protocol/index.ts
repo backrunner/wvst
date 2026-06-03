@@ -5,7 +5,40 @@ import {
   vst3OutputEventPayloadBytes,
   type Vst3OutputEvent,
 } from "./vst3-output-events.js";
+import {
+  MIDI_EVENT_BYTES,
+  decodeMidiEvents,
+  encodeMidiEvents,
+  midiEventPayloadBytes,
+  type MidiEvent,
+} from "./midi-events.js";
+import {
+  PARAMETER_AUTOMATION_EVENT_BYTES,
+  decodeParameterAutomationEvents,
+  encodeParameterAutomationEvents,
+  parameterAutomationEventPayloadBytes,
+  type ParameterAutomationEvent,
+} from "./parameter-events.js";
 
+export {
+  MIDI_EVENT_BYTES,
+  MidiEventKind,
+  decodeMidiEvent,
+  decodeMidiEvents,
+  encodeMidiEvent,
+  encodeMidiEvents,
+  midiEventPayloadBytes,
+} from "./midi-events.js";
+export type { MidiEvent } from "./midi-events.js";
+export {
+  PARAMETER_AUTOMATION_EVENT_BYTES,
+  decodeParameterAutomationEvent,
+  decodeParameterAutomationEvents,
+  encodeParameterAutomationEvent,
+  encodeParameterAutomationEvents,
+  parameterAutomationEventPayloadBytes,
+} from "./parameter-events.js";
+export type { ParameterAutomationEvent } from "./parameter-events.js";
 export {
   VST3_OUTPUT_EVENT_BYTES,
   VST3_OUTPUT_EVENT_FIXED_FIELDS_BYTES,
@@ -25,8 +58,6 @@ export type { Vst3OutputEvent } from "./vst3-output-events.js";
 export const AUDIO_FRAME_MAGIC = 0x54535657;
 export const AUDIO_FRAME_VERSION = 1;
 export const AUDIO_FRAME_HEADER_BYTES = 56;
-export const MIDI_EVENT_BYTES = 16;
-export const PARAMETER_AUTOMATION_EVENT_BYTES = 16;
 
 export enum AudioSampleFormat {
   F32Le = 1,
@@ -53,33 +84,6 @@ export interface AudioFrameHeader {
   eventCount: number;
   parameterEventCount?: number;
   vst3OutputEventCount?: number;
-}
-
-export enum MidiEventKind {
-  NoteOn = 1,
-  NoteOff = 2,
-  ControlChange = 3,
-  PitchBend = 4,
-  ChannelAftertouch = 5,
-  PolyAftertouch = 6,
-  RawMidi = 255,
-}
-
-export interface MidiEvent {
-  sampleOffset: number;
-  kind: MidiEventKind;
-  channel: number;
-  data1: number;
-  data2: number;
-  data3?: number;
-  dataLength?: number;
-  noteId?: number;
-}
-
-export interface ParameterAutomationEvent {
-  sampleOffset: number;
-  parameterId: number;
-  valueNormalized: number;
 }
 
 export function encodeAudioFrameHeader(header: AudioFrameHeader): ArrayBuffer {
@@ -272,204 +276,6 @@ export function decodeAudioFrame(buffer: ArrayBuffer): DecodedAudioFrame {
 
 export function audioPayloadBytes(header: AudioFrameHeader): number {
   return checkedU32(header.frames * header.channels * 4, "audio payload bytes");
-}
-
-export function midiEventPayloadBytes(eventCount: number): number {
-  return checkedU32(eventCount * MIDI_EVENT_BYTES, "MIDI event payload bytes");
-}
-
-export function parameterAutomationEventPayloadBytes(eventCount: number): number {
-  return checkedU32(
-    eventCount * PARAMETER_AUTOMATION_EVENT_BYTES,
-    "parameter automation event payload bytes",
-  );
-}
-
-export function encodeMidiEvent(event: MidiEvent): ArrayBuffer {
-  validateMidiEvent(event);
-  const buffer = new ArrayBuffer(MIDI_EVENT_BYTES);
-  const view = new DataView(buffer);
-
-  view.setUint16(0, event.sampleOffset, true);
-  view.setUint8(2, event.kind);
-  view.setUint8(3, event.channel);
-  view.setUint8(4, event.data1);
-  view.setUint8(5, event.data2);
-  view.setUint8(6, event.data3 ?? 0);
-  view.setUint8(7, event.dataLength ?? defaultMidiDataLength(event.kind));
-  view.setUint32(8, event.noteId ?? 0, true);
-
-  return buffer;
-}
-
-export function decodeMidiEvent(buffer: ArrayBufferLike): MidiEvent {
-  if (buffer.byteLength < MIDI_EVENT_BYTES) {
-    throw new Error(`WVST MIDI event requires ${MIDI_EVENT_BYTES} bytes`);
-  }
-
-  const view = new DataView(buffer, 0, MIDI_EVENT_BYTES);
-  const event: MidiEvent = {
-    sampleOffset: view.getUint16(0, true),
-    kind: view.getUint8(2),
-    channel: view.getUint8(3),
-    data1: view.getUint8(4),
-    data2: view.getUint8(5),
-    data3: view.getUint8(6),
-    dataLength: view.getUint8(7),
-    noteId: view.getUint32(8, true),
-  };
-  validateMidiEvent(event);
-  return event;
-}
-
-export function encodeMidiEvents(events: MidiEvent[]): ArrayBuffer {
-  const payload = new Uint8Array(midiEventPayloadBytes(events.length));
-
-  for (let index = 0; index < events.length; index += 1) {
-    payload.set(new Uint8Array(encodeMidiEvent(events[index])), index * MIDI_EVENT_BYTES);
-  }
-
-  return payload.buffer;
-}
-
-export function decodeMidiEvents(
-  payload: ArrayBufferLike,
-  eventCount: number,
-): MidiEvent[] {
-  const expectedBytes = midiEventPayloadBytes(eventCount);
-  if (payload.byteLength !== expectedBytes) {
-    throw new Error(
-      `WVST MIDI event payload length mismatch: expected ${expectedBytes}, got ${payload.byteLength}`,
-    );
-  }
-
-  const events: MidiEvent[] = [];
-  for (let offset = 0; offset < expectedBytes; offset += MIDI_EVENT_BYTES) {
-    events.push(decodeMidiEvent(payload.slice(offset, offset + MIDI_EVENT_BYTES)));
-  }
-
-  return events;
-}
-
-export function encodeParameterAutomationEvent(
-  event: ParameterAutomationEvent,
-): ArrayBuffer {
-  validateParameterAutomationEvent(event);
-  const buffer = new ArrayBuffer(PARAMETER_AUTOMATION_EVENT_BYTES);
-  const view = new DataView(buffer);
-
-  view.setUint16(0, event.sampleOffset, true);
-  view.setUint32(4, event.parameterId, true);
-  view.setFloat64(8, event.valueNormalized, true);
-
-  return buffer;
-}
-
-export function decodeParameterAutomationEvent(
-  buffer: ArrayBufferLike,
-): ParameterAutomationEvent {
-  if (buffer.byteLength < PARAMETER_AUTOMATION_EVENT_BYTES) {
-    throw new Error(
-      `WVST parameter automation event requires ${PARAMETER_AUTOMATION_EVENT_BYTES} bytes`,
-    );
-  }
-
-  const view = new DataView(buffer, 0, PARAMETER_AUTOMATION_EVENT_BYTES);
-  const event: ParameterAutomationEvent = {
-    sampleOffset: view.getUint16(0, true),
-    parameterId: view.getUint32(4, true),
-    valueNormalized: view.getFloat64(8, true),
-  };
-  validateParameterAutomationEvent(event);
-  return event;
-}
-
-export function encodeParameterAutomationEvents(
-  events: ParameterAutomationEvent[],
-): ArrayBuffer {
-  const payload = new Uint8Array(parameterAutomationEventPayloadBytes(events.length));
-
-  for (let index = 0; index < events.length; index += 1) {
-    payload.set(
-      new Uint8Array(encodeParameterAutomationEvent(events[index])),
-      index * PARAMETER_AUTOMATION_EVENT_BYTES,
-    );
-  }
-
-  return payload.buffer;
-}
-
-export function decodeParameterAutomationEvents(
-  payload: ArrayBufferLike,
-  eventCount: number,
-): ParameterAutomationEvent[] {
-  const expectedBytes = parameterAutomationEventPayloadBytes(eventCount);
-  if (payload.byteLength !== expectedBytes) {
-    throw new Error(
-      `WVST parameter automation event payload length mismatch: expected ${expectedBytes}, got ${payload.byteLength}`,
-    );
-  }
-
-  const events: ParameterAutomationEvent[] = [];
-  for (
-    let offset = 0;
-    offset < expectedBytes;
-    offset += PARAMETER_AUTOMATION_EVENT_BYTES
-  ) {
-    events.push(
-      decodeParameterAutomationEvent(
-        payload.slice(offset, offset + PARAMETER_AUTOMATION_EVENT_BYTES),
-      ),
-    );
-  }
-
-  return events;
-}
-
-function validateMidiEvent(event: MidiEvent): void {
-  if (!Number.isInteger(event.sampleOffset) || event.sampleOffset < 0 || event.sampleOffset > 0xffff) {
-    throw new Error(`invalid WVST MIDI sample offset: ${event.sampleOffset}`);
-  }
-  if (!Object.values(MidiEventKind).includes(event.kind)) {
-    throw new Error(`invalid WVST MIDI event kind: ${event.kind}`);
-  }
-  if (!Number.isInteger(event.channel) || event.channel < 0 || event.channel > 15) {
-    throw new Error(`invalid WVST MIDI channel: ${event.channel}`);
-  }
-  validateMidiByte("data1", event.data1, event.kind === MidiEventKind.RawMidi);
-  validateMidiByte("data2", event.data2, event.kind === MidiEventKind.RawMidi);
-  validateMidiByte("data3", event.data3 ?? 0, event.kind === MidiEventKind.RawMidi);
-  const dataLength = event.dataLength ?? defaultMidiDataLength(event.kind);
-  if (!Number.isInteger(dataLength) || dataLength < 1 || dataLength > 3) {
-    throw new Error(`invalid WVST MIDI data length: ${dataLength}`);
-  }
-}
-
-function validateParameterAutomationEvent(event: ParameterAutomationEvent): void {
-  if (!Number.isInteger(event.sampleOffset) || event.sampleOffset < 0 || event.sampleOffset > 0xffff) {
-    throw new Error(`invalid WVST parameter sample offset: ${event.sampleOffset}`);
-  }
-  if (!Number.isInteger(event.parameterId) || event.parameterId < 0 || event.parameterId > 0xffffffff) {
-    throw new Error(`invalid WVST parameter id: ${event.parameterId}`);
-  }
-  if (
-    !Number.isFinite(event.valueNormalized) ||
-    event.valueNormalized < 0 ||
-    event.valueNormalized > 1
-  ) {
-    throw new Error(`invalid WVST normalized parameter value: ${event.valueNormalized}`);
-  }
-}
-
-function validateMidiByte(name: string, value: number, rawMidi: boolean): void {
-  const max = rawMidi ? 0xff : 0x7f;
-  if (!Number.isInteger(value) || value < 0 || value > max) {
-    throw new Error(`invalid WVST MIDI ${name}: ${value}`);
-  }
-}
-
-function defaultMidiDataLength(kind: MidiEventKind): number {
-  return kind === MidiEventKind.RawMidi ? 3 : 2;
 }
 
 function checkedU32(value: number, label: string): number {

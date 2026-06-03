@@ -1,7 +1,10 @@
 import type * as Control from "./instance-control.js";
+import type * as Parameters from "./parameters.js";
 import type * as Shared from "./shared-memory.js";
 
 export * from "./instance-control.js";
+export * from "./parameters.js";
+export * from "./runtime-diagnostics.js";
 export * from "./shared-memory.js";
 
 export interface InstanceApi {
@@ -17,28 +20,28 @@ export interface InstanceApi {
   restart(options: Control.InstanceRestartOptions): Promise<Control.InstanceRestartResult>;
   start(options: Control.InstanceProcessingOptions): Promise<Control.InstanceProcessingResult>;
   stop(options: Control.InstanceProcessingOptions): Promise<Control.InstanceProcessingResult>;
-  parameters(options: Control.InstanceParametersOptions): Promise<Control.InstanceParametersResult>;
-  parameterGet(options: Control.InstanceParameterGetOptions): Promise<Control.InstanceParameterGetResult>;
-  parameterInfo(options: Control.InstanceParameterInfoOptions): Promise<Control.InstanceParameterInfoResult>;
+  parameters(options: Parameters.InstanceParametersOptions): Promise<Parameters.InstanceParametersResult>;
+  parameterGet(options: Parameters.InstanceParameterGetOptions): Promise<Parameters.InstanceParameterGetResult>;
+  parameterInfo(options: Parameters.InstanceParameterInfoOptions): Promise<Parameters.InstanceParameterInfoResult>;
   parameterValueByString(
-    options: Control.InstanceParameterValueByStringOptions,
-  ): Promise<Control.InstanceParameterValueByStringResult>;
+    options: Parameters.InstanceParameterValueByStringOptions,
+  ): Promise<Parameters.InstanceParameterValueByStringResult>;
   parameterNormalizedByPlain(
-    options: Control.InstanceParameterNormalizedByPlainOptions,
-  ): Promise<Control.InstanceParameterNormalizedByPlainResult>;
-  parameterSet(options: Control.InstanceParameterSetOptions): Promise<Control.InstanceParameterSetResult>;
+    options: Parameters.InstanceParameterNormalizedByPlainOptions,
+  ): Promise<Parameters.InstanceParameterNormalizedByPlainResult>;
+  parameterSet(options: Parameters.InstanceParameterSetOptions): Promise<Parameters.InstanceParameterSetResult>;
   parameterBeginEdit(
-    options: Control.InstanceParameterBeginEditOptions,
-  ): Promise<Control.InstanceParameterBeginEditResult>;
+    options: Parameters.InstanceParameterBeginEditOptions,
+  ): Promise<Parameters.InstanceParameterBeginEditResult>;
   parameterPerformEdit(
-    options: Control.InstanceParameterPerformEditOptions,
-  ): Promise<Control.InstanceParameterPerformEditResult>;
+    options: Parameters.InstanceParameterPerformEditOptions,
+  ): Promise<Parameters.InstanceParameterPerformEditResult>;
   parameterEndEdit(
-    options: Control.InstanceParameterEndEditOptions,
-  ): Promise<Control.InstanceParameterEndEditResult>;
+    options: Parameters.InstanceParameterEndEditOptions,
+  ): Promise<Parameters.InstanceParameterEndEditResult>;
   parameterEdit(
-    options: Control.InstanceParameterEditOptions,
-  ): Promise<Control.InstanceParameterEditAggregateResult>;
+    options: Parameters.InstanceParameterEditOptions,
+  ): Promise<Parameters.InstanceParameterEditAggregateResult>;
   units(options: Control.InstanceUnitsOptions): Promise<Control.InstanceUnitsResult>;
   selectUnit(options: Control.InstanceSelectUnitOptions): Promise<Control.InstanceSelectUnitResult>;
   unitByBus(options: Control.InstanceUnitByBusOptions): Promise<Control.InstanceUnitByBusResult>;
