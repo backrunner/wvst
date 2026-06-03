@@ -12,6 +12,7 @@ use crate::host_worker::{HostWorkerClient, HostWorkerError};
 use crate::instance_registry::{InstanceError, InstanceRegistry};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
+use crate::stream_shared_memory::SharedMemoryStreamRegistry;
 use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorError};
 
 pub(crate) struct ControlContext<'a> {
@@ -24,6 +25,7 @@ pub(crate) struct ControlContext<'a> {
     pub(crate) plugins: &'a PluginRegistry,
     pub(crate) stream_tracker: &'a AudioStreamTracker,
     pub(crate) audio_in_flight: &'a AudioInFlightLimiter,
+    pub(crate) shared_memory: &'a SharedMemoryStreamRegistry,
     pub(crate) origin: Option<&'a str>,
     pub(crate) session_authorized: bool,
     pub(crate) workers: &'a WorkerSupervisor,
@@ -452,6 +454,22 @@ pub(crate) async fn handle_control_text(
             control_instances::handle_stream_close(request.id, request.params, context).await,
             session_authorized,
         ),
+        "stream.sharedMemory.create" => ControlResponse::new(
+            control_stream_shared_memory::handle_stream_shared_memory_create(
+                request.id,
+                request.params,
+                context,
+            ),
+            session_authorized,
+        ),
+        "stream.sharedMemory.destroy" => ControlResponse::new(
+            control_stream_shared_memory::handle_stream_shared_memory_destroy(
+                request.id,
+                request.params,
+                context,
+            ),
+            session_authorized,
+        ),
         _ => ControlResponse::new(
             response_error(
                 request.id,
@@ -674,3 +692,6 @@ mod control_instances;
 
 #[path = "control_instance_units.rs"]
 mod control_instance_units;
+
+#[path = "control_stream_shared_memory.rs"]
+mod control_stream_shared_memory;

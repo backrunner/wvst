@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod plugin_registry;
 pub mod runtime_capabilities;
 pub mod server;
+pub mod stream_shared_memory;
 pub mod worker_supervisor;
 
 pub use config::BridgeConfig;

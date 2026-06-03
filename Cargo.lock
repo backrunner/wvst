@@ -750,6 +750,8 @@ dependencies = [
  "wvst-process-supervision",
  "wvst-protocol",
  "wvst-scanner",
+ "wvst-shm-mmap",
+ "wvst-shm-transport",
 ]
 
 [[package]]

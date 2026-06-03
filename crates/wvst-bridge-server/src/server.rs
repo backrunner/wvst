@@ -25,6 +25,7 @@ use crate::host_worker::HostWorkerClient;
 use crate::instance_registry::{InstanceRecord, InstanceRegistry, InstanceState, StreamState};
 use crate::metrics::{BridgeMetrics, BridgeMetricsHandle};
 use crate::plugin_registry::PluginRegistry;
+use crate::stream_shared_memory::SharedMemoryStreamRegistry;
 use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorOptions};
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,7 @@ struct BridgeState {
     plugins: Arc<PluginRegistry>,
     stream_tracker: Arc<AudioStreamTracker>,
     audio_in_flight: Arc<AudioInFlightLimiter>,
+    shared_memory: Arc<SharedMemoryStreamRegistry>,
     workers: Arc<WorkerSupervisor>,
 }
 
@@ -92,6 +94,7 @@ impl BridgeServer {
                 plugins: Arc::new(PluginRegistry::new()),
                 stream_tracker: Arc::new(AudioStreamTracker::new()),
                 audio_in_flight: Arc::new(AudioInFlightLimiter::new()),
+                shared_memory: Arc::new(SharedMemoryStreamRegistry::new()),
                 workers: Arc::new(workers),
             },
         })
@@ -257,6 +260,7 @@ where
                     plugins: &state.plugins,
                     stream_tracker: &state.stream_tracker,
                     audio_in_flight: &state.audio_in_flight,
+                    shared_memory: &state.shared_memory,
                     origin,
                     session_authorized,
                     workers: &state.workers,

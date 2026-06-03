@@ -19,6 +19,8 @@ wvst-core = { path = "../wvst-core" }
 wvst-process-supervision = { path = "../wvst-process-supervision" }
 wvst-protocol = { path = "../wvst-protocol" }
 wvst-scanner = { path = "../wvst-scanner" }
+wvst-shm-mmap = { path = "../wvst-shm-mmap" }
+wvst-shm-transport = { path = "../wvst-shm-transport" }
 
 [lib]
 path = "src/lib.rs"

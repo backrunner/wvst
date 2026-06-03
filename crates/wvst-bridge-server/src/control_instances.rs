@@ -198,6 +198,9 @@ pub async fn handle_instance_destroy(
         .component_handler_events
         .reset_instance(params.instance_id);
     let _ = context.workers.destroy_instance(params.instance_id).await;
+    let _ = context
+        .shared_memory
+        .destroy_by_instance(params.instance_id);
 
     match context.instances.destroy(params) {
         Ok(result) => {
@@ -1404,6 +1407,7 @@ pub async fn handle_stream_close(id: Value, params: Value, context: ControlConte
                 .audio_in_flight
                 .wait_until_idle(record.stream_id, STREAM_CLOSE_DRAIN_TIMEOUT)
                 .await;
+            let _ = context.shared_memory.destroy_by_stream_id(record.stream_id);
             context.stream_tracker.reset(record.stream_id);
             context.events.emit(BridgeEventKind::StreamClosed {
                 instance_id: record.instance_id,

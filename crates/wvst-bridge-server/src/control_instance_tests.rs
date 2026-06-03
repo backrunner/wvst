@@ -13,6 +13,7 @@ use crate::instance_registry::{
 };
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
+use crate::stream_shared_memory::SharedMemoryStreamRegistry;
 use crate::worker_supervisor::WorkerSupervisor;
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -28,6 +29,7 @@ struct RequestContext<'a> {
     plugins: &'a PluginRegistry,
     stream_tracker: &'a AudioStreamTracker,
     audio_in_flight: &'a AudioInFlightLimiter,
+    shared_memory: &'a SharedMemoryStreamRegistry,
     workers: &'a WorkerSupervisor,
 }
 
@@ -43,6 +45,7 @@ async fn creates_lists_and_destroys_instance() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = SharedMemoryStreamRegistry::new();
     let worker_path = serve_worker_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -55,6 +58,7 @@ async fn creates_lists_and_destroys_instance() {
         plugins: &plugins,
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
         workers: &workers,
     };
 
@@ -567,6 +571,56 @@ async fn creates_lists_and_destroys_instance() {
     let open_stream_value = request_json(&open_stream_request, context).await;
     assert_eq!(open_stream_value["result"]["streamState"], "open");
 
+    let shared_memory_request = serde_json::json!({
+        "id": 75,
+        "method": "stream.sharedMemory.create",
+        "params": { "instanceId": instance_id, "capacityBlocks": 3 }
+    })
+    .to_string();
+    let shared_memory_value = request_json(&shared_memory_request, context).await;
+    assert_eq!(shared_memory_value["result"]["schemaVersion"], 1);
+    assert_eq!(
+        shared_memory_value["result"]["transport"],
+        "file-backed-mmap"
+    );
+    assert_eq!(shared_memory_value["result"]["instanceId"], instance_id);
+    assert_eq!(shared_memory_value["result"]["streamId"], stream_id);
+    assert_eq!(
+        shared_memory_value["result"]["layout"]["config"]["capacityBlocks"],
+        3
+    );
+    assert_eq!(
+        shared_memory_value["result"]["descriptorBytes"]
+            .as_array()
+            .expect("descriptor bytes")
+            .len(),
+        usize::from(wvst_shm_transport::SHARED_AUDIO_DESCRIPTOR_BYTES)
+    );
+    let first_shared_memory_path = PathBuf::from(
+        shared_memory_value["result"]["path"]
+            .as_str()
+            .expect("shared memory path"),
+    );
+    assert!(first_shared_memory_path.exists());
+
+    let destroy_shared_memory_request = serde_json::json!({
+        "id": 76,
+        "method": "stream.sharedMemory.destroy",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let destroy_shared_memory_value = request_json(&destroy_shared_memory_request, context).await;
+    assert_eq!(destroy_shared_memory_value["result"]["destroyed"], true);
+    assert!(!first_shared_memory_path.exists());
+
+    let shared_memory_again_value = request_json(&shared_memory_request, context).await;
+    let shared_memory_path = PathBuf::from(
+        shared_memory_again_value["result"]["path"]
+            .as_str()
+            .expect("shared memory path"),
+    );
+    assert!(shared_memory_path.exists());
+
     let start_request = serde_json::json!({
         "id": 6,
         "method": "instance.start",
@@ -611,6 +665,7 @@ async fn creates_lists_and_destroys_instance() {
     let destroy_value = request_json(&destroy_request, context).await;
     assert_eq!(destroy_value["result"]["state"], "destroyed");
     assert!(instances.list().is_empty());
+    assert!(!shared_memory_path.exists());
     let destroy_events_value =
         request_json(r#"{"id":74,"method":"bridge.events","params":{}}"#, context).await;
     let destroy_events = destroy_events_value["result"]["events"]
@@ -667,6 +722,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = SharedMemoryStreamRegistry::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -679,6 +735,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         plugins: &plugins,
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
         workers: &workers,
     };
 
@@ -717,6 +774,7 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = SharedMemoryStreamRegistry::new();
     let worker_path = serve_worker_script();
     let workers = WorkerSupervisor::with_options(
         crate::worker_supervisor::WorkerSupervisorOptions::new(worker_path.clone())
@@ -735,6 +793,7 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
         plugins: &plugins,
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
         workers: &workers,
     };
 
@@ -784,6 +843,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = SharedMemoryStreamRegistry::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -796,6 +856,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
         plugins: &plugins,
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
         workers: &workers,
     };
 
@@ -889,6 +950,7 @@ async fn emits_recovery_failed_when_auto_restart_recreate_fails() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = SharedMemoryStreamRegistry::new();
     let worker_path = serve_worker_rejects_recreate_after_metrics_exit_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -901,6 +963,7 @@ async fn emits_recovery_failed_when_auto_restart_recreate_fails() {
         plugins: &plugins,
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
         workers: &workers,
     };
 
@@ -960,6 +1023,7 @@ async fn restarts_failed_instance_with_same_stream() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = SharedMemoryStreamRegistry::new();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
     let context = RequestContext {
@@ -972,6 +1036,7 @@ async fn restarts_failed_instance_with_same_stream() {
         plugins: &plugins,
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
         workers: &workers,
     };
 
@@ -1066,6 +1131,7 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
     let plugin = plugins.find(&plugin_id).expect("plugin");
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = SharedMemoryStreamRegistry::new();
     let workers = WorkerSupervisor::new_for_test(
         PathBuf::from("missing-wvst-host-worker"),
         Duration::from_secs(5),
@@ -1083,6 +1149,11 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
             &plugin,
         )
         .expect("instance");
+    let shared_memory_descriptor = shared_memory
+        .create_for_instance(&record, Some(2))
+        .expect("shared memory");
+    let shared_memory_path = PathBuf::from(&shared_memory_descriptor.path);
+    assert!(shared_memory_path.exists());
     let guard = audio_in_flight
         .try_acquire(record.stream_id)
         .expect("in-flight stream");
@@ -1096,6 +1167,7 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
         plugins: &plugins,
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
         workers: &workers,
     };
     let close_request = serde_json::json!({
@@ -1114,6 +1186,7 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
     let close_value = close.await;
 
     assert_eq!(close_value["result"]["streamState"], "closed");
+    assert!(!shared_memory_path.exists());
     assert_eq!(
         instances
             .get(record.instance_id)
@@ -1178,6 +1251,7 @@ async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
             origin: None,
             stream_tracker: context.stream_tracker,
             audio_in_flight: context.audio_in_flight,
+            shared_memory: context.shared_memory,
             session_authorized: true,
             workers: context.workers,
         },
