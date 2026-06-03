@@ -21,6 +21,10 @@ pub enum ProtocolError {
     InvalidMidiChannel(u8),
     InvalidMidiData { field: &'static str, value: u8 },
     InvalidParameterValue(f64),
+    InvalidVst3OutputEventKind(u8),
+    InvalidVst3OutputEventValue(f64),
+    InvalidVst3OutputEventPayloadLength(u16),
+    InvalidVst3OutputEventPayloadEncoding(u8),
     InvalidPayloadLength { expected: u32, actual: u32 },
     PayloadTooLarge,
     InvalidCoreValue(String),
@@ -83,6 +87,24 @@ impl Display for ProtocolError {
             }
             Self::InvalidParameterValue(value) => {
                 write!(formatter, "invalid normalized parameter value: {value}")
+            }
+            Self::InvalidVst3OutputEventKind(value) => {
+                write!(formatter, "invalid VST3 output event kind: {value}")
+            }
+            Self::InvalidVst3OutputEventValue(value) => {
+                write!(formatter, "invalid VST3 output event value: {value}")
+            }
+            Self::InvalidVst3OutputEventPayloadLength(value) => {
+                write!(
+                    formatter,
+                    "invalid VST3 output event payload length: {value}"
+                )
+            }
+            Self::InvalidVst3OutputEventPayloadEncoding(value) => {
+                write!(
+                    formatter,
+                    "invalid VST3 output event payload encoding: {value}"
+                )
             }
             Self::InvalidPayloadLength { expected, actual } => {
                 write!(

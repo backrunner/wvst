@@ -2,7 +2,7 @@ use std::ops::{BitOr, BitOrAssign};
 
 use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId, audio::MAX_CHANNEL_COUNT};
 
-use crate::{MIDI_EVENT_LEN, PARAMETER_AUTOMATION_EVENT_LEN, ProtocolError};
+use crate::{MIDI_EVENT_LEN, PARAMETER_AUTOMATION_EVENT_LEN, ProtocolError, VST3_OUTPUT_EVENT_LEN};
 
 pub const AUDIO_FRAME_MAGIC: u32 = u32::from_le_bytes(*b"WVST");
 pub const AUDIO_FRAME_VERSION: u16 = 1;
@@ -109,6 +109,7 @@ pub struct AudioFrameHeader {
     pub flags: AudioFrameFlags,
     pub event_count: u16,
     pub parameter_event_count: u16,
+    pub vst3_output_event_count: u16,
     pub payload_len: u32,
 }
 
@@ -154,6 +155,7 @@ impl AudioFrameHeader {
             flags,
             event_count: 0,
             parameter_event_count: 0,
+            vst3_output_event_count: 0,
             payload_len,
         })
     }
@@ -182,6 +184,7 @@ impl AudioFrameHeader {
         put_u16(destination, 46, self.flags.bits());
         put_u16(destination, 48, self.event_count);
         put_u16(destination, 50, self.parameter_event_count);
+        put_u16(destination, 52, self.vst3_output_event_count);
 
         Ok(AUDIO_FRAME_HEADER_LEN)
     }
@@ -216,8 +219,14 @@ impl AudioFrameHeader {
         let format = AudioSampleFormat::try_from(source[44])?;
         let event_count = read_u16(source, 48);
         let parameter_event_count = read_u16(source, 50);
-        let expected_payload_len =
-            expected_payload_len(frames, channels, event_count, parameter_event_count)?;
+        let vst3_output_event_count = read_u16(source, 52);
+        let expected_payload_len = expected_payload_len(
+            frames,
+            channels,
+            event_count,
+            parameter_event_count,
+            vst3_output_event_count,
+        )?;
 
         if payload_len != expected_payload_len {
             return Err(ProtocolError::InvalidPayloadLength {
@@ -237,6 +246,7 @@ impl AudioFrameHeader {
             flags: AudioFrameFlags::from_bits(read_u16(source, 46)),
             event_count,
             parameter_event_count,
+            vst3_output_event_count,
             payload_len,
         })
     }
@@ -253,17 +263,43 @@ impl AudioFrameHeader {
     }
 
     pub fn with_event_counts(
-        mut self,
+        self,
         event_count: u16,
         parameter_event_count: u16,
     ) -> Result<Self, ProtocolError> {
+        self.with_all_event_counts(
+            event_count,
+            parameter_event_count,
+            self.vst3_output_event_count,
+        )
+    }
+
+    pub fn with_vst3_output_event_count(
+        self,
+        vst3_output_event_count: u16,
+    ) -> Result<Self, ProtocolError> {
+        self.with_all_event_counts(
+            self.event_count,
+            self.parameter_event_count,
+            vst3_output_event_count,
+        )
+    }
+
+    pub fn with_all_event_counts(
+        mut self,
+        event_count: u16,
+        parameter_event_count: u16,
+        vst3_output_event_count: u16,
+    ) -> Result<Self, ProtocolError> {
         self.event_count = event_count;
         self.parameter_event_count = parameter_event_count;
+        self.vst3_output_event_count = vst3_output_event_count;
         self.payload_len = expected_payload_len(
             self.frames,
             self.channels,
             event_count,
             parameter_event_count,
+            vst3_output_event_count,
         )?;
         Ok(self)
     }
@@ -275,6 +311,7 @@ impl AudioFrameHeader {
     pub fn event_payload_len(self) -> Result<u32, ProtocolError> {
         self.midi_event_payload_len()?
             .checked_add(self.parameter_event_payload_len()?)
+            .and_then(|value| value.checked_add(self.vst3_output_event_payload_len().ok()?))
             .ok_or(ProtocolError::PayloadTooLarge)
     }
 
@@ -285,6 +322,10 @@ impl AudioFrameHeader {
     pub fn parameter_event_payload_len(self) -> Result<u32, ProtocolError> {
         parameter_event_payload_len(self.parameter_event_count)
     }
+
+    pub fn vst3_output_event_payload_len(self) -> Result<u32, ProtocolError> {
+        vst3_output_event_payload_len(self.vst3_output_event_count)
+    }
 }
 
 fn expected_payload_len(
@@ -292,14 +333,17 @@ fn expected_payload_len(
     channels: AudioFrameChannelCount,
     event_count: u16,
     parameter_event_count: u16,
+    vst3_output_event_count: u16,
 ) -> Result<u32, ProtocolError> {
     let audio_payload_len = f32_audio_payload_len(frames, channels)?;
     let event_payload_len = midi_event_payload_len(event_count)?;
     let parameter_event_payload_len = parameter_event_payload_len(parameter_event_count)?;
+    let vst3_output_event_payload_len = vst3_output_event_payload_len(vst3_output_event_count)?;
 
     audio_payload_len
         .checked_add(event_payload_len)
         .and_then(|value| value.checked_add(parameter_event_payload_len))
+        .and_then(|value| value.checked_add(vst3_output_event_payload_len))
         .ok_or(ProtocolError::PayloadTooLarge)
 }
 
@@ -323,6 +367,12 @@ fn midi_event_payload_len(event_count: u16) -> Result<u32, ProtocolError> {
 fn parameter_event_payload_len(event_count: u16) -> Result<u32, ProtocolError> {
     u32::from(event_count)
         .checked_mul(PARAMETER_AUTOMATION_EVENT_LEN as u32)
+        .ok_or(ProtocolError::PayloadTooLarge)
+}
+
+fn vst3_output_event_payload_len(event_count: u16) -> Result<u32, ProtocolError> {
+    u32::from(event_count)
+        .checked_mul(VST3_OUTPUT_EVENT_LEN as u32)
         .ok_or(ProtocolError::PayloadTooLarge)
 }
 
@@ -454,6 +504,29 @@ mod tests {
             header.audio_payload_len().expect("audio payload")
                 + (MIDI_EVENT_LEN * 2) as u32
                 + (PARAMETER_AUTOMATION_EVENT_LEN * 3) as u32
+        );
+        assert_eq!(AudioFrameHeader::decode(&bytes), Ok(header));
+    }
+
+    #[test]
+    fn vst3_output_event_count_extends_payload_length() {
+        let header = test_header()
+            .with_all_event_counts(2, 3, 4)
+            .expect("vst3 output payload");
+        let mut bytes = [0; AUDIO_FRAME_HEADER_LEN];
+
+        header.encode(&mut bytes).expect("header encodes");
+
+        assert_eq!(
+            header.vst3_output_event_payload_len(),
+            Ok((VST3_OUTPUT_EVENT_LEN * 4) as u32)
+        );
+        assert_eq!(
+            header.payload_len,
+            header.audio_payload_len().expect("audio payload")
+                + (MIDI_EVENT_LEN * 2) as u32
+                + (PARAMETER_AUTOMATION_EVENT_LEN * 3) as u32
+                + (VST3_OUTPUT_EVENT_LEN * 4) as u32
         );
         assert_eq!(AudioFrameHeader::decode(&bytes), Ok(header));
     }
