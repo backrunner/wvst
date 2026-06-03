@@ -239,6 +239,8 @@ jobs:
             args=(--manifest "${PACKAGE_MANIFEST}" --verify-report "${PACKAGE_VERIFY_REPORT}")
             if [ -n "${PACKAGE_BUDGET}" ]; then
               args+=(--budget "${PACKAGE_BUDGET}")
+            else
+              args+=(--strict-release)
             fi
             cargo run -p wvst-testkit --bin wvst-package-evidence --release -- "${args[@]}" \
               | tee evidence/package-evidence-report.json

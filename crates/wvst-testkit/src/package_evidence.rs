@@ -140,6 +140,34 @@ impl Default for PackageEvidenceBudget {
     }
 }
 
+impl PackageEvidenceBudget {
+    pub fn strict_release(platform: PackageEvidencePlatform) -> Self {
+        let required_verification_checks = required_release_checks(platform)
+            .iter()
+            .map(|check| (*check).to_string())
+            .collect::<Vec<_>>();
+        let required_file_roles = required_release_roles(platform)
+            .iter()
+            .map(|role| (*role).to_string())
+            .collect::<Vec<_>>();
+
+        Self {
+            expected_platform: Some(platform),
+            require_strict_signature: matches!(
+                platform,
+                PackageEvidencePlatform::Macos | PackageEvidencePlatform::Windows
+            ),
+            max_skipped_checks: Some(0),
+            max_warnings: Some(0),
+            min_checks_run: required_verification_checks.len() as u64,
+            min_verification_checks: required_verification_checks.len() as u64,
+            required_verification_checks,
+            required_file_roles,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageEvidenceEvaluation {
@@ -246,6 +274,80 @@ const fn default_min_checks_run() -> u64 {
 
 const fn default_min_verification_checks() -> u64 {
     1
+}
+
+fn required_release_checks(platform: PackageEvidencePlatform) -> &'static [&'static str] {
+    match platform {
+        PackageEvidencePlatform::Macos => &[
+            "bundle-files",
+            "executable-permissions",
+            "env-template",
+            "launchd-plist",
+            "plist-lint",
+            "codesign",
+            "gatekeeper-assessment",
+            "bridge-diagnose",
+        ],
+        PackageEvidencePlatform::Linux => &[
+            "bundle-files",
+            "executable-permissions",
+            "env-template",
+            "systemd-unit",
+            "systemd-analyze",
+            "bridge-diagnose",
+        ],
+        PackageEvidencePlatform::Windows => &[
+            "bundle-files",
+            "env-template",
+            "scheduled-task-scripts",
+            "authenticode",
+            "bridge-diagnose",
+        ],
+    }
+}
+
+fn required_release_roles(platform: PackageEvidencePlatform) -> &'static [&'static str] {
+    match platform {
+        PackageEvidencePlatform::Macos => &[
+            "bridge-server",
+            "host-worker",
+            "launcher",
+            "config-template",
+            "service-definition",
+            "install-script",
+            "uninstall-script",
+            "diagnose-script",
+            "log-rotate-script",
+            "verification-script",
+            "sign-notarize-script",
+            "package-manifest",
+        ],
+        PackageEvidencePlatform::Linux => &[
+            "bridge-server",
+            "host-worker",
+            "launcher",
+            "config-template",
+            "service-definition",
+            "install-script",
+            "uninstall-script",
+            "diagnose-script",
+            "log-rotate-script",
+            "verification-script",
+            "package-manifest",
+        ],
+        PackageEvidencePlatform::Windows => &[
+            "bridge-server",
+            "host-worker",
+            "launcher",
+            "config-template",
+            "install-script",
+            "uninstall-script",
+            "diagnose-script",
+            "log-rotate-script",
+            "verification-script",
+            "package-manifest",
+        ],
+    }
 }
 
 #[cfg(test)]

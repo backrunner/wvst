@@ -8,7 +8,7 @@ use wvst_testkit::package_evidence::{
 };
 
 const USAGE: &str = "\
-usage: wvst-package-evidence --manifest <wvst-package-manifest.json> --verify-report <wvst-verify-report.json> [--budget <package-budget.json>]
+usage: wvst-package-evidence --manifest <wvst-package-manifest.json> --verify-report <wvst-verify-report.json> [--budget <package-budget.json>] [--strict-release]
 
 Evaluates WVST package manifest and verify-report JSON evidence and writes a JSON report to stdout.
 ";
@@ -54,8 +54,13 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<CliResult, String> {
                 .as_ref()
                 .map(|path| read_to_string(path, "budget"))
                 .transpose()?;
-            evaluate_json(&manifest_text, &verify_text, budget_text.as_deref())
-                .map(CliResult::Report)
+            evaluate_json(
+                &manifest_text,
+                &verify_text,
+                budget_text.as_deref(),
+                options.strict_release,
+            )
+            .map(CliResult::Report)
         }
     }
 }
@@ -64,18 +69,18 @@ fn evaluate_json(
     manifest_text: &str,
     verify_text: &str,
     budget_text: Option<&str>,
+    strict_release: bool,
 ) -> Result<PackageEvidenceEvaluation, String> {
     let manifest = serde_json::from_str::<PackageEvidenceManifest>(manifest_text)
         .map_err(|error| format!("invalid manifest json: {error}"))?;
     let verify = serde_json::from_str::<PackageVerifyReport>(verify_text)
         .map_err(|error| format!("invalid verify report json: {error}"))?;
-    let budget = budget_text
-        .map(|text| {
-            serde_json::from_str::<PackageEvidenceBudget>(text)
-                .map_err(|error| format!("invalid budget json: {error}"))
-        })
-        .transpose()?
-        .unwrap_or_default();
+    let budget = match budget_text {
+        Some(text) => serde_json::from_str::<PackageEvidenceBudget>(text)
+            .map_err(|error| format!("invalid budget json: {error}"))?,
+        None if strict_release => PackageEvidenceBudget::strict_release(manifest.platform),
+        None => PackageEvidenceBudget::default(),
+    };
 
     Ok(PackageEvidenceEvaluation::evaluate(
         &manifest, &verify, &budget,
@@ -86,6 +91,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliAction, St
     let mut manifest_path = None;
     let mut verify_report_path = None;
     let mut budget_path = None;
+    let mut strict_release = false;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -96,6 +102,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliAction, St
                 verify_report_path = Some(next_value(&mut args, "--verify-report")?);
             }
             "--budget" => budget_path = Some(next_value(&mut args, "--budget")?),
+            "--strict-release" => strict_release = true,
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -109,6 +116,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliAction, St
         manifest_path,
         verify_report_path,
         budget_path,
+        strict_release,
     }))
 }
 
@@ -138,6 +146,7 @@ struct CliOptions {
     manifest_path: PathBuf,
     verify_report_path: PathBuf,
     budget_path: Option<PathBuf>,
+    strict_release: bool,
 }
 
 enum CliResult {
@@ -168,6 +177,29 @@ mod tests {
                 manifest_path: PathBuf::from("/tmp/manifest.json"),
                 verify_report_path: PathBuf::from("/tmp/verify.json"),
                 budget_path: Some(PathBuf::from("/tmp/budget.json")),
+                strict_release: false,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_strict_release_option() {
+        let action = parse_options([
+            "--manifest".to_string(),
+            "/tmp/manifest.json".to_string(),
+            "--verify-report".to_string(),
+            "/tmp/verify.json".to_string(),
+            "--strict-release".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            action,
+            CliAction::Evaluate(CliOptions {
+                manifest_path: PathBuf::from("/tmp/manifest.json"),
+                verify_report_path: PathBuf::from("/tmp/verify.json"),
+                budget_path: None,
+                strict_release: true,
             })
         );
     }
@@ -241,6 +273,7 @@ mod tests {
             &manifest.to_string(),
             &verify.to_string(),
             Some(&budget.to_string()),
+            false,
         )
         .expect("report");
 

@@ -150,6 +150,49 @@ fn gates_strict_signature_skips_warnings_and_manifest_requirements() {
 }
 
 #[test]
+fn strict_release_budget_requires_platform_specific_evidence() {
+    let manifest = sample_manifest(PackageEvidencePlatform::Macos);
+    let verify = sample_verify(PackageEvidencePlatform::Macos);
+    let budget = PackageEvidenceBudget::strict_release(PackageEvidencePlatform::Macos);
+
+    let evaluation = PackageEvidenceEvaluation::evaluate(&manifest, &verify, &budget);
+
+    assert!(!evaluation.passed);
+    assert!(
+        evaluation
+            .violations
+            .contains(&PackageEvidenceViolation::StrictSignatureMissing)
+    );
+}
+
+#[test]
+fn strict_release_budget_accepts_unsigned_linux_evidence() {
+    let manifest = sample_manifest(PackageEvidencePlatform::Linux);
+    let verify = sample_verify(PackageEvidencePlatform::Linux);
+    let budget = PackageEvidenceBudget::strict_release(PackageEvidencePlatform::Linux);
+
+    let evaluation = PackageEvidenceEvaluation::evaluate(&manifest, &verify, &budget);
+
+    assert!(evaluation.passed, "{:?}", evaluation.violations);
+}
+
+#[test]
+fn strict_release_budget_requires_windows_authenticode() {
+    let manifest = sample_manifest(PackageEvidencePlatform::Windows);
+    let verify = sample_verify(PackageEvidencePlatform::Windows);
+    let budget = PackageEvidenceBudget::strict_release(PackageEvidencePlatform::Windows);
+
+    let evaluation = PackageEvidenceEvaluation::evaluate(&manifest, &verify, &budget);
+
+    assert!(!evaluation.passed);
+    assert!(
+        evaluation
+            .violations
+            .contains(&PackageEvidenceViolation::StrictSignatureMissing)
+    );
+}
+
+#[test]
 fn gates_platform_runtime_script_and_verification_check_consistency() {
     let mut manifest = sample_manifest(PackageEvidencePlatform::Macos);
     manifest.install.service_kind = "windows-scheduled-task".to_string();
@@ -274,6 +317,30 @@ fn sample_manifest(platform: PackageEvidencePlatform) -> PackageEvidenceManifest
         ),
     };
 
+    let mut files = vec![
+        PackageFileEvidence {
+            path: bridge.to_string(),
+            role: "bridge-server".to_string(),
+            executable: true,
+        },
+        PackageFileEvidence {
+            path: worker.to_string(),
+            role: "host-worker".to_string(),
+            executable: true,
+        },
+        PackageFileEvidence {
+            path: verify_script.to_string(),
+            role: "verification-script".to_string(),
+            executable: !matches!(platform, PackageEvidencePlatform::Windows),
+        },
+        PackageFileEvidence {
+            path: "wvst-package-manifest.json".to_string(),
+            role: "package-manifest".to_string(),
+            executable: false,
+        },
+    ];
+    files.extend(release_extra_files(platform));
+
     PackageEvidenceManifest {
         schema_version: PACKAGE_EVIDENCE_SCHEMA_VERSION,
         package_name: package_name.to_string(),
@@ -288,34 +355,65 @@ fn sample_manifest(platform: PackageEvidencePlatform) -> PackageEvidenceManifest
             host_worker: worker.to_string(),
             bind_addr: "127.0.0.1:35876".to_string(),
         },
-        files: vec![
-            PackageFileEvidence {
-                path: bridge.to_string(),
-                role: "bridge-server".to_string(),
-                executable: true,
-            },
-            PackageFileEvidence {
-                path: worker.to_string(),
-                role: "host-worker".to_string(),
-                executable: true,
-            },
-            PackageFileEvidence {
-                path: verify_script.to_string(),
-                role: "verification-script".to_string(),
-                executable: !matches!(platform, PackageEvidencePlatform::Windows),
-            },
-            PackageFileEvidence {
-                path: "wvst-package-manifest.json".to_string(),
-                role: "package-manifest".to_string(),
-                executable: false,
-            },
-        ],
+        files,
         verification: PackageVerificationEvidence {
             script: verify_script.to_string(),
             report_path: "wvst-verify-report.json".to_string(),
             strict_signature_env: Some("WVST_STRICT_VERIFY".to_string()),
-            checks: sample_checks(),
+            checks: sample_checks(platform),
         },
+    }
+}
+
+fn release_extra_files(platform: PackageEvidencePlatform) -> Vec<PackageFileEvidence> {
+    match platform {
+        PackageEvidencePlatform::Macos => vec![
+            file("bin/wvst-bridge-launcher", "launcher", true),
+            file("config/wvst.env.example", "config-template", false),
+            file(
+                "launchd/top.backrunner.wvst.test.plist",
+                "service-definition",
+                false,
+            ),
+            file("scripts/install-macos.sh", "install-script", true),
+            file("scripts/uninstall-macos.sh", "uninstall-script", true),
+            file("scripts/diagnose-macos.sh", "diagnose-script", true),
+            file("scripts/rotate-logs-macos.sh", "log-rotate-script", true),
+            file(
+                "scripts/sign-notarize-macos.sh",
+                "sign-notarize-script",
+                true,
+            ),
+        ],
+        PackageEvidencePlatform::Linux => vec![
+            file("bin/wvst-bridge-launcher", "launcher", true),
+            file("config/wvst.env.example", "config-template", false),
+            file("systemd/wvst-test.service", "service-definition", false),
+            file("scripts/install-linux.sh", "install-script", true),
+            file("scripts/uninstall-linux.sh", "uninstall-script", true),
+            file("scripts/diagnose-linux.sh", "diagnose-script", true),
+            file("scripts/rotate-logs-linux.sh", "log-rotate-script", true),
+        ],
+        PackageEvidencePlatform::Windows => vec![
+            file("bin/wvst-bridge-launcher.ps1", "launcher", false),
+            file("config/wvst.env.example", "config-template", false),
+            file("scripts/install-windows.ps1", "install-script", false),
+            file("scripts/uninstall-windows.ps1", "uninstall-script", false),
+            file("scripts/diagnose-windows.ps1", "diagnose-script", false),
+            file(
+                "scripts/rotate-logs-windows.ps1",
+                "log-rotate-script",
+                false,
+            ),
+        ],
+    }
+}
+
+fn file(path: &str, role: &str, executable: bool) -> PackageFileEvidence {
+    PackageFileEvidence {
+        path: path.to_string(),
+        role: role.to_string(),
+        executable,
     }
 }
 
@@ -330,7 +428,7 @@ fn sample_verify(platform: PackageEvidencePlatform) -> PackageVerifyReport {
         checks_failed: 0,
         checks_skipped: 0,
         warnings: 0,
-        checks: sample_checks(),
+        checks: sample_checks(platform),
     }
 }
 
@@ -342,6 +440,33 @@ fn service_kind(platform: PackageEvidencePlatform) -> &'static str {
     }
 }
 
-fn sample_checks() -> Vec<String> {
-    vec!["bundle-files".to_string(), "bridge-diagnose".to_string()]
+fn sample_checks(platform: PackageEvidencePlatform) -> Vec<String> {
+    let checks = match platform {
+        PackageEvidencePlatform::Macos => &[
+            "bundle-files",
+            "executable-permissions",
+            "env-template",
+            "launchd-plist",
+            "plist-lint",
+            "codesign",
+            "gatekeeper-assessment",
+            "bridge-diagnose",
+        ][..],
+        PackageEvidencePlatform::Linux => &[
+            "bundle-files",
+            "executable-permissions",
+            "env-template",
+            "systemd-unit",
+            "systemd-analyze",
+            "bridge-diagnose",
+        ][..],
+        PackageEvidencePlatform::Windows => &[
+            "bundle-files",
+            "env-template",
+            "scheduled-task-scripts",
+            "authenticode",
+            "bridge-diagnose",
+        ][..],
+    };
+    checks.iter().map(|check| (*check).to_string()).collect()
 }
