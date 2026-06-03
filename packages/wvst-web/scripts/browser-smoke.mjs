@@ -37,6 +37,9 @@ const result = {
   sampleRate: 0,
   metrics: undefined,
 };
+const outputWriteTimes = new Map();
+const roundTripSamplesUs = [];
+let lastRecordedOutputSequence = 0;
 
 async function waitForMetrics(buffers) {
   const deadline = performance.now() + 4_000;
@@ -46,6 +49,7 @@ async function waitForMetrics(buffers) {
     keepOutputAhead(buffers);
 
     const metrics = readLoopbackMetrics(buffers);
+    recordConsumedOutputs(metrics.outputConsumedSequence);
     if (metrics.inputSequence >= 8 && metrics.outputConsumedSequence >= 8) {
       return metrics;
     }
@@ -83,7 +87,46 @@ function keepOutputAhead(buffers) {
 function writeOutputQuantum(buffers, sequence) {
   const offset = ((sequence - 1) % buffers.capacityQuanta) * buffers.outputSamplesPerQuantum;
   buffers.outputSamples.fill(0.125, offset, offset + buffers.outputSamplesPerQuantum);
+  outputWriteTimes.set(sequence, performance.now());
   Atomics.store(buffers.counters, LoopbackCounter.OutputSequence, sequence);
+}
+
+function recordConsumedOutputs(outputConsumedSequence) {
+  const observedAt = performance.now();
+  for (
+    let sequence = lastRecordedOutputSequence + 1;
+    sequence <= outputConsumedSequence;
+    sequence += 1
+  ) {
+    const writtenAt = outputWriteTimes.get(sequence);
+    if (writtenAt !== undefined) {
+      roundTripSamplesUs.push(Math.max(0, Math.round((observedAt - writtenAt) * 1_000)));
+      outputWriteTimes.delete(sequence);
+    }
+  }
+  lastRecordedOutputSequence = Math.max(lastRecordedOutputSequence, outputConsumedSequence);
+}
+
+function percentileSnapshot(values) {
+  if (values.length === 0) {
+    return { count: 0 };
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  return {
+    count: sorted.length,
+    p50: percentile(sorted, 0.5),
+    p95: percentile(sorted, 0.95),
+    p99: percentile(sorted, 0.99),
+  };
+}
+
+function percentile(sortedValues, percentileValue) {
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil(sortedValues.length * percentileValue) - 1),
+  );
+  return sortedValues[index];
 }
 
 try {
@@ -118,8 +161,15 @@ try {
   keepOutputAhead(buffers);
 
   await withTimeout(context.resume(), 1_000, "AudioContext resume");
-  result.metrics = await waitForMetrics(buffers);
-  result.ok = result.metrics.inputSequence >= 8 && result.metrics.outputConsumedSequence >= 8;
+  const metrics = await waitForMetrics(buffers);
+  result.metrics = {
+    ...metrics,
+    endToEndRoundTripUs: percentileSnapshot(roundTripSamplesUs),
+  };
+  result.ok =
+    result.metrics.inputSequence >= 8 &&
+    result.metrics.outputConsumedSequence >= 8 &&
+    result.metrics.endToEndRoundTripUs.count >= 8;
   await context.close();
 } catch (error) {
   result.error = error instanceof Error ? error.message : String(error);
