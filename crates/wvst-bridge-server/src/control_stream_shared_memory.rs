@@ -8,7 +8,7 @@ use super::{
 };
 use crate::stream_shared_memory::{
     SharedMemoryStreamError, StreamSharedMemoryCreateParams, StreamSharedMemoryDestroyParams,
-    StreamSharedMemoryProcessParams,
+    StreamSharedMemoryProcessParams, StreamSharedMemoryStatusParams,
 };
 
 pub async fn handle_stream_shared_memory_create(
@@ -102,6 +102,37 @@ pub async fn handle_stream_shared_memory_destroy(
                 "destroyed": descriptor.is_some(),
                 "descriptor": descriptor,
                 "worker": worker,
+            }),
+        ),
+        Err(error) => response_shared_memory_error(id, error),
+    }
+}
+
+pub async fn handle_stream_shared_memory_status(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<StreamSharedMemoryStatusParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid stream shared memory status params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.shared_memory.status_by_instance(params.instance_id) {
+        Ok(status) => response_result(
+            id,
+            json!({
+                "attached": status.is_some(),
+                "status": status,
             }),
         ),
         Err(error) => response_shared_memory_error(id, error),

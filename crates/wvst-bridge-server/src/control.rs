@@ -472,6 +472,15 @@ pub(crate) async fn handle_control_text(
             .await,
             session_authorized,
         ),
+        "stream.sharedMemory.status" => ControlResponse::new(
+            control_stream_shared_memory::handle_stream_shared_memory_status(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "stream.sharedMemory.process" => ControlResponse::new(
             control_stream_shared_memory::handle_stream_shared_memory_process(
                 request.id,

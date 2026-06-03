@@ -604,6 +604,47 @@ async fn creates_lists_and_destroys_instance() {
     );
     assert!(first_shared_memory_path.exists());
 
+    let shared_memory_status_request = serde_json::json!({
+        "id": 79,
+        "method": "stream.sharedMemory.status",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let shared_memory_status_value = request_json(&shared_memory_status_request, context).await;
+    assert_eq!(shared_memory_status_value["result"]["attached"], true);
+    assert_eq!(
+        shared_memory_status_value["result"]["status"]["descriptor"]["streamId"],
+        stream_id
+    );
+    assert_eq!(
+        shared_memory_status_value["result"]["status"]["pathExists"],
+        true
+    );
+    assert_eq!(
+        shared_memory_status_value["result"]["status"]["input"]["cursor"]["readFrame"],
+        0
+    );
+    assert_eq!(
+        shared_memory_status_value["result"]["status"]["input"]["cursor"]["writeFrame"],
+        0
+    );
+    assert_eq!(
+        shared_memory_status_value["result"]["status"]["input"]["readableFrames"],
+        0
+    );
+    assert_eq!(
+        shared_memory_status_value["result"]["status"]["input"]["writableFrames"],
+        384
+    );
+    assert_eq!(
+        shared_memory_status_value["result"]["status"]["output"]["readableFrames"],
+        0
+    );
+    assert_eq!(
+        shared_memory_status_value["result"]["status"]["output"]["writableFrames"],
+        384
+    );
+
     let destroy_shared_memory_request = serde_json::json!({
         "id": 76,
         "method": "stream.sharedMemory.destroy",
@@ -618,6 +659,17 @@ async fn creates_lists_and_destroys_instance() {
         true
     );
     assert!(!first_shared_memory_path.exists());
+
+    let detached_shared_memory_status_value =
+        request_json(&shared_memory_status_request, context).await;
+    assert_eq!(
+        detached_shared_memory_status_value["result"]["attached"],
+        false
+    );
+    assert_eq!(
+        detached_shared_memory_status_value["result"]["status"],
+        Value::Null
+    );
 
     let shared_memory_again_value = request_json(&shared_memory_request, context).await;
     let shared_memory_path = PathBuf::from(
