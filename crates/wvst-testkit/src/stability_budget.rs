@@ -3,8 +3,10 @@ use serde::{Deserialize, Serialize};
 use crate::latency::{LatencyPercentiles, LatencySnapshot};
 use crate::stability::StabilityRunReport;
 
+mod bridge;
 mod webaudio;
 
+pub use bridge::{BridgeLatencyPercentiles, BridgeStabilityMetrics};
 pub use webaudio::WebAudioLoopbackMetrics;
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -24,16 +26,49 @@ pub struct StabilityBudget {
     pub max_route_latency_p99_us: Option<u64>,
     pub max_round_trip_p95_us: Option<u64>,
     pub max_round_trip_p99_us: Option<u64>,
-    #[serde(rename = "minWebAudioInputFrames", alias = "minWebaudioInputFrames")]
+    #[serde(rename = "minWebAudioInputFrames")]
     pub min_webaudio_input_frames: Option<u64>,
-    #[serde(rename = "minWebAudioOutputFrames", alias = "minWebaudioOutputFrames")]
+    #[serde(rename = "minWebAudioOutputFrames")]
     pub min_webaudio_output_frames: Option<u64>,
-    #[serde(rename = "maxWebAudioUnderflows", alias = "maxWebaudioUnderflows")]
+    #[serde(rename = "maxWebAudioUnderflows")]
     pub max_webaudio_underflows: Option<u64>,
-    #[serde(rename = "maxWebAudioOverflows", alias = "maxWebaudioOverflows")]
+    #[serde(rename = "maxWebAudioOverflows")]
     pub max_webaudio_overflows: Option<u64>,
+    #[serde(rename = "maxWebAudioDroppedInputQuanta")]
+    pub max_webaudio_dropped_input_quanta: Option<u64>,
+    #[serde(rename = "maxWebAudioDroppedOutputQuanta")]
+    pub max_webaudio_dropped_output_quanta: Option<u64>,
+    #[serde(rename = "maxWebAudioDroppedMidiEvents")]
+    pub max_webaudio_dropped_midi_events: Option<u64>,
+    #[serde(rename = "maxWebAudioDroppedParameterEvents")]
+    pub max_webaudio_dropped_parameter_events: Option<u64>,
+    #[serde(rename = "maxWebAudioLateMidiEvents")]
+    pub max_webaudio_late_midi_events: Option<u64>,
+    #[serde(rename = "maxWebAudioLateParameterEvents")]
+    pub max_webaudio_late_parameter_events: Option<u64>,
+    #[serde(rename = "maxWebAudioTransportFailures")]
+    pub max_webaudio_transport_failures: Option<u64>,
+    #[serde(rename = "maxWebAudioEndToEndRoundTripP95Us")]
+    pub max_webaudio_end_to_end_round_trip_p95_us: Option<u64>,
+    #[serde(rename = "maxWebAudioEndToEndRoundTripP99Us")]
+    pub max_webaudio_end_to_end_round_trip_p99_us: Option<u64>,
     pub max_pending_input_quanta: Option<u64>,
     pub max_pending_output_quanta: Option<u64>,
+    pub max_shared_memory_pump_preflight_skips: Option<u64>,
+    pub max_shared_memory_pump_overruns: Option<u64>,
+    pub max_shared_memory_pump_input_underruns: Option<u64>,
+    pub max_shared_memory_pump_output_backpressure: Option<u64>,
+    pub max_shared_memory_pump_worker_errors: Option<u64>,
+    pub min_shared_memory_pump_events_enqueued: Option<u64>,
+    pub min_shared_memory_pump_events_drained: Option<u64>,
+    pub max_shared_memory_pump_events_late: Option<u64>,
+    pub max_shared_memory_pump_events_dropped: Option<u64>,
+    pub max_shared_memory_pump_events_cleared: Option<u64>,
+    pub max_shared_memory_process_latency_p95_us: Option<u64>,
+    pub max_shared_memory_process_latency_p99_us: Option<u64>,
+    pub max_shared_memory_pump_last_process_micros: Option<u64>,
+    pub max_shared_memory_pump_max_process_micros: Option<u64>,
+    pub max_shared_memory_pump_last_overrun_micros: Option<u64>,
 }
 
 impl StabilityBudget {
@@ -155,6 +190,15 @@ impl StabilityBudgetReport {
         budget: StabilityBudget,
         webaudio: Option<WebAudioLoopbackMetrics>,
     ) -> Self {
+        Self::from_snapshot_and_metrics(snapshot, budget, webaudio, None)
+    }
+
+    pub fn from_snapshot_and_metrics(
+        snapshot: &LatencySnapshot,
+        budget: StabilityBudget,
+        webaudio: Option<WebAudioLoopbackMetrics>,
+        bridge: Option<BridgeStabilityMetrics>,
+    ) -> Self {
         let mut violations = Vec::new();
 
         if let Some(min) = budget.min_observations
@@ -250,6 +294,7 @@ impl StabilityBudgetReport {
             budget.max_round_trip_p99_us,
         );
         webaudio::push_webaudio_violations(&mut violations, budget, webaudio);
+        bridge::push_bridge_violations(&mut violations, budget, bridge);
 
         Self {
             passed: violations.is_empty(),
@@ -295,10 +340,19 @@ impl StabilityRunReport {
     ) -> StabilityBudgetReport {
         StabilityBudgetReport::from_snapshot_and_webaudio(&self.snapshot, budget, Some(webaudio))
     }
+
+    pub fn evaluate_budget_with_metrics(
+        &self,
+        budget: StabilityBudget,
+        webaudio: Option<WebAudioLoopbackMetrics>,
+        bridge: Option<BridgeStabilityMetrics>,
+    ) -> StabilityBudgetReport {
+        StabilityBudgetReport::from_snapshot_and_metrics(&self.snapshot, budget, webaudio, bridge)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum PercentileKind {
+pub(super) enum PercentileKind {
     P95,
     P99,
 }
@@ -320,7 +374,7 @@ fn push_max(
     }
 }
 
-fn push_percentile(
+pub(super) fn push_percentile(
     violations: &mut Vec<StabilityBudgetViolation>,
     metric: &'static str,
     percentiles: LatencyPercentiles,

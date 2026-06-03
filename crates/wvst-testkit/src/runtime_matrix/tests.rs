@@ -1,5 +1,14 @@
 use super::*;
-use serde_json::json;
+
+mod audio_bus_summary;
+mod expectations;
+mod output_expectations;
+mod process_output_summary;
+mod process_timing_expectations;
+mod process_timing_summary;
+mod runtime_characteristics_expectations;
+mod runtime_characteristics_summary;
+mod summaries;
 
 #[derive(Default)]
 struct RecordingExecutor {
@@ -23,7 +32,18 @@ fn builds_runtime_probe_invocation_with_note_and_parameter_change() {
             "/Library/Audio/Plug-Ins/VST3/Synth.vst3",
             "class-a",
         )
+        .with_evidence(
+            RuntimeProbeCaseEvidence::third_party_plugin(
+                "Example Audio",
+                "Example Synth",
+                RuntimeProbePluginKind::Instrument,
+            )
+            .with_plugin_version("1.0.0")
+            .with_tag("instrument")
+            .with_validation_notes("local fixture"),
+        )
         .with_processing(48_000, 256, 0, 2, 128, 8)
+        .with_controller_edit_probe_parameter_id(99)
         .with_note(RuntimeProbeNote::new(60, 750, 1))
         .with_parameter_change(RuntimeProbeParameterChange::new(42, 500, 64)),
     );
@@ -42,16 +62,114 @@ fn builds_runtime_probe_invocation_with_note_and_parameter_change() {
     );
     assert_eq!(invocation.args[0], "runtime-probe");
     assert_eq!(
+        invocation.timeout_millis,
+        DEFAULT_RUNTIME_PROBE_TIMEOUT_MILLIS
+    );
+    assert_eq!(
         invocation.args[1],
         "/Library/Audio/Plug-Ins/VST3/Synth.vst3"
     );
     assert_eq!(invocation.args[2], "class-a");
+    assert_eq!(
+        report.results[0]
+            .evidence
+            .as_ref()
+            .and_then(|evidence| evidence.plugin_name.as_deref()),
+        Some("Example Synth")
+    );
+    assert_eq!(report.evidence.reported_cases, 1);
+    assert_eq!(report.evidence.third_party_cases, 1);
+    assert_eq!(report.evidence.instrument_cases, 1);
+    assert_eq!(report.evidence.tags.get("instrument").copied(), Some(1));
     assert!(invocation.args.contains(&"--input-channels".to_string()));
     assert!(invocation.args.contains(&"0".to_string()));
     assert!(invocation.args.contains(&"--note".to_string()));
     assert!(invocation.args.contains(&"60:0.750:1".to_string()));
+    assert!(
+        !invocation
+            .args
+            .contains(&"--skip-controller-edit-probe".to_string())
+    );
+    assert!(
+        !invocation
+            .args
+            .contains(&"--skip-connection-notify-probe".to_string())
+    );
+    assert!(
+        !invocation
+            .args
+            .contains(&"--skip-state-roundtrip-probe".to_string())
+    );
+    assert!(
+        invocation
+            .args
+            .contains(&"--controller-edit-probe-parameter".to_string())
+    );
+    assert!(invocation.args.contains(&"99".to_string()));
     assert!(invocation.args.contains(&"--parameter-change".to_string()));
     assert!(invocation.args.contains(&"42=0.500:64".to_string()));
+}
+
+#[test]
+fn builds_runtime_probe_invocation_with_controller_edit_probe_disabled() {
+    let mut executor = RecordingExecutor::default();
+    let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
+        RuntimeProbeCase::new("sensitive-fx", "/tmp/Sensitive.vst3", "class-a")
+            .with_controller_edit_probe(false)
+            .with_controller_edit_probe_parameter_id(99),
+    );
+
+    let report = matrix.run_with(&mut executor);
+
+    assert!(report.all_passed());
+    let invocation = &executor.invocations[0];
+    assert!(
+        invocation
+            .args
+            .contains(&"--skip-controller-edit-probe".to_string())
+    );
+    assert!(
+        invocation
+            .args
+            .contains(&"--controller-edit-probe-parameter".to_string())
+    );
+    assert!(invocation.args.contains(&"99".to_string()));
+}
+
+#[test]
+fn builds_runtime_probe_invocation_with_connection_notify_probe_disabled() {
+    let mut executor = RecordingExecutor::default();
+    let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
+        RuntimeProbeCase::new("sensitive-fx", "/tmp/Sensitive.vst3", "class-a")
+            .with_connection_notify_probe(false),
+    );
+
+    let report = matrix.run_with(&mut executor);
+
+    assert!(report.all_passed());
+    assert!(
+        executor.invocations[0]
+            .args
+            .contains(&"--skip-connection-notify-probe".to_string())
+    );
+}
+
+#[test]
+fn builds_runtime_probe_invocation_with_state_roundtrip_probe_disabled() {
+    let mut executor = RecordingExecutor::default();
+    let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
+        RuntimeProbeCase::new("sensitive-fx", "/tmp/Sensitive.vst3", "class-a")
+            .with_state_roundtrip_probe(false),
+    );
+
+    let report = matrix.run_with(&mut executor);
+
+    assert!(report.all_passed());
+    assert!(
+        executor.invocations[0]
+            .args
+            .contains(&"--skip-state-roundtrip-probe".to_string())
+    );
 }
 
 #[test]
@@ -92,346 +210,31 @@ fn summarizes_failed_and_launch_failed_cases() {
     assert_eq!(report.passed, 0);
     assert_eq!(report.failed, 1);
     assert_eq!(report.launch_failed, 1);
+    assert_eq!(report.timed_out, 0);
     assert_eq!(report.expectation_failed, 0);
     assert_eq!(report.results[0].case_name, "broken");
     assert_eq!(report.results[1].class_id, "class-b");
 }
 
 #[test]
-fn summarizes_probe_audio_health() {
-    let report = RuntimeProbeMatrixReport::new(vec![
-        RuntimeProbeResult {
-            case_name: "silent-effect".to_string(),
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": true,
-                "process": {
-                    "totalBlocks": 2,
-                    "silentOutputBlocks": 2,
-                    "nonZeroOutputBlocks": 0,
-                    "nonFiniteOutputSamples": 0,
-                    "clippedOutputSamples": 0,
-                    "maxOutputPeak": 0.0,
-                    "outputRms": 0.0
-                }
-            })),
-            ..RuntimeProbeResult::default()
-        },
-        RuntimeProbeResult {
-            case_name: "hot-synth".to_string(),
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": true,
-                "process": {
-                    "totalBlocks": 3,
-                    "silentOutputBlocks": 1,
-                    "nonZeroOutputBlocks": 2,
-                    "nonFiniteOutputSamples": 4,
-                    "clippedOutputSamples": 2,
-                    "maxOutputPeak": 1.25,
-                    "outputRms": 0.5
-                }
-            })),
-            ..RuntimeProbeResult::default()
-        },
-    ]);
-
-    assert_eq!(report.audio_health.reported_cases, 2);
-    assert_eq!(report.audio_health.fully_silent_cases, 1);
-    assert_eq!(report.audio_health.non_zero_cases, 1);
-    assert_eq!(report.audio_health.non_finite_cases, 1);
-    assert_eq!(report.audio_health.clipped_cases, 1);
-    assert_eq!(report.audio_health.total_silent_output_blocks, 3);
-    assert_eq!(report.audio_health.total_non_finite_output_samples, 4);
-    assert_eq!(report.audio_health.total_clipped_output_samples, 2);
-    assert_eq!(report.audio_health.max_output_peak, 1.25);
-    assert_eq!(
-        report.audio_health.max_output_peak_case.as_deref(),
-        Some("hot-synth")
-    );
-    assert_eq!(report.audio_health.max_output_rms, 0.5);
-    assert_eq!(
-        report.audio_health.max_output_rms_case.as_deref(),
-        Some("hot-synth")
-    );
-
-    let value = serde_json::to_value(&report).expect("report json");
-    assert_eq!(value["audioHealth"]["reportedCases"], 2);
-    assert_eq!(value["audioHealth"]["fullySilentCases"], 1);
-    assert_eq!(value["audioHealth"]["maxOutputPeakCase"], "hot-synth");
-}
-
-#[test]
-fn summarizes_probe_note_timing_health() {
-    let report = RuntimeProbeMatrixReport::new(vec![
-        RuntimeProbeResult {
-            case_name: "fast-synth".to_string(),
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": true,
-                "process": {
-                    "noteTiming": {
-                        "sampleRateHz": 48000,
-                        "notePresent": true,
-                        "noteOnAbsoluteFrame": 0,
-                        "firstNonZeroOutputAbsoluteFrame": 128,
-                        "framesFromNoteOnToFirstNonZeroOutput": 128,
-                        "microsFromNoteOnToFirstNonZeroOutput": 2666
-                    }
-                }
-            })),
-            ..RuntimeProbeResult::default()
-        },
-        RuntimeProbeResult {
-            case_name: "slow-synth".to_string(),
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": true,
-                "process": {
-                    "noteTiming": {
-                        "sampleRateHz": 48000,
-                        "notePresent": true,
-                        "noteOnAbsoluteFrame": 0,
-                        "firstNonZeroOutputAbsoluteFrame": 1024,
-                        "framesFromNoteOnToFirstNonZeroOutput": 1024,
-                        "microsFromNoteOnToFirstNonZeroOutput": 21333
-                    }
-                }
-            })),
-            ..RuntimeProbeResult::default()
-        },
-        RuntimeProbeResult {
-            case_name: "silent-synth".to_string(),
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": true,
-                "process": {
-                    "noteTiming": {
-                        "sampleRateHz": 48000,
-                        "notePresent": true,
-                        "noteOnAbsoluteFrame": 0,
-                        "firstNonZeroOutputAbsoluteFrame": null,
-                        "framesFromNoteOnToFirstNonZeroOutput": null,
-                        "microsFromNoteOnToFirstNonZeroOutput": null
-                    }
-                }
-            })),
-            ..RuntimeProbeResult::default()
-        },
-        RuntimeProbeResult {
-            case_name: "effect-no-note".to_string(),
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": true,
-                "process": {
-                    "noteTiming": {
-                        "sampleRateHz": 48000,
-                        "notePresent": false
-                    }
-                }
-            })),
-            ..RuntimeProbeResult::default()
-        },
-    ]);
-
-    assert_eq!(report.note_timing.reported_cases, 4);
-    assert_eq!(report.note_timing.note_input_cases, 3);
-    assert_eq!(report.note_timing.note_response_cases, 2);
-    assert_eq!(report.note_timing.missing_note_response_cases, 1);
-    assert_eq!(report.note_timing.max_note_to_audio_frames, Some(1024));
-    assert_eq!(
-        report.note_timing.max_note_to_audio_frames_case.as_deref(),
-        Some("slow-synth")
-    );
-    assert_eq!(report.note_timing.max_note_to_audio_micros, Some(21333));
-
-    let value = serde_json::to_value(&report).expect("report json");
-    assert_eq!(value["noteTiming"]["reportedCases"], 4);
-    assert_eq!(value["noteTiming"]["noteResponseCases"], 2);
-    assert_eq!(
-        value["noteTiming"]["maxNoteToAudioFramesCase"],
-        "slow-synth"
-    );
-}
-
-#[test]
-fn marks_audio_expectation_failures() {
+fn timed_out_cases_fail_matrix() {
     let mut executor = RecordingExecutor {
         results: vec![RuntimeProbeResult {
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": true,
-                "process": {
-                    "totalBlocks": 2,
-                    "silentOutputBlocks": 2,
-                    "nonZeroOutputBlocks": 0,
-                    "nonFiniteOutputSamples": 1,
-                    "clippedOutputSamples": 2,
-                    "maxOutputPeak": 1.25,
-                    "outputRms": 0.0
-                }
-            })),
+            status: RuntimeProbeStatus::TimedOut,
+            stderr: "runtime probe timed out after 25 ms".to_string(),
             ..RuntimeProbeResult::default()
         }],
         ..RecordingExecutor::default()
     };
     let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
-        RuntimeProbeCase::new("strict-synth", "/tmp/Synth.vst3", "class-a").with_expectations(
-            RuntimeProbeExpectations::default()
-                .require_non_zero_output()
-                .max_non_finite_output_samples(0)
-                .max_clipped_output_samples(0)
-                .max_output_peak_milli(1_000),
-        ),
+        RuntimeProbeCase::new("hung", "/tmp/Hung.vst3", "class-a").with_timeout_millis(25),
     );
 
     let report = matrix.run_with(&mut executor);
 
     assert!(!report.all_passed());
-    assert_eq!(report.expectation_failed, 1);
-    assert_eq!(
-        report.results[0].status,
-        RuntimeProbeStatus::ExpectationFailed
-    );
-    assert_eq!(
-        report.results[0].probe_status,
-        Some(RuntimeProbeStatus::Passed)
-    );
-    assert!(
-        report.results[0]
-            .expectation_failures
-            .iter()
-            .any(|failure| failure.contains("non-zero output"))
-    );
-    assert!(
-        report.results[0]
-            .expectation_failures
-            .iter()
-            .any(|failure| failure.contains("clipped output samples"))
-    );
-}
-
-#[test]
-fn marks_note_timing_expectation_failures() {
-    let mut executor = RecordingExecutor {
-        results: vec![RuntimeProbeResult {
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": true,
-                "process": {
-                    "totalBlocks": 4,
-                    "silentOutputBlocks": 1,
-                    "nonZeroOutputBlocks": 3,
-                    "nonFiniteOutputSamples": 0,
-                    "clippedOutputSamples": 0,
-                    "maxOutputPeak": 0.75,
-                    "outputRms": 0.25,
-                    "noteTiming": {
-                        "sampleRateHz": 48000,
-                        "notePresent": true,
-                        "noteOnAbsoluteFrame": 0,
-                        "firstNonZeroOutputAbsoluteFrame": 1024,
-                        "framesFromNoteOnToFirstNonZeroOutput": 1024,
-                        "microsFromNoteOnToFirstNonZeroOutput": 21333
-                    }
-                }
-            })),
-            ..RuntimeProbeResult::default()
-        }],
-        ..RecordingExecutor::default()
-    };
-    let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
-        RuntimeProbeCase::new("slow-synth", "/tmp/Synth.vst3", "class-a").with_expectations(
-            RuntimeProbeExpectations::default()
-                .require_note_response()
-                .max_note_to_audio_frames(512)
-                .max_note_to_audio_micros(10_000),
-        ),
-    );
-
-    let report = matrix.run_with(&mut executor);
-
-    assert!(!report.all_passed());
-    assert_eq!(report.expectation_failed, 1);
-    assert!(
-        report.results[0]
-            .expectation_failures
-            .iter()
-            .any(|failure| failure.contains("512 frames"))
-    );
-    assert!(
-        report.results[0]
-            .expectation_failures
-            .iter()
-            .any(|failure| failure.contains("10000 us"))
-    );
-}
-
-#[test]
-fn expected_failed_probe_can_pass_with_matching_diagnostics() {
-    let mut executor = RecordingExecutor {
-        results: vec![RuntimeProbeResult {
-            status: RuntimeProbeStatus::Failed,
-            exit_code: Some(1),
-            probe_report: Some(json!({
-                "schemaVersion": 1,
-                "ok": false,
-                "data": {
-                    "kind": "vst3-runtime-init",
-                    "compatibility": {
-                        "schemaVersion": 1,
-                        "category": "processing-configuration"
-                    },
-                    "workerData": {
-                        "classification": {
-                            "schemaVersion": 1,
-                            "category": "worker-rejection"
-                        }
-                    }
-                }
-            })),
-            ..RuntimeProbeResult::default()
-        }],
-        ..RecordingExecutor::default()
-    };
-    let matrix = RuntimeProbeMatrix::new("/tmp/wvst-host-worker").with_case(
-        RuntimeProbeCase::new("bad-config", "/tmp/Effect.vst3", "class-a").with_expectations(
-            RuntimeProbeExpectations::default()
-                .expected_status(RuntimeProbeStatus::Failed)
-                .expected_compatibility_category("processing-configuration")
-                .expected_classification_category("worker-rejection"),
-        ),
-    );
-
-    let report = matrix.run_with(&mut executor);
-
-    assert!(report.all_passed());
-    assert_eq!(report.passed, 1);
-    assert_eq!(report.failed, 0);
-    assert_eq!(report.expectation_failed, 0);
-    assert_eq!(report.results[0].status, RuntimeProbeStatus::Passed);
-    assert_eq!(
-        report.results[0].probe_status,
-        Some(RuntimeProbeStatus::Failed)
-    );
-    assert_eq!(
-        report
-            .diagnostics
-            .compatibility_categories
-            .get("processing-configuration"),
-        Some(&1)
-    );
-    assert_eq!(
-        report
-            .diagnostics
-            .classification_categories
-            .get("worker-rejection"),
-        Some(&1)
-    );
-    assert_eq!(
-        report.diagnostics.failure_kinds.get("vst3-runtime-init"),
-        Some(&1)
-    );
+    assert_eq!(report.timed_out, 1);
+    assert_eq!(executor.invocations[0].timeout_millis, 25);
 }
 
 #[test]

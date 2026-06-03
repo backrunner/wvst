@@ -5,11 +5,11 @@ use std::process::ExitCode;
 
 use wvst_testkit::latency::LatencySnapshot;
 use wvst_testkit::stability_budget::{
-    StabilityBudget, StabilityBudgetReport, WebAudioLoopbackMetrics,
+    BridgeStabilityMetrics, StabilityBudget, StabilityBudgetReport, WebAudioLoopbackMetrics,
 };
 
 const USAGE: &str = "\
-usage: wvst-stability-budget --snapshot <latency-snapshot.json> --budget <budget.json> [--webaudio <loopback-metrics.json>]
+usage: wvst-stability-budget --snapshot <latency-snapshot.json> --budget <budget.json> [--webaudio <loopback-metrics.json>] [--bridge <bridge-metrics.json>]
 
 Evaluates a WVST latency/stability snapshot against a JSON stability budget and writes a JSON report to stdout.
 ";
@@ -55,8 +55,18 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<CliResult, String> {
                 .as_ref()
                 .map(|path| read_to_string(path, "webaudio"))
                 .transpose()?;
-            evaluate_json(&snapshot_text, &budget_text, webaudio_text.as_deref())
-                .map(CliResult::Report)
+            let bridge_text = options
+                .bridge_path
+                .as_ref()
+                .map(|path| read_to_string(path, "bridge"))
+                .transpose()?;
+            evaluate_json(
+                &snapshot_text,
+                &budget_text,
+                webaudio_text.as_deref(),
+                bridge_text.as_deref(),
+            )
+            .map(CliResult::Report)
         }
     }
 }
@@ -65,6 +75,7 @@ fn evaluate_json(
     snapshot_text: &str,
     budget_text: &str,
     webaudio_text: Option<&str>,
+    bridge_text: Option<&str>,
 ) -> Result<StabilityBudgetReport, String> {
     let snapshot = serde_json::from_str::<LatencySnapshot>(snapshot_text)
         .map_err(|error| format!("invalid snapshot json: {error}"))?;
@@ -76,9 +87,15 @@ fn evaluate_json(
                 .map_err(|error| format!("invalid webaudio json: {error}"))
         })
         .transpose()?;
+    let bridge = bridge_text
+        .map(|text| {
+            BridgeStabilityMetrics::from_json_str(text)
+                .map_err(|error| format!("invalid bridge json: {error}"))
+        })
+        .transpose()?;
 
-    Ok(StabilityBudgetReport::from_snapshot_and_webaudio(
-        &snapshot, budget, webaudio,
+    Ok(StabilityBudgetReport::from_snapshot_and_metrics(
+        &snapshot, budget, webaudio, bridge,
     ))
 }
 
@@ -86,6 +103,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliAction, St
     let mut snapshot_path = None;
     let mut budget_path = None;
     let mut webaudio_path = None;
+    let mut bridge_path = None;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -94,6 +112,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliAction, St
             "--snapshot" => snapshot_path = Some(next_value(&mut args, "--snapshot")?),
             "--budget" => budget_path = Some(next_value(&mut args, "--budget")?),
             "--webaudio" => webaudio_path = Some(next_value(&mut args, "--webaudio")?),
+            "--bridge" => bridge_path = Some(next_value(&mut args, "--bridge")?),
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -107,6 +126,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliAction, St
         snapshot_path,
         budget_path,
         webaudio_path,
+        bridge_path,
     }))
 }
 
@@ -136,6 +156,7 @@ struct CliOptions {
     snapshot_path: PathBuf,
     budget_path: PathBuf,
     webaudio_path: Option<PathBuf>,
+    bridge_path: Option<PathBuf>,
 }
 
 enum CliResult {
@@ -157,6 +178,8 @@ mod tests {
             "/tmp/budget.json".to_string(),
             "--webaudio".to_string(),
             "/tmp/webaudio.json".to_string(),
+            "--bridge".to_string(),
+            "/tmp/bridge.json".to_string(),
         ])
         .expect("options");
 
@@ -166,6 +189,7 @@ mod tests {
                 snapshot_path: PathBuf::from("/tmp/snapshot.json"),
                 budget_path: PathBuf::from("/tmp/budget.json"),
                 webaudio_path: Some(PathBuf::from("/tmp/webaudio.json")),
+                bridge_path: Some(PathBuf::from("/tmp/bridge.json")),
             })
         );
     }
@@ -210,13 +234,33 @@ mod tests {
             "minObservations": 1,
             "maxDroppedFrames": 0,
             "maxRouteLatencyP95Us": 250,
-            "maxWebAudioUnderflows": 0
+            "maxWebAudioUnderflows": 0,
+            "maxWebAudioDroppedInputQuanta": 0,
+            "maxWebAudioTransportFailures": 0,
+            "maxWebAudioEndToEndRoundTripP95Us": 4000,
+            "minSharedMemoryPumpEventsDrained": 1,
+            "maxSharedMemoryPumpEventsDropped": 0,
+            "maxSharedMemoryProcessLatencyP95Us": 1000,
+            "maxSharedMemoryPumpMaxProcessMicros": 4000
         });
         let webaudio = json!({
             "inputFrames": 128,
             "outputFrames": 128,
             "underflows": 1,
             "overflows": 0,
+            "droppedInputQuanta": 2,
+            "droppedOutputQuanta": 0,
+            "droppedMidiEvents": 0,
+            "droppedParameterEvents": 0,
+            "lateMidiEvents": 0,
+            "lateParameterEvents": 0,
+            "transportFailures": 1,
+            "endToEndRoundTripUs": {
+                "count": 2,
+                "p50": 3000,
+                "p95": 5000,
+                "p99": 5000
+            },
             "inputSequence": 1,
             "inputConsumedSequence": 1,
             "outputSequence": 1,
@@ -224,16 +268,28 @@ mod tests {
             "pendingInputQuanta": 0,
             "pendingOutputQuanta": 0
         });
+        let bridge = json!({
+            "sharedMemoryPumpEventsDrained": 0,
+            "sharedMemoryPumpEventsDropped": 2,
+            "sharedMemoryProcessLatency": {
+                "count": 2,
+                "p50Us": 500,
+                "p95Us": 2000,
+                "p99Us": 5000
+            },
+            "sharedMemoryPumpMaxProcessMicros": 5000
+        });
 
         let report = evaluate_json(
             &snapshot.to_string(),
             &budget.to_string(),
             Some(&webaudio.to_string()),
+            Some(&bridge.to_string()),
         )
         .expect("budget report");
 
         assert!(!report.passed);
-        assert_eq!(report.violations.len(), 2);
+        assert_eq!(report.violations.len(), 9);
     }
 
     #[test]

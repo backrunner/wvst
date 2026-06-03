@@ -1,11 +1,27 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
 use crate::runtime_matrix::{
-    RuntimeProbeCase, RuntimeProbeExpectations, RuntimeProbeMatrix, RuntimeProbeNote,
-    RuntimeProbeParameterChange, RuntimeProbeStatus,
+    DEFAULT_RUNTIME_PROBE_TIMEOUT_MILLIS, RuntimeProbeCase, RuntimeProbeCaseEvidence,
+    RuntimeProbeExpectations, RuntimeProbeMatrix, RuntimeProbeNote, RuntimeProbeParameterChange,
+    RuntimeProbePluginKind,
 };
+
+#[path = "runtime_matrix_manifest/coverage_tags.rs"]
+mod coverage_tags;
+#[path = "runtime_matrix_manifest/evidence_requirements.rs"]
+mod evidence_requirements;
+#[path = "runtime_matrix_manifest/expectations.rs"]
+mod expectations;
+
+use coverage_tags::validate_coverage_tags;
+pub use evidence_requirements::RuntimeProbeEvidenceRequirements;
+use evidence_requirements::validate_evidence_requirements;
+use expectations::validate_expectations;
 
 const RUNTIME_PROBE_MATRIX_SCHEMA_VERSION: u16 = 1;
 const DEFAULT_SAMPLE_RATE_HZ: u32 = 48_000;
@@ -13,6 +29,9 @@ const DEFAULT_MAX_BLOCK_FRAMES: u16 = 128;
 const DEFAULT_CHANNEL_COUNT: u16 = 2;
 const DEFAULT_FRAMES: u16 = 128;
 const DEFAULT_BLOCKS: u32 = 1;
+const DEFAULT_CONTROLLER_EDIT_PROBE: bool = true;
+const DEFAULT_CONNECTION_NOTIFY_PROBE: bool = true;
+const DEFAULT_STATE_ROUNDTRIP_PROBE: bool = true;
 const DEFAULT_NOTE_VELOCITY_MILLI: u16 = 1_000;
 const DEFAULT_NOTE_CHANNEL: u8 = 0;
 const DEFAULT_PARAMETER_SAMPLE_OFFSET: u16 = 0;
@@ -25,6 +44,8 @@ pub struct RuntimeProbeMatrixManifest {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixture_root: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_requirements: Option<RuntimeProbeEvidenceRequirements>,
     pub cases: Vec<RuntimeProbeCaseManifest>,
 }
 
@@ -72,6 +93,9 @@ impl RuntimeProbeMatrixManifest {
         for case in &self.cases {
             case.validate()?;
         }
+        if let Some(requirements) = &self.evidence_requirements {
+            validate_evidence_requirements(&self.cases, requirements)?;
+        }
         Ok(())
     }
 }
@@ -94,12 +118,36 @@ pub struct RuntimeProbeCaseManifest {
     pub frames: u16,
     #[serde(default = "default_blocks")]
     pub blocks: u32,
+    #[serde(
+        default = "default_controller_edit_probe",
+        skip_serializing_if = "is_true"
+    )]
+    pub controller_edit_probe: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_edit_probe_parameter_id: Option<u32>,
+    #[serde(
+        default = "default_connection_notify_probe",
+        skip_serializing_if = "is_true"
+    )]
+    pub connection_notify_probe: bool,
+    #[serde(
+        default = "default_state_roundtrip_probe",
+        skip_serializing_if = "is_true"
+    )]
+    pub state_roundtrip_probe: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<RuntimeProbeCaseEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<RuntimeProbeNoteManifest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parameter_changes: Vec<RuntimeProbeParameterChangeManifest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expectations: Option<RuntimeProbeExpectations>,
+    #[serde(
+        default = "default_runtime_probe_timeout_millis",
+        skip_serializing_if = "is_default_runtime_probe_timeout_millis"
+    )]
+    pub timeout_millis: u64,
 }
 
 impl RuntimeProbeCaseManifest {
@@ -116,7 +164,14 @@ impl RuntimeProbeCaseManifest {
                 self.output_channels,
                 self.frames,
                 self.blocks,
-            );
+            )
+            .with_timeout_millis(self.timeout_millis)
+            .with_controller_edit_probe(self.controller_edit_probe)
+            .with_connection_notify_probe(self.connection_notify_probe)
+            .with_state_roundtrip_probe(self.state_roundtrip_probe);
+        if let Some(parameter_id) = self.controller_edit_probe_parameter_id {
+            case = case.with_controller_edit_probe_parameter_id(parameter_id);
+        }
         if let Some(note) = self.note {
             case = case.with_note(RuntimeProbeNote::new(
                 note.pitch,
@@ -130,6 +185,9 @@ impl RuntimeProbeCaseManifest {
                 change.value_milli,
                 change.sample_offset,
             ));
+        }
+        if let Some(evidence) = &self.evidence {
+            case = case.with_evidence(evidence.clone());
         }
         if let Some(expectations) = &self.expectations {
             case = case.with_expectations(expectations.clone());
@@ -172,15 +230,25 @@ impl RuntimeProbeCaseManifest {
         if self.blocks == 0 {
             return Err(invalid_case(case_name, "blocks must be greater than 0"));
         }
+        if self.timeout_millis == 0 {
+            return Err(invalid_case(
+                case_name,
+                "timeoutMillis must be greater than 0",
+            ));
+        }
         if let Some(note) = self.note {
             note.validate(&case_name)?;
         }
         for change in &self.parameter_changes {
             change.validate(&case_name, self.frames)?;
         }
+        if let Some(evidence) = &self.evidence {
+            validate_evidence(&case_name, evidence)?;
+        }
         if let Some(expectations) = &self.expectations {
             validate_expectations(&case_name, expectations)?;
         }
+        validate_coverage_tags(self)?;
         Ok(())
     }
 }
@@ -249,6 +317,7 @@ pub enum RuntimeProbeMatrixManifestError {
     Json(String),
     UnsupportedSchemaVersion { expected: u16, actual: u16 },
     EmptyCases,
+    InvalidEvidenceRequirements { message: String },
     InvalidCase { case_name: String, message: String },
 }
 
@@ -261,6 +330,12 @@ impl std::fmt::Display for RuntimeProbeMatrixManifestError {
                 "unsupported runtime matrix schema version {actual}; expected {expected}"
             ),
             Self::EmptyCases => write!(formatter, "runtime matrix manifest must contain cases"),
+            Self::InvalidEvidenceRequirements { message } => {
+                write!(
+                    formatter,
+                    "invalid runtime matrix evidence requirements: {message}"
+                )
+            }
             Self::InvalidCase { case_name, message } => {
                 write!(
                     formatter,
@@ -273,55 +348,86 @@ impl std::fmt::Display for RuntimeProbeMatrixManifestError {
 
 impl std::error::Error for RuntimeProbeMatrixManifestError {}
 
-fn validate_expectations(
+fn validate_evidence(
     case_name: &str,
-    expectations: &RuntimeProbeExpectations,
+    evidence: &RuntimeProbeCaseEvidence,
 ) -> Result<(), RuntimeProbeMatrixManifestError> {
-    if expectations.expected_status == Some(RuntimeProbeStatus::ExpectationFailed) {
-        return Err(invalid_case(
-            case_name,
-            "expectations.expectedStatus cannot be expectation-failed",
-        ));
+    validate_optional_text(case_name, "evidence.pluginName", &evidence.plugin_name)?;
+    validate_optional_text(case_name, "evidence.vendor", &evidence.vendor)?;
+    validate_optional_text(
+        case_name,
+        "evidence.pluginVersion",
+        &evidence.plugin_version,
+    )?;
+    validate_optional_text(
+        case_name,
+        "evidence.validationNotes",
+        &evidence.validation_notes,
+    )?;
+
+    if evidence.third_party {
+        require_evidence_text(case_name, "evidence.vendor", &evidence.vendor)?;
+        require_evidence_text(case_name, "evidence.pluginName", &evidence.plugin_name)?;
+        if evidence.plugin_kind == RuntimeProbePluginKind::Unknown {
+            return Err(invalid_case(
+                case_name,
+                "third-party evidence must set evidence.pluginKind to effect, instrument, or hybrid",
+            ));
+        }
     }
-    if expectations.require_non_zero_output && expectations.require_silent_output {
-        return Err(invalid_case(
-            case_name,
-            "expectations cannot require both non-zero and silent output",
-        ));
+
+    let mut tags = BTreeSet::new();
+    for tag in &evidence.tags {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            return Err(invalid_case(
+                case_name,
+                "evidence.tags must not contain empty tags",
+            ));
+        }
+        if !tags.insert(trimmed) {
+            return Err(invalid_case(
+                case_name,
+                format!("evidence.tags contains duplicate tag {trimmed:?}"),
+            ));
+        }
     }
-    if expectations.require_note_response && expectations.require_silent_output {
-        return Err(invalid_case(
-            case_name,
-            "expectations cannot require both note response and silent output",
-        ));
-    }
-    if let (Some(min_rms), Some(max_peak)) = (
-        expectations.min_output_rms_milli,
-        expectations.max_output_peak_milli,
-    ) && min_rms > max_peak
+
+    Ok(())
+}
+
+fn validate_optional_text(
+    case_name: &str,
+    field_name: &str,
+    value: &Option<String>,
+) -> Result<(), RuntimeProbeMatrixManifestError> {
+    if let Some(value) = value
+        && value.trim().is_empty()
     {
         return Err(invalid_case(
             case_name,
-            "expectations.minOutputRmsMilli must be <= maxOutputPeakMilli",
-        ));
-    }
-    if let Some(category) = &expectations.expected_compatibility_category
-        && category.trim().is_empty()
-    {
-        return Err(invalid_case(
-            case_name,
-            "expectations.expectedCompatibilityCategory must not be empty",
-        ));
-    }
-    if let Some(category) = &expectations.expected_classification_category
-        && category.trim().is_empty()
-    {
-        return Err(invalid_case(
-            case_name,
-            "expectations.expectedClassificationCategory must not be empty",
+            format!("{field_name} must not be empty when set"),
         ));
     }
     Ok(())
+}
+
+fn require_evidence_text(
+    case_name: &str,
+    field_name: &str,
+    value: &Option<String>,
+) -> Result<(), RuntimeProbeMatrixManifestError> {
+    if value
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Ok(());
+    }
+    Err(invalid_case(
+        case_name,
+        format!("{field_name} is required for third-party evidence"),
+    ))
 }
 
 fn resolve_plugin_path(
@@ -422,6 +528,18 @@ const fn default_blocks() -> u32 {
     DEFAULT_BLOCKS
 }
 
+const fn default_controller_edit_probe() -> bool {
+    DEFAULT_CONTROLLER_EDIT_PROBE
+}
+
+const fn default_connection_notify_probe() -> bool {
+    DEFAULT_CONNECTION_NOTIFY_PROBE
+}
+
+const fn default_state_roundtrip_probe() -> bool {
+    DEFAULT_STATE_ROUNDTRIP_PROBE
+}
+
 const fn default_note_velocity_milli() -> u16 {
     DEFAULT_NOTE_VELOCITY_MILLI
 }
@@ -434,150 +552,18 @@ const fn default_parameter_sample_offset() -> u16 {
     DEFAULT_PARAMETER_SAMPLE_OFFSET
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime_matrix::{RuntimeProbeExecutor, RuntimeProbeInvocation, RuntimeProbeResult};
-    use serde_json::json;
-
-    #[derive(Default)]
-    struct RecordingExecutor {
-        invocations: Vec<RuntimeProbeInvocation>,
-    }
-
-    impl RuntimeProbeExecutor for RecordingExecutor {
-        fn run(&mut self, invocation: RuntimeProbeInvocation) -> RuntimeProbeResult {
-            self.invocations.push(invocation);
-            RuntimeProbeResult {
-                probe_report: Some(json!({
-                    "schemaVersion": 1,
-                    "ok": true,
-                    "process": {
-                        "totalBlocks": 1,
-                        "silentOutputBlocks": 0,
-                        "nonZeroOutputBlocks": 1,
-                        "nonFiniteOutputSamples": 0,
-                        "clippedOutputSamples": 0,
-                        "maxOutputPeak": 0.75,
-                        "outputRms": 0.25,
-                        "noteTiming": {
-                            "sampleRateHz": 48000,
-                            "notePresent": true,
-                            "noteOnAbsoluteFrame": 0,
-                            "firstNonZeroOutputAbsoluteFrame": 128,
-                            "framesFromNoteOnToFirstNonZeroOutput": 128,
-                            "microsFromNoteOnToFirstNonZeroOutput": 2666
-                        }
-                    }
-                })),
-                ..RuntimeProbeResult::default()
-            }
-        }
-    }
-
-    #[test]
-    fn parses_manifest_and_builds_matrix() {
-        let manifest = RuntimeProbeMatrixManifest::from_json_str(
-            r#"{"schemaVersion":1,"description":"local third-party VST3 smoke matrix","fixtureRoot":"${CARGO_MANIFEST_DIR}/fixtures","cases":[{"name":"instrument-note","pluginPath":"Synth.vst3","classId":"class-a","inputChannels":0,"outputChannels":2,"frames":128,"blocks":8,"note":{"pitch":60,"velocityMilli":750,"channel":1},"parameterChanges":[{"parameterId":42,"valueMilli":500,"sampleOffset":64}],"expectations":{"requireNonZeroOutput":true,"requireNoteResponse":true,"maxNoteToAudioFrames":512,"maxNonFiniteOutputSamples":0,"maxClippedOutputSamples":0,"minOutputRmsMilli":1,"maxOutputPeakMilli":1000}}]}"#,
-        )
-        .expect("manifest");
-
-        let matrix = manifest.to_matrix("/tmp/wvst-host-worker").expect("matrix");
-        let expected_fixture_root =
-            PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("manifest dir"))
-                .join("fixtures");
-
-        assert_eq!(manifest.cases[0].sample_rate_hz, DEFAULT_SAMPLE_RATE_HZ);
-        assert_eq!(matrix.cases().len(), 1);
-        assert_eq!(matrix.cases()[0].name, "instrument-note");
-        assert_eq!(
-            matrix.cases()[0].plugin_path,
-            expected_fixture_root.join("Synth.vst3")
-        );
-        assert_eq!(matrix.cases()[0].input_channels, 0);
-        assert!(
-            matrix.cases()[0]
-                .expectations
-                .as_ref()
-                .expect("expectations")
-                .require_non_zero_output
-        );
-        assert!(
-            matrix.cases()[0]
-                .expectations
-                .as_ref()
-                .expect("expectations")
-                .require_note_response
-        );
-        let mut executor = RecordingExecutor::default();
-        let report = matrix.run_with(&mut executor);
-        assert_eq!(
-            report.schema_version,
-            crate::runtime_matrix::RUNTIME_PROBE_MATRIX_REPORT_SCHEMA_VERSION
-        );
-        assert!(report.all_passed());
-        assert!(
-            executor.invocations[0]
-                .args
-                .contains(&"60:0.750:1".to_string())
-        );
-        assert!(
-            executor.invocations[0]
-                .args
-                .contains(&"42=0.500:64".to_string())
-        );
-        assert!(
-            manifest
-                .to_json_string_pretty()
-                .expect("pretty json")
-                .contains("\"requireNoteResponse\": true")
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_manifest() {
-        let version_error = RuntimeProbeMatrixManifest::from_json_str(
-            r#"{"schemaVersion":2,"cases":[{"name":"x","pluginPath":"/tmp/X.vst3","classId":"a"}]}"#,
-        )
-        .expect_err("unsupported schema");
-        assert!(matches!(
-            version_error,
-            RuntimeProbeMatrixManifestError::UnsupportedSchemaVersion {
-                expected: RUNTIME_PROBE_MATRIX_SCHEMA_VERSION,
-                actual: 2,
-            }
-        ));
-
-        let case_error = RuntimeProbeMatrixManifest::from_json_str(
-            r#"{"schemaVersion":1,"cases":[{"name":"bad-offset","pluginPath":"/tmp/X.vst3","classId":"a","frames":32,"parameterChanges":[{"parameterId":1,"valueMilli":1001,"sampleOffset":0}]}]}"#,
-        )
-        .expect_err("invalid case");
-        assert!(matches!(
-            case_error,
-            RuntimeProbeMatrixManifestError::InvalidCase { case_name, message }
-                if case_name == "bad-offset" && message.contains("valueMilli")
-        ));
-
-        let expectation_error = RuntimeProbeMatrixManifest::from_json_str(
-            r#"{"schemaVersion":1,"cases":[{"name":"bad-expectations","pluginPath":"/tmp/X.vst3","classId":"a","expectations":{"requireNonZeroOutput":true,"requireSilentOutput":true}}]}"#,
-        )
-        .expect_err("invalid expectations");
-        assert!(matches!(
-            expectation_error,
-            RuntimeProbeMatrixManifestError::InvalidCase { case_name, message }
-                if case_name == "bad-expectations" && message.contains("non-zero and silent")
-        ));
-
-        let missing_env = RuntimeProbeMatrixManifest::from_json_str(
-            r#"{"schemaVersion":1,"cases":[{"name":"missing-env","pluginPath":"${WVST_TESTKIT_UNSET_FIXTURE_ROOT}/X.vst3","classId":"a"}]}"#,
-        )
-        .expect("manifest parses")
-        .to_matrix("/tmp/wvst-host-worker")
-        .expect_err("missing env");
-        assert!(matches!(
-            missing_env,
-            RuntimeProbeMatrixManifestError::InvalidCase { case_name, message }
-                if case_name == "missing-env" && message.contains("unset environment variable")
-        ));
-    }
+const fn default_runtime_probe_timeout_millis() -> u64 {
+    DEFAULT_RUNTIME_PROBE_TIMEOUT_MILLIS
 }
+
+const fn is_true(value: &bool) -> bool {
+    *value
+}
+
+fn is_default_runtime_probe_timeout_millis(value: &u64) -> bool {
+    *value == DEFAULT_RUNTIME_PROBE_TIMEOUT_MILLIS
+}
+
+#[cfg(test)]
+#[path = "runtime_matrix_manifest_tests.rs"]
+mod tests;
