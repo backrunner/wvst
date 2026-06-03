@@ -85,6 +85,10 @@ pub struct StreamSharedMemoryProcessParams {
     pub instance_id: u64,
     #[serde(default)]
     pub frames: Option<u16>,
+    #[serde(default)]
+    pub midi_events: Vec<Value>,
+    #[serde(default)]
+    pub parameter_events: Vec<Value>,
 }
 
 #[derive(Debug)]

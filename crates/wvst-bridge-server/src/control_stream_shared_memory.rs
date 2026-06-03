@@ -12,8 +12,8 @@ use crate::stream_shared_memory::{
     StreamSharedMemoryProcessParams, StreamSharedMemoryStatusParams,
 };
 use crate::stream_shared_memory_pump::{
-    SharedMemoryPumpError, SharedMemoryPumpInstanceParams, SharedMemoryPumpStartParams,
-    pump_config_from_params,
+    SharedMemoryPumpClearEventsParams, SharedMemoryPumpEnqueueEventsParams, SharedMemoryPumpError,
+    SharedMemoryPumpInstanceParams, SharedMemoryPumpStartParams, pump_config_from_params,
 };
 
 pub async fn handle_stream_shared_memory_create(
@@ -201,6 +201,7 @@ pub async fn handle_stream_shared_memory_pump_start(
         config,
         std::sync::Arc::clone(context.workers),
         std::sync::Arc::clone(context.metrics),
+        std::sync::Arc::clone(context.shared_memory),
     ) {
         Ok(status) => response_result(id, json!({ "started": true, "status": status })),
         Err(error) => response_pump_error(id, error),
@@ -275,6 +276,56 @@ pub async fn handle_stream_shared_memory_pump_status(
     }
 }
 
+pub async fn handle_stream_shared_memory_pump_enqueue_events(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<SharedMemoryPumpEnqueueEventsParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid stream shared memory pump enqueue events params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.shared_memory_pumps.enqueue_events(params) {
+        Ok(result) => response_result(id, json!(result)),
+        Err(error) => response_pump_error(id, error),
+    }
+}
+
+pub async fn handle_stream_shared_memory_pump_clear_events(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<SharedMemoryPumpClearEventsParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid stream shared memory pump clear events params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context.shared_memory_pumps.clear_events(params) {
+        Ok(result) => response_result(id, json!(result)),
+        Err(error) => response_pump_error(id, error),
+    }
+}
+
 pub async fn handle_stream_shared_memory_process(
     id: Value,
     params: Value,
@@ -297,7 +348,12 @@ pub async fn handle_stream_shared_memory_process(
     let started_at = Instant::now();
     match context
         .workers
-        .process_shared_memory(params.instance_id, params.frames)
+        .process_shared_memory(
+            params.instance_id,
+            params.frames,
+            params.midi_events,
+            params.parameter_events,
+        )
         .await
     {
         Ok(result) => {

@@ -31,7 +31,7 @@ struct RequestContext<'a> {
     plugins: &'a PluginRegistry,
     stream_tracker: &'a AudioStreamTracker,
     audio_in_flight: &'a AudioInFlightLimiter,
-    shared_memory: &'a SharedMemoryStreamRegistry,
+    shared_memory: &'a Arc<SharedMemoryStreamRegistry>,
     shared_memory_pumps: &'a SharedMemoryPumpRegistry,
     workers: &'a Arc<WorkerSupervisor>,
 }
@@ -48,7 +48,7 @@ async fn creates_lists_and_destroys_instance() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_script();
     let workers = Arc::new(WorkerSupervisor::new_for_test(
@@ -95,10 +95,10 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(create_value["result"]["state"], "ready");
     assert_eq!(create_value["result"]["workerState"], "ready");
     assert_eq!(create_value["result"]["streamState"], "open");
-    assert_eq!(create_value["result"]["backend"], "passthrough");
+    assert_eq!(create_value["result"]["backend"], "vst3-runtime");
     assert_eq!(
         create_value["result"]["runtimeCapabilities"]["schemaVersion"],
-        1
+        2
     );
     assert_eq!(
         create_value["result"]["runtimeCapabilities"]["binaryAudioProcess"],
@@ -112,8 +112,14 @@ async fn creates_lists_and_destroys_instance() {
         create_value["result"]["runtimeCapabilities"]["componentState"],
         false
     );
+    assert_eq!(
+        create_value["result"]["runtimeCapabilities"]["unavailable"][0]["capability"],
+        "component-state"
+    );
     assert_eq!(create_value["result"]["latencySamples"], 0);
     assert_eq!(create_value["result"]["tailSamples"], 0);
+    assert_eq!(create_value["result"]["tailInfo"]["kind"], "none");
+    assert_eq!(create_value["result"]["tailInfo"]["finiteSamples"], 0);
 
     let list_value =
         request_json(r#"{"id":2,"method":"instance.list","params":{}}"#, context).await;
@@ -122,6 +128,7 @@ async fn creates_lists_and_destroys_instance() {
         list_value["result"][0]["runtimeCapabilities"]["parameters"],
         true
     );
+    assert_eq!(list_value["result"][0]["tailInfo"]["kind"], "none");
 
     let status_request = serde_json::json!({
         "id": 3,
@@ -139,21 +146,20 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(status_value["result"]["worker"]["instances"], 1);
     assert_eq!(
         status_value["result"]["worker"]["runtime"][0]["runtimeCapabilities"]["schemaVersion"],
-        1
+        2
     );
     assert_eq!(
         status_value["result"]["worker"]["runtime"][0]["runtimeCapabilities"]["parameters"],
         true
     );
     assert_eq!(
+        status_value["result"]["instance"]["runtimeCapabilities"]["unavailable"][0]["reason"],
+        "interface-unavailable"
+    );
+    assert_eq!(
         status_value["result"]["worker"]["runtime"][0]["diagnostics"]["componentHandler"]["totalEvents"],
         3
     );
-    assert_eq!(
-        status_value["result"]["worker"]["runtime"][0]["diagnostics"]["passthroughReason"]["kind"],
-        "non-bundle-path"
-    );
-
     let handler_events_value =
         request_json(r#"{"id":72,"method":"bridge.events","params":{}}"#, context).await;
     let handler_events = handler_events_value["result"]["events"]
@@ -259,6 +265,14 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(
         runtime_snapshot_value["result"]["metadata"]["worker"]["instances"],
         1
+    );
+    assert_eq!(
+        runtime_snapshot_value["result"]["dataPlane"]["sharedMemory"]["attached"],
+        false
+    );
+    assert_eq!(
+        runtime_snapshot_value["result"]["dataPlane"]["sharedMemoryPump"]["running"],
+        false
     );
     assert!(
         runtime_snapshot_value["result"]["recentEvents"]
@@ -488,7 +502,7 @@ async fn creates_lists_and_destroys_instance() {
         42
     );
     assert_eq!(
-        set_state_and_refresh_value["result"]["metadata"]["state"]["stateBase64"],
+        set_state_and_refresh_value["result"]["metadata"]["state"]["controllerStateBase64"],
         "AQID"
     );
     assert_eq!(
@@ -700,7 +714,22 @@ async fn creates_lists_and_destroys_instance() {
     let process_shared_memory_request = serde_json::json!({
         "id": 77,
         "method": "stream.sharedMemory.process",
-        "params": { "instanceId": instance_id, "frames": 2 }
+        "params": {
+            "instanceId": instance_id,
+            "frames": 2,
+            "midiEvents": [{
+                "sampleOffset": 1,
+                "kind": 1,
+                "channel": 0,
+                "data1": 60,
+                "data2": 100
+            }],
+            "parameterEvents": [{
+                "sampleOffset": 1,
+                "parameterId": 42,
+                "valueNormalized": 0.5
+            }]
+        }
     })
     .to_string();
     let process_shared_memory_value = request_json(&process_shared_memory_request, context).await;
@@ -708,6 +737,14 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(
         process_shared_memory_value["result"]["transport"],
         "file-backed-mmap"
+    );
+    assert_eq!(
+        process_shared_memory_value["result"]["inputEvents"]["midiEvents"],
+        1
+    );
+    assert_eq!(
+        process_shared_memory_value["result"]["inputEvents"]["parameterEvents"],
+        1
     );
     let shared_memory_metrics_value = request_json(
         r#"{"id":78,"method":"bridge.metrics","params":{}}"#,
@@ -724,6 +761,10 @@ async fn creates_lists_and_destroys_instance() {
     );
     assert_eq!(
         shared_memory_metrics_value["result"]["sharedMemoryProcessFailures"],
+        0
+    );
+    assert_eq!(
+        shared_memory_metrics_value["result"]["sharedMemoryPumpOverruns"],
         0
     );
     assert_eq!(
@@ -821,7 +862,7 @@ async fn shared_memory_pump_runs_until_stopped() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_script();
     let workers = Arc::new(WorkerSupervisor::new_for_test(
@@ -868,6 +909,27 @@ async fn shared_memory_pump_runs_until_stopped() {
     let pump_start_value = request_json(&pump_start, context).await;
     assert_eq!(pump_start_value["result"]["started"], true);
     assert_eq!(pump_start_value["result"]["status"]["config"]["frames"], 2);
+    assert_eq!(
+        pump_start_value["result"]["status"]["config"]["maxQueuedEvents"],
+        1024
+    );
+    assert_eq!(pump_start_value["result"]["status"]["overruns"], 0);
+    assert_eq!(pump_start_value["result"]["status"]["inputUnderruns"], 0);
+    assert_eq!(
+        pump_start_value["result"]["status"]["outputBackpressure"],
+        0
+    );
+    assert_eq!(pump_start_value["result"]["status"]["workerErrors"], 0);
+    assert_eq!(pump_start_value["result"]["status"]["lastProcessMicros"], 0);
+    assert_eq!(pump_start_value["result"]["status"]["maxProcessMicros"], 0);
+    assert_eq!(
+        pump_start_value["result"]["status"]["lastOverrunMicros"],
+        Value::Null
+    );
+    assert_eq!(
+        pump_start_value["result"]["status"]["lastOutcome"],
+        Value::Null
+    );
 
     let pump_status = wait_for_pump_success(instance_id, context).await;
     assert_eq!(pump_status["result"]["running"], true);
@@ -878,6 +940,85 @@ async fn shared_memory_pump_runs_until_stopped() {
             >= 1
     );
     assert_eq!(pump_status["result"]["status"]["lastSuccessFrames"], 2);
+    assert!(
+        pump_status["result"]["status"]["lastProcessMicros"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        pump_status["result"]["status"]["maxProcessMicros"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        pump_status["result"]["status"]["overruns"]
+            .as_u64()
+            .is_some()
+    );
+    assert_eq!(pump_status["result"]["status"]["lastOutcome"], "success");
+
+    let enqueue_events = serde_json::json!({
+        "id": 5,
+        "method": "stream.sharedMemory.pump.enqueueEvents",
+        "params": {
+            "instanceId": instance_id,
+            "delayIterations": 1,
+            "midiEvents": [
+                {
+                    "sampleOffset": 0,
+                    "kind": 1,
+                    "channel": 0,
+                    "data1": 60,
+                    "data2": 100,
+                    "data3": 0,
+                    "dataLength": 2,
+                    "noteId": 11
+                }
+            ],
+            "parameterEvents": [
+                {
+                    "sampleOffset": 0,
+                    "parameterId": 42,
+                    "valueNormalized": 0.5
+                }
+            ]
+        }
+    })
+    .to_string();
+    let enqueue_value = request_json(&enqueue_events, context).await;
+    assert_eq!(enqueue_value["result"]["queuedEvents"], 2);
+    assert_eq!(enqueue_value["result"]["status"]["pendingEvents"], 2);
+
+    let drained_status = wait_for_pump_drained_events(instance_id, 2, context).await;
+    assert!(
+        drained_status["result"]["status"]["events"]["drainedEvents"]
+            .as_u64()
+            .expect("drained events")
+            >= 2
+    );
+
+    let enqueue_future_events = serde_json::json!({
+        "id": 51,
+        "method": "stream.sharedMemory.pump.enqueueEvents",
+        "params": {
+            "instanceId": instance_id,
+            "delayIterations": 10_000,
+            "midiEvents": [{ "sampleOffset": 0, "kind": 1 }]
+        }
+    })
+    .to_string();
+    let enqueue_future_value = request_json(&enqueue_future_events, context).await;
+    assert_eq!(enqueue_future_value["result"]["queuedEvents"], 1);
+
+    let clear_events = serde_json::json!({
+        "id": 52,
+        "method": "stream.sharedMemory.pump.clearEvents",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let clear_value = request_json(&clear_events, context).await;
+    assert_eq!(clear_value["result"]["clearedEvents"], 1);
+    assert_eq!(clear_value["result"]["status"]["pendingEvents"], 0);
 
     let metrics_value =
         request_json(r#"{"id":6,"method":"bridge.metrics","params":{}}"#, context).await;
@@ -885,6 +1026,44 @@ async fn shared_memory_pump_runs_until_stopped() {
         metrics_value["result"]["sharedMemoryProcessBlocks"]
             .as_u64()
             .expect("process blocks")
+            >= 1
+    );
+    assert!(
+        metrics_value["result"]["sharedMemoryPumpOverruns"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        metrics_value["result"]["sharedMemoryPumpInputUnderruns"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        metrics_value["result"]["sharedMemoryPumpOutputBackpressure"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        metrics_value["result"]["sharedMemoryPumpWorkerErrors"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        metrics_value["result"]["sharedMemoryPumpEventsEnqueued"]
+            .as_u64()
+            .expect("pump events enqueued")
+            >= 3
+    );
+    assert!(
+        metrics_value["result"]["sharedMemoryPumpEventsDrained"]
+            .as_u64()
+            .expect("pump events drained")
+            >= 2
+    );
+    assert!(
+        metrics_value["result"]["sharedMemoryPumpEventsCleared"]
+            .as_u64()
+            .expect("pump events cleared")
             >= 1
     );
 
@@ -896,7 +1075,7 @@ async fn shared_memory_pump_runs_until_stopped() {
     .to_string();
     let pump_stop_value = request_json(&pump_stop, context).await;
     assert_eq!(pump_stop_value["result"]["stopped"], true);
-    assert_eq!(pump_stop_value["result"]["status"]["running"], true);
+    assert_eq!(pump_stop_value["result"]["status"]["running"], false);
 
     let stopped_status = request_json(
         &serde_json::json!({
@@ -933,7 +1112,7 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = Arc::new(WorkerSupervisor::new_for_test(
@@ -967,8 +1146,8 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         context,
     )
     .await;
-    assert_eq!(status_value["error"]["code"], 5037);
-    assert_eq!(status_value["error"]["data"]["kind"], "protocol");
+    assert_eq!(status_value["error"]["code"], 5036);
+    assert_eq!(status_value["error"]["data"]["kind"], "io");
 
     let failed = instances.get(instance_id).expect("failed instance");
     assert_eq!(failed.state, InstanceState::Failed);
@@ -990,14 +1169,13 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_script();
     let workers = Arc::new(WorkerSupervisor::with_options(
         crate::worker_supervisor::WorkerSupervisorOptions::new(worker_path.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
-            .with_framed_control_ipc(false)
             .with_max_instances(1),
     ));
     let context = RequestContext {
@@ -1051,6 +1229,101 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn reclaims_closed_idle_instance_when_worker_limit_is_reached() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
+    let events = BridgeEventBus::new();
+    let metrics = Arc::new(BridgeMetrics::new());
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let worker_path = serve_worker_script();
+    let workers = Arc::new(WorkerSupervisor::with_options(
+        crate::worker_supervisor::WorkerSupervisorOptions::new(worker_path.clone())
+            .with_timeout(Duration::from_secs(5))
+            .with_audio_ipc(false)
+            .with_max_instances(1),
+    ));
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        component_handler_events: &component_handler_events,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
+        workers: &workers,
+    };
+
+    let first = request_json(&instance_create_request(1, &plugin_id), context).await;
+    assert!(first.get("error").is_none(), "{first}");
+    let first_instance = first["result"]["instanceId"].as_u64().expect("first id");
+    let first_stream = first["result"]["streamId"].as_u64().expect("first stream");
+
+    let close = request_json(
+        &instance_request(2, "stream.close", first_instance),
+        context,
+    )
+    .await;
+    assert_eq!(close["result"]["streamState"], "closed");
+
+    let second = request_json(&instance_create_request(3, &plugin_id), context).await;
+    assert!(second.get("error").is_none(), "{second}");
+    let second_instance = second["result"]["instanceId"].as_u64().expect("second id");
+    assert_ne!(second_instance, first_instance);
+    assert_eq!(second["result"]["state"], "ready");
+    assert_eq!(instances.list().len(), 1);
+    assert!(instances.get(first_instance).is_err());
+    assert!(instances.get(second_instance).is_ok());
+    assert_eq!(metrics.snapshot().worker_failures, 0);
+
+    let events_value =
+        request_json(r#"{"id":5,"method":"bridge.events","params":{}}"#, context).await;
+    let policy = worker_policy_decision(&events_value, "resource-limit", "reclaim", "idle-worker");
+    assert_eq!(policy["instanceId"].as_u64(), Some(second_instance));
+    assert_eq!(policy["pluginId"], plugin_id);
+    assert_eq!(policy["data"]["kind"], "idle-worker-reclaimed");
+    assert_eq!(policy["data"]["resource"], "worker-instances");
+    assert_eq!(
+        policy["data"]["reclaimedInstanceId"].as_u64(),
+        Some(first_instance)
+    );
+    assert_eq!(
+        policy["data"]["reclaimedStreamId"].as_u64(),
+        Some(first_stream)
+    );
+
+    let destroyed = events_value["result"]["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find(|event| {
+            event["kind"]["type"] == "worker-destroyed"
+                && event["kind"]["instanceId"].as_u64() == Some(first_instance)
+        })
+        .expect("worker destroyed event");
+    assert_eq!(destroyed["kind"]["streamId"].as_u64(), Some(first_stream));
+
+    let _ = request_json(
+        &instance_request(4, "instance.destroy", second_instance),
+        context,
+    )
+    .await;
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
@@ -1061,7 +1334,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = Arc::new(WorkerSupervisor::new_for_test(
@@ -1173,7 +1446,7 @@ async fn emits_recovery_failed_when_auto_restart_recreate_fails() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_rejects_recreate_after_metrics_exit_script();
     let workers = Arc::new(WorkerSupervisor::new_for_test(
@@ -1251,7 +1524,7 @@ async fn restarts_failed_instance_with_same_stream() {
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_exits_on_metrics_script();
     let workers = Arc::new(WorkerSupervisor::new_for_test(
@@ -1287,7 +1560,7 @@ async fn restarts_failed_instance_with_same_stream() {
         context,
     )
     .await;
-    assert_eq!(failing_status_value["error"]["code"], 5037);
+    assert_eq!(failing_status_value["error"]["code"], 5036);
 
     let restart_value = request_json(
         &instance_request(3, "instance.restart", instance_id),
@@ -1302,7 +1575,7 @@ async fn restarts_failed_instance_with_same_stream() {
     assert_eq!(restart_value["result"]["instance"]["state"], "ready");
     assert_eq!(
         restart_value["result"]["instance"]["backend"],
-        "passthrough"
+        "vst3-runtime"
     );
     assert_eq!(restart_value["result"]["instance"]["latencySamples"], 0);
     assert_eq!(restart_value["result"]["instance"]["tailSamples"], 0);
@@ -1364,7 +1637,7 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
     let plugin = plugins.find(&plugin_id).expect("plugin");
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let workers = Arc::new(WorkerSupervisor::new_for_test(
         PathBuf::from("missing-wvst-host-worker"),
@@ -1521,6 +1794,34 @@ async fn wait_for_pump_success(instance_id: u64, context: RequestContext<'_>) ->
     last_status
 }
 
+async fn wait_for_pump_drained_events(
+    instance_id: u64,
+    drained_events: u64,
+    context: RequestContext<'_>,
+) -> Value {
+    let status_request = serde_json::json!({
+        "id": 100,
+        "method": "stream.sharedMemory.pump.status",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+
+    let mut last_status = Value::Null;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        last_status = request_json(&status_request, context).await;
+        if last_status["result"]["status"]["events"]["drainedEvents"]
+            .as_u64()
+            .unwrap_or(0)
+            >= drained_events
+        {
+            return last_status;
+        }
+    }
+
+    last_status
+}
+
 fn worker_policy_decision<'a>(
     events_value: &'a Value,
     policy: &str,
@@ -1595,125 +1896,307 @@ fn instance_request(id: u64, method: &str, instance_id: u64) -> String {
 
 #[cfg(unix)]
 fn serve_worker_script() -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
     let directory = unique_temp_dir();
     std::fs::create_dir_all(&directory).expect("temp dir");
-    let worker = directory.join("serve-worker.sh");
-    std::fs::write(
-        &worker,
-r#"#!/bin/sh
-runtime_capabilities='"runtimeCapabilities":{"schemaVersion":1,"binaryAudioProcess":true,"componentState":false,"controller":true,"controllerState":true,"parameters":true,"parameterAutomation":true,"units":false,"unitProgramData":false,"programListData":false,"unitData":false,"midiMapping":false,"outputEvents":true,"outputParameterChanges":true,"componentHandlerEvents":true,"connectionPoints":true,"processContext":false}'
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough",%s,"latencySamples":0,"tailSamples":0}}\n' "$id" "$runtime_capabilities" ;;
-    *stream.sharedMemory.attach*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"attached":true,"sharedMemory":{"schemaVersion":1,"transport":"file-backed-mmap"}}}\n' "$id" ;;
-    *stream.sharedMemory.detach*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"detached":true}}\n' "$id" ;;
-    *stream.sharedMemory.process*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"transport":"file-backed-mmap","frames":2}}\n' "$id" ;;
-    *instance.parameters*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameters":[{"id":42,"title":"Gain","shortTitle":"Gain","units":"dB","stepCount":0,"defaultNormalizedValue":0.5,"unitId":0,"flags":{"raw":1,"canAutomate":true,"readOnly":false,"wrapAround":false,"list":false,"hidden":false,"programChange":false,"bypass":false}}]}}\n' "$id" ;;
-    *instance.units*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"unitInfo":null}}\n' "$id" ;;
-    *instance.parameter.info*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.25,"valuePlain":25.0,"valueString":"25 dB"}}\n' "$id" ;;
-    *instance.parameter.valueByString*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.5,"valuePlain":50.0,"valueString":"50 dB"}}\n' "$id" ;;
-    *instance.parameter.normalizedByPlain*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"valueNormalized":0.75,"valuePlain":75.0,"valueString":"75 dB"}}\n' "$id" ;;
-    *instance.parameter.beginEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"begin-edit","valueNormalized":null}}\n' "$id" ;;
-    *instance.parameter.performEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"perform-edit","valueNormalized":0.66}}\n' "$id" ;;
-    *instance.parameter.endEdit*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"parameterId":42,"editKind":"end-edit","valueNormalized":null}}\n' "$id" ;;
-    *instance.getState*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"componentStateBase64":null,"controllerStateBase64":"AQID","stateBase64":"AQID"}}\n' "$id" ;;
-    *instance.setState*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"componentStateBytes":null,"controllerStateBytes":3,"stateBytes":3}}\n' "$id" ;;
-    *instance.setUnitProgramData*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"listOrUnitId":1,"programIndex":2,"dataBytes":3}}\n' "$id" ;;
-    *instance.programData.set*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"listId":1,"programIndex":2,"dataBytes":3}}\n' "$id" ;;
-    *instance.unitData.set*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"unitId":1,"dataBytes":3}}\n' "$id" ;;
-    *instance.connection.notifyComponent*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"component","messageId":"TextMessage","attributeCount":2,"notified":true}}\n' "$id" ;;
-    *instance.connection.notifyController*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"target":"controller","messageId":"TextMessage","attributeCount":0,"notified":true}}\n' "$id" ;;
-    *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
-    *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
-    *worker.metrics*) printf '{"jsonrpc":"2.0","id":%s,"result":{"ipcVersion":1,"instances":1,"runtime":[{"streamId":1,"backend":"passthrough",%s,"latencySamples":0,"tailSamples":0,"diagnostics":{"passthroughReason":{"kind":"non-bundle-path","message":"test fallback"},"componentHandler":{"totalEvents":3,"recentEvents":[{"sequence":1,"kind":"begin-edit","parameterId":42},{"sequence":2,"kind":"perform-edit","parameterId":42,"valueNormalized":0.75},{"sequence":3,"kind":"restart-component","flags":24,"restartFlags":{"raw":24,"reloadComponent":false,"ioChanged":false,"paramValuesChanged":false,"latencyChanged":true,"paramTitlesChanged":true,"midiCcAssignmentChanged":false,"noteExpressionChanged":false,"ioTitlesChanged":false,"prefetchableSupportChanged":false,"routingInfoChanged":false,"keyswitchChanged":false,"paramIdMappingChanged":false,"unknownBits":0}}]}}}]}}\n' "$id" "$runtime_capabilities" ;;
-    *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
-    *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
-  esac
-done
-"#,
-    )
-    .expect("script");
-    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&worker, permissions).expect("permissions");
+    let worker = directory.join("serve-worker.py");
+    let source = format!("{FRAMED_WORKER_PREAMBLE}{BASE_WORKER_FIXTURE}");
+    write_framed_worker_script(&worker, &source);
     worker
 }
 
 #[cfg(unix)]
 fn serve_worker_exits_on_metrics_script() -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
     let directory = unique_temp_dir();
     std::fs::create_dir_all(&directory).expect("temp dir");
-    let worker = directory.join("serve-worker-exits.sh");
-    std::fs::write(
-        &worker,
-        r#"#!/bin/sh
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}\n' "$id" ;;
-    *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
-    *instance.stopProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"stopped"}}\n' "$id" ;;
-    *worker.metrics*) exit 0 ;;
-    *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
-    *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
-  esac
-done
-"#,
-    )
-    .expect("script");
-    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&worker, permissions).expect("permissions");
+    let worker = directory.join("serve-worker-exits.py");
+    let source = format!("{FRAMED_WORKER_PREAMBLE}{EXIT_ON_METRICS_WORKER_FIXTURE}");
+    write_framed_worker_script(&worker, &source);
     worker
 }
 
 #[cfg(unix)]
 fn serve_worker_rejects_recreate_after_metrics_exit_script() -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
     let directory = unique_temp_dir();
     std::fs::create_dir_all(&directory).expect("temp dir");
     let marker = directory.join("created-once");
-    let worker = directory.join("serve-worker-rejects-recreate.sh");
-    std::fs::write(
-        &worker,
-        format!(
-            r#"#!/bin/sh
-marker={marker:?}
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"workerName":"test-worker","ipcVersion":1,"capabilities":{{"instanceLifecycle":true,"binaryAudioProcess":true}}}}}}\n' "$id" ;;
-    *instance.create*)
-      if [ -f "$marker" ]; then
-        printf '{{"jsonrpc":"2.0","id":%s,"error":{{"code":4220,"message":"component create failed","data":{{"kind":"vst3-runtime-init","stage":"component.create","hostError":"factory-create-instance-failed","message":"component create failed"}}}}}}\n' "$id"
-      else
-        : > "$marker"
-        printf '{{"jsonrpc":"2.0","id":%s,"result":{{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}}}\n' "$id"
-      fi
-      ;;
-    *instance.startProcessing*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"instanceId":1,"streamId":1,"workerState":"processing"}}}}\n' "$id" ;;
-    *worker.metrics*) exit 0 ;;
-    *) printf '{{"jsonrpc":"2.0","id":%s,"error":{{"code":-32601,"message":"unknown"}}}}\n' "$id" ;;
-  esac
-done
-"#,
-            marker = marker.to_string_lossy()
-        ),
-    )
-    .expect("script");
-    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&worker, permissions).expect("permissions");
+    let worker = directory.join("serve-worker-rejects-recreate.py");
+    let source = format!("{FRAMED_WORKER_PREAMBLE}{REJECT_RECREATE_WORKER_FIXTURE}")
+        .replace("__MARKER__", &marker.to_string_lossy());
+    write_framed_worker_script(&worker, &source);
     worker
 }
+
+#[cfg(unix)]
+fn write_framed_worker_script(path: &std::path::Path, source: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, source).expect("script");
+    let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).expect("permissions");
+}
+
+#[cfg(unix)]
+const FRAMED_WORKER_PREAMBLE: &str = r#"#!/usr/bin/env python3
+import json
+import os
+import struct
+import sys
+
+MAGIC = int.from_bytes(b"WVCI", "little")
+VERSION = 1
+HEADER_LEN = 24
+KIND_REQUEST = 1
+KIND_RESPONSE = 2
+KIND_ERROR = 3
+KIND_BATCH_REQUEST = 4
+KIND_BATCH_RESPONSE = 5
+MAX_BODY = 16 * 1024 * 1024
+
+def read_exact(size):
+    data = sys.stdin.buffer.read(size)
+    if not data:
+        return None
+    while len(data) < size:
+        chunk = sys.stdin.buffer.read(size - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
+
+def pack_frame(kind, status, sequence, body):
+    return struct.pack("<IHHHHIQ", MAGIC, VERSION, HEADER_LEN, kind, status, len(body), sequence) + body
+
+def ok(request, result):
+    body = json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "result": result}, separators=(",", ":")).encode()
+    return KIND_RESPONSE, 0, body, False
+
+def err(request, code, message, data=None):
+    payload = {"jsonrpc": "2.0", "id": request.get("id"), "error": {"code": code, "message": message}}
+    if data is not None:
+        payload["error"]["data"] = data
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    return KIND_ERROR, code & 0xFFFF, body, False
+
+def hello(request):
+    return ok(request, {
+        "workerName": "test-worker",
+        "ipcVersion": 1,
+        "capabilities": {
+            "instanceLifecycle": True,
+            "binaryAudioProcess": True,
+            "framedControlIpc": True,
+            "framedControlIpcVersion": 1,
+            "framedControlMaxBodyBytes": MAX_BODY,
+            "framedControlSequenceIds": True,
+            "framedControlStatusCodes": True,
+            "framedControlErrorResponses": True,
+            "framedControlBatching": True,
+        },
+    })
+
+def ready_result(state="ready"):
+    return {
+        "instanceId": 1,
+        "streamId": 1,
+        "workerState": state,
+        "backend": "vst3-runtime",
+        "latencySamples": 0,
+        "tailSamples": 0,
+        "tailInfo": {"samples": 0, "kind": "none", "finiteSamples": 0},
+    }
+
+def run():
+    while True:
+        header = read_exact(HEADER_LEN)
+        if header is None:
+            return
+        magic, version, header_len, kind, status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
+        body = read_exact(body_len)
+        if body is None:
+            return
+        if kind == KIND_BATCH_REQUEST:
+            output = bytearray()
+            offset = 0
+            while offset < len(body):
+                child_header = body[offset:offset + HEADER_LEN]
+                cmagic, cversion, cheader_len, ckind, cstatus, cbody_len, csequence = struct.unpack("<IHHHHIQ", child_header)
+                offset += HEADER_LEN
+                child_body = body[offset:offset + cbody_len]
+                offset += cbody_len
+                request = json.loads(child_body.decode())
+                rkind, rstatus, rbody, should_exit = handle(request)
+                output.extend(pack_frame(rkind, rstatus, csequence, rbody))
+                if should_exit:
+                    sys.stdout.buffer.write(pack_frame(KIND_BATCH_RESPONSE, 0, sequence, bytes(output)))
+                    sys.stdout.buffer.flush()
+                    return
+            sys.stdout.buffer.write(pack_frame(KIND_BATCH_RESPONSE, 0, sequence, bytes(output)))
+            sys.stdout.buffer.flush()
+            continue
+        request = json.loads(body.decode())
+        rkind, rstatus, rbody, should_exit = handle(request)
+        sys.stdout.buffer.write(pack_frame(rkind, rstatus, sequence, rbody))
+        sys.stdout.buffer.flush()
+        if should_exit:
+            return
+
+"#;
+
+#[cfg(unix)]
+const BASE_WORKER_FIXTURE: &str = r#"
+RUNTIME_CAPABILITIES = {
+    "schemaVersion": 2,
+    "binaryAudioProcess": True,
+    "componentState": False,
+    "controller": True,
+    "controllerState": True,
+    "parameters": True,
+    "parameterAutomation": True,
+    "units": False,
+    "unitProgramData": False,
+    "programListData": False,
+    "unitData": False,
+    "midiMapping": False,
+    "outputEvents": True,
+    "outputParameterChanges": True,
+    "componentHandlerEvents": True,
+    "connectionPoints": True,
+    "processContext": False,
+    "unavailable": [
+        {"capability": "component-state", "reason": "interface-unavailable", "message": "component state interface unavailable", "hint": "Use controller state or reload the plugin if component state is required."},
+        {"capability": "unit-data", "reason": "interface-unavailable", "hint": "Use component/controller state when the plugin does not expose IUnitData."},
+    ],
+}
+
+def create_ready():
+    result = ready_result()
+    result["runtimeCapabilities"] = RUNTIME_CAPABILITIES
+    return result
+
+def metrics_result():
+    return {
+        "ipcVersion": 1,
+        "instances": 1,
+        "runtime": [{
+            "streamId": 1,
+            "backend": "vst3-runtime",
+            "runtimeCapabilities": RUNTIME_CAPABILITIES,
+            "latencySamples": 0,
+            "tailSamples": 0,
+            "tailInfo": {"samples": 0, "kind": "none", "finiteSamples": 0},
+            "diagnostics": {
+                "componentHandler": {
+                    "totalEvents": 3,
+                    "recentEvents": [
+                        {"sequence": 1, "kind": "begin-edit", "parameterId": 42},
+                        {"sequence": 2, "kind": "perform-edit", "parameterId": 42, "valueNormalized": 0.75},
+                        {"sequence": 3, "kind": "restart-component", "flags": 24, "restartFlags": {"raw": 24, "reloadComponent": False, "ioChanged": False, "paramValuesChanged": False, "latencyChanged": True, "paramTitlesChanged": True, "midiCcAssignmentChanged": False, "noteExpressionChanged": False, "ioTitlesChanged": False, "prefetchableSupportChanged": False, "routingInfoChanged": False, "keyswitchChanged": False, "paramIdMappingChanged": False, "unknownBits": 0}},
+                    ],
+                },
+            },
+        }],
+    }
+
+def handle(request):
+    method = request.get("method", "")
+    params = request.get("params") or {}
+    if method == "worker.hello":
+        return hello(request)
+    if method == "instance.create":
+        return ok(request, create_ready())
+    if method == "stream.sharedMemory.attach":
+        return ok(request, {"instanceId": 1, "streamId": 1, "attached": True, "sharedMemory": {"schemaVersion": 1, "transport": "file-backed-mmap"}})
+    if method == "stream.sharedMemory.detach":
+        return ok(request, {"instanceId": 1, "streamId": 1, "detached": True})
+    if method == "stream.sharedMemory.process":
+        has_events = bool(params.get("midiEvents"))
+        return ok(request, {"instanceId": 1, "streamId": 1, "transport": "file-backed-mmap", "frames": 2, "inputEvents": {"midiEvents": 1 if has_events else 0, "parameterEvents": 1 if has_events else 0, "vst3InputEvents": 1 if has_events else 0, "vst3ParameterChanges": 1 if has_events else 0}})
+    if method == "instance.parameters":
+        return ok(request, {"instanceId": 1, "parameters": [{"id": 42, "title": "Gain", "shortTitle": "Gain", "units": "dB", "stepCount": 0, "defaultNormalizedValue": 0.5, "unitId": 0, "flags": {"raw": 1, "canAutomate": True, "readOnly": False, "wrapAround": False, "list": False, "hidden": False, "programChange": False, "bypass": False}}]})
+    if method == "instance.units":
+        return ok(request, {"instanceId": 1, "unitInfo": None})
+    if method == "instance.parameter.info":
+        return ok(request, {"instanceId": 1, "parameterId": 42, "valueNormalized": 0.25, "valuePlain": 25.0, "valueString": "25 dB"})
+    if method == "instance.parameter.valueByString":
+        return ok(request, {"instanceId": 1, "parameterId": 42, "valueNormalized": 0.5, "valuePlain": 50.0, "valueString": "50 dB"})
+    if method == "instance.parameter.normalizedByPlain":
+        return ok(request, {"instanceId": 1, "parameterId": 42, "valueNormalized": 0.75, "valuePlain": 75.0, "valueString": "75 dB"})
+    if method == "instance.parameter.beginEdit":
+        return ok(request, {"instanceId": 1, "parameterId": 42, "editKind": "begin-edit", "valueNormalized": None})
+    if method == "instance.parameter.performEdit":
+        return ok(request, {"instanceId": 1, "parameterId": 42, "editKind": "perform-edit", "valueNormalized": 0.66})
+    if method == "instance.parameter.endEdit":
+        return ok(request, {"instanceId": 1, "parameterId": 42, "editKind": "end-edit", "valueNormalized": None})
+    if method == "instance.getState":
+        return ok(request, {"instanceId": 1, "componentStateBase64": None, "controllerStateBase64": "AQID"})
+    if method == "instance.setState":
+        return ok(request, {"instanceId": 1, "componentStateBytes": None, "controllerStateBytes": 3})
+    if method == "instance.setUnitProgramData":
+        return ok(request, {"instanceId": 1, "listOrUnitId": 1, "programIndex": 2, "dataBytes": 3})
+    if method == "instance.programData.set":
+        return ok(request, {"instanceId": 1, "listId": 1, "programIndex": 2, "dataBytes": 3})
+    if method == "instance.unitData.set":
+        return ok(request, {"instanceId": 1, "unitId": 1, "dataBytes": 3})
+    if method == "instance.connection.notifyComponent":
+        return ok(request, {"instanceId": 1, "target": "component", "messageId": "TextMessage", "attributeCount": 2, "notified": True})
+    if method == "instance.connection.notifyController":
+        return ok(request, {"instanceId": 1, "target": "controller", "messageId": "TextMessage", "attributeCount": 0, "notified": True})
+    if method == "instance.startProcessing":
+        return ok(request, {"instanceId": 1, "streamId": 1, "workerState": "processing"})
+    if method == "instance.stopProcessing":
+        return ok(request, {"instanceId": 1, "streamId": 1, "workerState": "stopped"})
+    if method == "worker.metrics":
+        return ok(request, metrics_result())
+    if method == "instance.destroy":
+        return ok(request, {"instanceId": 1, "streamId": 1, "workerState": "destroyed"})
+    return err(request, -32601, "unknown")
+
+run()
+"#;
+
+#[cfg(unix)]
+const EXIT_ON_METRICS_WORKER_FIXTURE: &str = r#"
+def handle(request):
+    method = request.get("method", "")
+    if method == "worker.hello":
+        return hello(request)
+    if method == "instance.create":
+        return ok(request, ready_result())
+    if method == "instance.startProcessing":
+        return ok(request, {"instanceId": 1, "streamId": 1, "workerState": "processing"})
+    if method == "instance.stopProcessing":
+        return ok(request, {"instanceId": 1, "streamId": 1, "workerState": "stopped"})
+    if method == "worker.metrics":
+        sys.exit(0)
+    if method == "instance.destroy":
+        return ok(request, {"instanceId": 1, "streamId": 1, "workerState": "destroyed"})
+    return err(request, -32601, "unknown")
+
+run()
+"#;
+
+#[cfg(unix)]
+const REJECT_RECREATE_WORKER_FIXTURE: &str = r#"
+MARKER = "__MARKER__"
+
+def handle(request):
+    method = request.get("method", "")
+    if method == "worker.hello":
+        return hello(request)
+    if method == "instance.create":
+        if os.path.exists(MARKER):
+            return err(request, 4220, "component create failed", {"kind": "vst3-runtime-init", "stage": "component.create", "hostError": "factory-create-instance-failed", "message": "component create failed"})
+        open(MARKER, "w").close()
+        return ok(request, ready_result())
+    if method == "instance.startProcessing":
+        return ok(request, {"instanceId": 1, "streamId": 1, "workerState": "processing"})
+    if method == "worker.metrics":
+        sys.exit(0)
+    return err(request, -32601, "unknown")
+
+run()
+"#;
 
 fn unique_temp_dir() -> PathBuf {
     let suffix = std::time::SystemTime::now()

@@ -106,7 +106,7 @@ impl WorkerAudioConnection {
         match response.header.kind {
             WorkerAudioMessageKind::ProcessResponse => Ok(response.body),
             WorkerAudioMessageKind::ProcessError => {
-                let error = decode_process_error_body(&response.body);
+                let error = decode_process_error_body(&response.body)?;
                 Err(WorkerSupervisorError::WorkerRejected {
                     code: i64::from(response.header.status_code),
                     message: error.message,
@@ -216,17 +216,18 @@ pub(super) struct DecodedWorkerAudioError {
     pub(super) data: Option<Value>,
 }
 
-pub(super) fn decode_process_error_body(body: &[u8]) -> DecodedWorkerAudioError {
-    match serde_json::from_slice::<WorkerAudioErrorBody>(body) {
-        Ok(error) => DecodedWorkerAudioError {
+pub(super) fn decode_process_error_body(
+    body: &[u8],
+) -> Result<DecodedWorkerAudioError, WorkerSupervisorError> {
+    serde_json::from_slice::<WorkerAudioErrorBody>(body)
+        .map(|error| DecodedWorkerAudioError {
             message: error.message,
             data: error.data,
-        },
-        Err(_) => DecodedWorkerAudioError {
-            message: String::from_utf8_lossy(body).into_owned(),
-            data: None,
-        },
-    }
+        })
+        .map_err(|error| WorkerSupervisorError::Protocol {
+            message: format!("invalid audio process error body: {error}"),
+            stderr: String::new(),
+        })
 }
 
 #[cfg(test)]
@@ -246,7 +247,7 @@ mod tests {
         })
         .to_string();
 
-        let error = decode_process_error_body(body.as_bytes());
+        let error = decode_process_error_body(body.as_bytes()).expect("structured body");
 
         assert_eq!(error.message, "VST3 process failed");
         assert_eq!(
@@ -256,11 +257,15 @@ mod tests {
     }
 
     #[test]
-    fn keeps_legacy_text_process_error_body() {
-        let error = decode_process_error_body(b"legacy process error");
+    fn rejects_malformed_process_error_body() {
+        let error = decode_process_error_body(b"process error").expect_err("malformed body");
 
-        assert_eq!(error.message, "legacy process error");
-        assert_eq!(error.data, None);
+        assert!(matches!(error, WorkerSupervisorError::Protocol { .. }));
+        assert!(
+            error
+                .rpc_message()
+                .contains("invalid audio process error body")
+        );
     }
 
     #[test]

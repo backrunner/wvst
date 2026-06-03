@@ -1,17 +1,44 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tokio::time::{self, MissedTickBehavior};
+use tokio::time;
 
 use crate::metrics::BridgeMetrics;
-use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorError};
+use crate::stream_shared_memory::SharedMemoryStreamRegistry;
+use crate::worker_supervisor::WorkerSupervisor;
+
+mod config;
+mod error;
+mod event_queue;
+mod runtime;
+mod scheduler;
+
+pub use config::{
+    SharedMemoryPumpConfig, SharedMemoryPumpInstanceParams, SharedMemoryPumpStartParams,
+    default_interval_micros, pump_config_from_params,
+};
+pub use error::SharedMemoryPumpError;
+pub use event_queue::{
+    SharedMemoryPumpClearEventsParams, SharedMemoryPumpClearEventsResult,
+    SharedMemoryPumpEnqueueEventsParams, SharedMemoryPumpEnqueueEventsResult,
+    SharedMemoryPumpEventOverflowPolicy, SharedMemoryPumpEventQueueStatus,
+};
+use runtime::{SharedMemoryPumpRuntime, outcome_from_code, process_once};
+#[cfg(test)]
+use runtime::{
+    classify_worker_error, record_preflight_skip, record_process_timing, record_tick_outcome,
+};
+pub use scheduler::{
+    SharedMemoryPumpPreflightSkip, SharedMemoryPumpRingStatus, SharedMemoryPumpScheduleStatus,
+    SharedMemoryPumpSchedulingConfig, SharedMemoryPumpSchedulingMode,
+};
 
 #[derive(Debug, Default)]
 pub struct SharedMemoryPumpRegistry {
@@ -23,16 +50,9 @@ struct SharedMemoryPumpRecord {
     config: SharedMemoryPumpConfig,
     started_at: Instant,
     runtime: Arc<SharedMemoryPumpRuntime>,
+    metrics: Arc<BridgeMetrics>,
     stop: watch::Sender<bool>,
     task: JoinHandle<()>,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SharedMemoryPumpConfig {
-    pub instance_id: u64,
-    pub frames: u16,
-    pub interval_micros: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -45,8 +65,28 @@ pub struct SharedMemoryPumpStatus {
     pub iterations: u64,
     pub successes: u64,
     pub failures: u64,
+    pub overruns: u64,
+    pub input_underruns: u64,
+    pub output_backpressure: u64,
+    pub worker_errors: u64,
+    pub last_process_micros: u64,
+    pub max_process_micros: u64,
+    pub last_overrun_micros: Option<u64>,
+    pub last_outcome: Option<SharedMemoryPumpTickOutcome>,
     pub last_success_frames: Option<u64>,
+    pub preflight_skips: u64,
+    pub schedule: SharedMemoryPumpScheduleStatus,
+    pub events: SharedMemoryPumpEventQueueStatus,
     pub last_error: Option<SharedMemoryPumpLastError>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SharedMemoryPumpTickOutcome {
+    Success,
+    InputUnderrun,
+    OutputBackpressure,
+    WorkerError,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -57,39 +97,13 @@ pub struct SharedMemoryPumpLastError {
     pub data: Value,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SharedMemoryPumpStartParams {
-    pub instance_id: u64,
-    #[serde(default)]
-    pub frames: Option<u16>,
-    #[serde(default)]
-    pub interval_micros: Option<u64>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SharedMemoryPumpInstanceParams {
-    pub instance_id: u64,
-}
-
-#[derive(Debug)]
-pub enum SharedMemoryPumpError {
-    AlreadyRunning { instance_id: u64 },
-    NotAttached { instance_id: u64 },
-    StreamClosed { instance_id: u64 },
-    InstanceNotProcessing { instance_id: u64 },
-    InvalidFrames { frames: u16, max_frames: u16 },
-    InvalidInterval,
-    RegistryUnavailable,
-}
-
 impl SharedMemoryPumpRegistry {
     pub fn start(
         &self,
         config: SharedMemoryPumpConfig,
         workers: Arc<WorkerSupervisor>,
         metrics: Arc<BridgeMetrics>,
+        shared_memory: Arc<SharedMemoryStreamRegistry>,
     ) -> Result<SharedMemoryPumpStatus, SharedMemoryPumpError> {
         let mut records = self
             .records
@@ -101,12 +115,16 @@ impl SharedMemoryPumpRegistry {
             });
         }
 
-        let runtime = Arc::new(SharedMemoryPumpRuntime::default());
+        let runtime = Arc::new(SharedMemoryPumpRuntime::new(
+            config.interval_micros,
+            config.max_queued_events,
+        ));
         let (stop, stop_rx) = watch::channel(false);
         let task = tokio::spawn(run_pump(
             config,
             Arc::clone(&workers),
             Arc::clone(&metrics),
+            Arc::clone(&shared_memory),
             Arc::clone(&runtime),
             stop_rx,
         ));
@@ -114,10 +132,11 @@ impl SharedMemoryPumpRegistry {
             config,
             started_at: Instant::now(),
             runtime,
+            metrics,
             stop,
             task,
         };
-        let status = status_from_record(&record);
+        let status = status_from_record(&record, true);
         records.insert(config.instance_id, record);
         Ok(status)
     }
@@ -142,7 +161,72 @@ impl SharedMemoryPumpRegistry {
             .records
             .lock()
             .map_err(|_| SharedMemoryPumpError::RegistryUnavailable)?;
-        Ok(records.get(&instance_id).map(status_from_record))
+        Ok(records
+            .get(&instance_id)
+            .map(|record| status_from_record(record, true)))
+    }
+
+    pub fn enqueue_events(
+        &self,
+        params: SharedMemoryPumpEnqueueEventsParams,
+    ) -> Result<SharedMemoryPumpEnqueueEventsResult, SharedMemoryPumpError> {
+        let records = self
+            .records
+            .lock()
+            .map_err(|_| SharedMemoryPumpError::RegistryUnavailable)?;
+        let Some(record) = records.get(&params.instance_id) else {
+            return Err(SharedMemoryPumpError::NotRunning {
+                instance_id: params.instance_id,
+            });
+        };
+        let target_iteration = event_target_iteration(
+            record.runtime.iterations.load(Ordering::Relaxed),
+            params.target_iteration,
+            params.delay_iterations,
+        )?;
+        let mut result = record.runtime.enqueue_events(
+            target_iteration,
+            params.midi_events,
+            params.parameter_events,
+            params.overflow_policy,
+        )?;
+        result.instance_id = params.instance_id;
+        record
+            .metrics
+            .record_shared_memory_pump_events_enqueued(result.queued_events);
+        if result.dropped_events > 0 {
+            record
+                .metrics
+                .record_shared_memory_pump_events_dropped(result.dropped_events);
+        }
+        Ok(result)
+    }
+
+    pub fn clear_events(
+        &self,
+        params: SharedMemoryPumpClearEventsParams,
+    ) -> Result<SharedMemoryPumpClearEventsResult, SharedMemoryPumpError> {
+        let records = self
+            .records
+            .lock()
+            .map_err(|_| SharedMemoryPumpError::RegistryUnavailable)?;
+        let Some(record) = records.get(&params.instance_id) else {
+            return Err(SharedMemoryPumpError::NotRunning {
+                instance_id: params.instance_id,
+            });
+        };
+        let (cleared_batches, cleared_events) = record.runtime.clear_events();
+        if cleared_events > 0 {
+            record
+                .metrics
+                .record_shared_memory_pump_events_cleared(cleared_events);
+        }
+        Ok(SharedMemoryPumpClearEventsResult {
+            instance_id: params.instance_id,
+            cleared_events,
+            cleared_batches,
+            status: record.runtime.event_queue_status(),
+        })
     }
 }
 
@@ -159,151 +243,80 @@ impl Drop for SharedMemoryPumpRegistry {
     }
 }
 
-impl SharedMemoryPumpError {
-    pub fn rpc_code(&self) -> i64 {
-        match self {
-            Self::AlreadyRunning { .. }
-            | Self::NotAttached { .. }
-            | Self::StreamClosed { .. }
-            | Self::InstanceNotProcessing { .. } => 4096,
-            Self::InvalidFrames { .. } | Self::InvalidInterval => 4222,
-            Self::RegistryUnavailable => 5037,
-        }
-    }
-
-    pub fn rpc_message(&self) -> String {
-        match self {
-            Self::AlreadyRunning { instance_id } => {
-                format!("shared memory pump already running for instance {instance_id}")
-            }
-            Self::NotAttached { instance_id } => {
-                format!("shared memory stream is not attached for instance {instance_id}")
-            }
-            Self::StreamClosed { instance_id } => {
-                format!("stream is closed for instance {instance_id}")
-            }
-            Self::InstanceNotProcessing { instance_id } => {
-                format!("instance {instance_id} is not processing")
-            }
-            Self::InvalidFrames { frames, max_frames } => {
-                format!("invalid pump frames {frames}; maxBlockFrames is {max_frames}")
-            }
-            Self::InvalidInterval => "intervalMicros must be non-zero".to_string(),
-            Self::RegistryUnavailable => "shared memory pump registry unavailable".to_string(),
-        }
-    }
-
-    pub fn rpc_data(&self) -> Value {
-        match self {
-            Self::AlreadyRunning { instance_id } => {
-                json!({ "kind": "shared-memory-pump-already-running", "instanceId": instance_id })
-            }
-            Self::NotAttached { instance_id } => {
-                json!({ "kind": "shared-memory-not-attached", "instanceId": instance_id })
-            }
-            Self::StreamClosed { instance_id } => {
-                json!({ "kind": "stream-closed", "instanceId": instance_id })
-            }
-            Self::InstanceNotProcessing { instance_id } => {
-                json!({ "kind": "instance-not-processing", "instanceId": instance_id })
-            }
-            Self::InvalidFrames { frames, max_frames } => {
-                json!({ "kind": "invalid-pump-frames", "frames": frames, "maxFrames": max_frames })
-            }
-            Self::InvalidInterval => {
-                json!({ "kind": "invalid-pump-interval" })
-            }
-            Self::RegistryUnavailable => {
-                json!({ "kind": "shared-memory-pump-registry-unavailable" })
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct SharedMemoryPumpRuntime {
-    iterations: AtomicU64,
-    successes: AtomicU64,
-    failures: AtomicU64,
-    last_success_frames: AtomicU64,
-    last_error: Mutex<Option<SharedMemoryPumpLastError>>,
-}
-
 async fn run_pump(
     config: SharedMemoryPumpConfig,
     workers: Arc<WorkerSupervisor>,
     metrics: Arc<BridgeMetrics>,
+    shared_memory: Arc<SharedMemoryStreamRegistry>,
     runtime: Arc<SharedMemoryPumpRuntime>,
     mut stop: watch::Receiver<bool>,
 ) {
-    let mut interval = time::interval(Duration::from_micros(config.interval_micros));
-    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
+    let mut next_delay = Duration::ZERO;
     loop {
-        tokio::select! {
-            changed = stop.changed() => {
-                if changed.is_err() || *stop.borrow() {
-                    return;
-                }
-            }
-            _ = interval.tick() => {
-                process_once(config, &workers, &metrics, &runtime).await;
-            }
+        if wait_for_next_tick(next_delay, &mut stop).await {
+            return;
         }
+        let report = process_once(config, &workers, &metrics, &shared_memory, &runtime).await;
+        let delay_micros = config
+            .scheduling
+            .next_delay_micros(report.outcome, report.ring_status.as_ref());
+        runtime.record_schedule(delay_micros, report.ring_status);
+        next_delay = Duration::from_micros(delay_micros);
     }
 }
 
-async fn process_once(
-    config: SharedMemoryPumpConfig,
-    workers: &WorkerSupervisor,
-    metrics: &BridgeMetrics,
-    runtime: &SharedMemoryPumpRuntime,
-) {
-    runtime.iterations.fetch_add(1, Ordering::Relaxed);
-    let started_at = Instant::now();
-    match workers
-        .process_shared_memory(config.instance_id, Some(config.frames))
-        .await
-    {
-        Ok(result) => {
-            let frames = result.get("frames").and_then(Value::as_u64).unwrap_or(0);
-            runtime.successes.fetch_add(1, Ordering::Relaxed);
-            runtime.last_success_frames.store(frames, Ordering::Relaxed);
-            if let Ok(mut last_error) = runtime.last_error.lock() {
-                *last_error = None;
-            }
-            metrics.record_shared_memory_process_success(
-                frames,
-                started_at.elapsed().as_micros() as u64,
-            );
-        }
-        Err(error) => {
-            runtime.failures.fetch_add(1, Ordering::Relaxed);
-            if let Ok(mut last_error) = runtime.last_error.lock() {
-                *last_error = Some(last_error_from_worker(error));
-            }
-            metrics.record_shared_memory_process_failure(started_at.elapsed().as_micros() as u64);
-        }
+async fn wait_for_next_tick(delay: Duration, stop: &mut watch::Receiver<bool>) -> bool {
+    if delay.is_zero() {
+        return false;
+    }
+    tokio::select! {
+        changed = stop.changed() => changed.is_err() || *stop.borrow(),
+        _ = time::sleep(delay) => false,
     }
 }
 
 fn stop_record(record: SharedMemoryPumpRecord) -> SharedMemoryPumpStatus {
-    let status = status_from_record(&record);
     let _ = record.stop.send(true);
-    status
+    status_from_record(&record, false)
 }
 
-fn status_from_record(record: &SharedMemoryPumpRecord) -> SharedMemoryPumpStatus {
+fn status_from_record(record: &SharedMemoryPumpRecord, running: bool) -> SharedMemoryPumpStatus {
     let last_success_frames = record.runtime.last_success_frames.load(Ordering::Relaxed);
+    let last_overrun_micros = record.runtime.last_overrun_micros.load(Ordering::Relaxed);
+    let last_outcome = outcome_from_code(record.runtime.last_outcome.load(Ordering::Relaxed));
     SharedMemoryPumpStatus {
-        running: true,
+        running,
         task_finished: record.task.is_finished(),
         uptime_ms: record.started_at.elapsed().as_millis() as u64,
         config: record.config,
         iterations: record.runtime.iterations.load(Ordering::Relaxed),
         successes: record.runtime.successes.load(Ordering::Relaxed),
         failures: record.runtime.failures.load(Ordering::Relaxed),
+        preflight_skips: record.runtime.preflight_skips.load(Ordering::Relaxed),
+        overruns: record.runtime.overruns.load(Ordering::Relaxed),
+        input_underruns: record.runtime.input_underruns.load(Ordering::Relaxed),
+        output_backpressure: record.runtime.output_backpressure.load(Ordering::Relaxed),
+        worker_errors: record.runtime.worker_errors.load(Ordering::Relaxed),
+        last_process_micros: record.runtime.last_process_micros.load(Ordering::Relaxed),
+        max_process_micros: record.runtime.max_process_micros.load(Ordering::Relaxed),
+        last_overrun_micros: (last_overrun_micros > 0).then_some(last_overrun_micros),
+        last_outcome,
         last_success_frames: (last_success_frames > 0).then_some(last_success_frames),
+        schedule: SharedMemoryPumpScheduleStatus {
+            config: record.config.scheduling,
+            current_interval_micros: record
+                .runtime
+                .current_interval_micros
+                .load(Ordering::Relaxed),
+            last_delay_micros: record.runtime.last_delay_micros.load(Ordering::Relaxed),
+            last_ring_status: record
+                .runtime
+                .last_ring_status
+                .lock()
+                .ok()
+                .and_then(|status| *status),
+        },
+        events: record.runtime.event_queue_status(),
         last_error: record
             .runtime
             .last_error
@@ -313,87 +326,19 @@ fn status_from_record(record: &SharedMemoryPumpRecord) -> SharedMemoryPumpStatus
     }
 }
 
-fn last_error_from_worker(error: WorkerSupervisorError) -> SharedMemoryPumpLastError {
-    SharedMemoryPumpLastError {
-        code: error.rpc_code(),
-        message: error.rpc_message(),
-        data: error.rpc_data(),
+fn event_target_iteration(
+    current_iteration: u64,
+    target_iteration: Option<u64>,
+    delay_iterations: Option<u64>,
+) -> Result<u64, SharedMemoryPumpError> {
+    match (target_iteration, delay_iterations) {
+        (Some(_), Some(_)) => Err(SharedMemoryPumpError::InvalidEventTarget),
+        (Some(target), None) => Ok(target),
+        (None, Some(delay)) => Ok(current_iteration.saturating_add(delay)),
+        (None, None) => Ok(current_iteration.saturating_add(1)),
     }
-}
-
-pub fn default_interval_micros(frames: u16, sample_rate: u32) -> u64 {
-    let micros = u64::from(frames)
-        .saturating_mul(1_000_000)
-        .checked_div(u64::from(sample_rate))
-        .unwrap_or(0);
-    micros.max(1)
-}
-
-pub fn pump_config_from_params(
-    params: SharedMemoryPumpStartParams,
-    max_block_frames: u16,
-    sample_rate: u32,
-) -> Result<SharedMemoryPumpConfig, SharedMemoryPumpError> {
-    let frames = params.frames.unwrap_or(max_block_frames);
-    if frames == 0 || frames > max_block_frames {
-        return Err(SharedMemoryPumpError::InvalidFrames {
-            frames,
-            max_frames: max_block_frames,
-        });
-    }
-    let interval_micros = match params.interval_micros {
-        Some(0) => return Err(SharedMemoryPumpError::InvalidInterval),
-        Some(value) => value,
-        None => default_interval_micros(frames, sample_rate),
-    };
-    Ok(SharedMemoryPumpConfig {
-        instance_id: params.instance_id,
-        frames,
-        interval_micros,
-    })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn derives_interval_from_frame_duration() {
-        assert_eq!(default_interval_micros(128, 48_000), 2_666);
-        assert_eq!(default_interval_micros(1, 192_000), 5);
-    }
-    #[test]
-    fn validates_pump_config() {
-        let params = SharedMemoryPumpStartParams {
-            instance_id: 7,
-            frames: None,
-            interval_micros: None,
-        };
-        let config = pump_config_from_params(params, 128, 48_000).expect("config");
-        assert_eq!(config.frames, 128);
-        assert_eq!(config.interval_micros, 2_666);
-        assert!(matches!(
-            pump_config_from_params(
-                SharedMemoryPumpStartParams {
-                    instance_id: 7,
-                    frames: Some(129),
-                    interval_micros: None,
-                },
-                128,
-                48_000,
-            ),
-            Err(SharedMemoryPumpError::InvalidFrames { .. })
-        ));
-        assert!(matches!(
-            pump_config_from_params(
-                SharedMemoryPumpStartParams {
-                    instance_id: 7,
-                    frames: Some(64),
-                    interval_micros: Some(0),
-                },
-                128,
-                48_000,
-            ),
-            Err(SharedMemoryPumpError::InvalidInterval)
-        ));
-    }
-}
+#[path = "stream_shared_memory_pump_tests.rs"]
+mod tests;

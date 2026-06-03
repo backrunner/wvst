@@ -36,7 +36,6 @@ struct WorkerCapabilities {
 pub(super) async fn validate_worker_hello(
     stderr: &StderrTail,
     hello: Value,
-    require_framed_control_ipc: bool,
 ) -> Result<(), WorkerSupervisorError> {
     let parsed = match serde_json::from_value::<WorkerHello>(hello.clone()) {
         Ok(parsed) => parsed,
@@ -84,7 +83,7 @@ pub(super) async fn validate_worker_hello(
         .await);
     }
 
-    if require_framed_control_ipc && !parsed.capabilities.framed_control_ipc {
+    if !parsed.capabilities.framed_control_ipc {
         return Err(incompatible_worker(
             stderr,
             "missing framedControlIpc capability".to_string(),
@@ -94,9 +93,7 @@ pub(super) async fn validate_worker_hello(
         .await);
     }
 
-    if require_framed_control_ipc
-        && parsed.capabilities.framed_control_ipc_version != Some(WORKER_CONTROL_IPC_SCHEMA_VERSION)
-    {
+    if parsed.capabilities.framed_control_ipc_version != Some(WORKER_CONTROL_IPC_SCHEMA_VERSION) {
         return Err(incompatible_worker(
             stderr,
             format!(
@@ -109,12 +106,11 @@ pub(super) async fn validate_worker_hello(
         .await);
     }
 
-    if require_framed_control_ipc
-        && parsed
-            .capabilities
-            .framed_control_max_body_bytes
-            .unwrap_or(0)
-            < WORKER_CONTROL_IPC_MAX_BODY_LEN
+    if parsed
+        .capabilities
+        .framed_control_max_body_bytes
+        .unwrap_or(0)
+        < WORKER_CONTROL_IPC_MAX_BODY_LEN
     {
         return Err(incompatible_worker(
             stderr,
@@ -128,7 +124,7 @@ pub(super) async fn validate_worker_hello(
         .await);
     }
 
-    if require_framed_control_ipc && !parsed.capabilities.framed_control_sequence_ids {
+    if !parsed.capabilities.framed_control_sequence_ids {
         return Err(incompatible_worker(
             stderr,
             "missing framedControlSequenceIds capability".to_string(),
@@ -138,7 +134,7 @@ pub(super) async fn validate_worker_hello(
         .await);
     }
 
-    if require_framed_control_ipc && !parsed.capabilities.framed_control_status_codes {
+    if !parsed.capabilities.framed_control_status_codes {
         return Err(incompatible_worker(
             stderr,
             "missing framedControlStatusCodes capability".to_string(),
@@ -148,7 +144,7 @@ pub(super) async fn validate_worker_hello(
         .await);
     }
 
-    if require_framed_control_ipc && !parsed.capabilities.framed_control_error_responses {
+    if !parsed.capabilities.framed_control_error_responses {
         return Err(incompatible_worker(
             stderr,
             "missing framedControlErrorResponses capability".to_string(),
@@ -202,7 +198,7 @@ mod tests {
             }
         });
 
-        validate_worker_hello(&StderrTail::default(), hello, true)
+        validate_worker_hello(&StderrTail::default(), hello)
             .await
             .expect("compatible hello");
     }
@@ -218,7 +214,7 @@ mod tests {
             }
         });
 
-        let error = validate_worker_hello(&StderrTail::default(), hello, true)
+        let error = validate_worker_hello(&StderrTail::default(), hello)
             .await
             .expect_err("incompatible hello");
 
@@ -245,7 +241,7 @@ mod tests {
             }
         });
 
-        let error = validate_worker_hello(&StderrTail::default(), hello, true)
+        let error = validate_worker_hello(&StderrTail::default(), hello)
             .await
             .expect_err("incompatible hello");
 
@@ -271,7 +267,7 @@ mod tests {
             }
         });
 
-        let error = validate_worker_hello(&StderrTail::default(), hello, true)
+        let error = validate_worker_hello(&StderrTail::default(), hello)
             .await
             .expect_err("incompatible hello");
 
@@ -280,20 +276,5 @@ mod tests {
             WorkerSupervisorError::IncompatibleWorker { reason, .. }
                 if reason.contains("framedControlErrorResponses")
         ));
-    }
-
-    #[tokio::test]
-    async fn allows_json_line_test_workers_without_framed_control_version() {
-        let hello = json!({
-            "ipcVersion": EXPECTED_WORKER_IPC_VERSION,
-            "capabilities": {
-                "instanceLifecycle": true,
-                "binaryAudioProcess": true
-            }
-        });
-
-        validate_worker_hello(&StderrTail::default(), hello, false)
-            .await
-            .expect("json-line worker compatibility");
     }
 }

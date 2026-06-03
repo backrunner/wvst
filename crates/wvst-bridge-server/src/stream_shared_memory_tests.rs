@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::instance_registry::{InstanceState, WorkerRuntimeInfo, WorkerState};
+use crate::instance_registry::{InstanceState, RuntimeTailInfo, WorkerRuntimeInfo, WorkerState};
 use crate::runtime_capabilities::RuntimeCapabilities;
 
 #[test]
@@ -89,11 +89,12 @@ fn test_record(stream_state: StreamState) -> InstanceRecord {
         state: InstanceState::Ready,
         worker_state: WorkerState::Ready,
         stream_state,
-        backend: Some("passthrough".to_string()),
+        backend: Some("vst3-runtime".to_string()),
         controller_class_id: None,
         runtime_capabilities: RuntimeCapabilities::default(),
         latency_samples: 0,
         tail_samples: 0,
+        tail_info: RuntimeTailInfo::from_samples(0),
     }
 }
 

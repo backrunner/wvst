@@ -25,7 +25,7 @@ async fn responds_to_hello() {
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let workers = Arc::new(test_workers());
     let context = ControlContext {
@@ -68,7 +68,7 @@ async fn rejects_denied_origin() {
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let workers = Arc::new(test_workers());
     let context = ControlContext {
@@ -110,7 +110,7 @@ async fn rejects_plugin_list_before_hello() {
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let workers = Arc::new(test_workers());
     let context = ControlContext {
@@ -148,7 +148,7 @@ async fn lists_cached_plugins_after_hello() {
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let workers = Arc::new(test_workers());
     let context = ControlContext {
@@ -192,7 +192,7 @@ async fn returns_recent_bridge_events() {
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let workers = Arc::new(test_workers());
     events.emit(BridgeEventKind::ServerStarting);
@@ -245,7 +245,7 @@ async fn routes_factory_info_to_host_worker() {
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
-    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory = Arc::new(SharedMemoryStreamRegistry::new());
     let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let workers = Arc::new(test_workers());
     let context = ControlContext {

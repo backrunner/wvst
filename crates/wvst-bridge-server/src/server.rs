@@ -10,9 +10,10 @@ use tokio::sync::broadcast;
 use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::Message;
-use wvst_core::ChannelCount;
 use wvst_process_supervision::{LinuxCgroupLimits, WorkerResourceLimits};
-use wvst_protocol::{AUDIO_FRAME_HEADER_LEN, AudioFrameFlags, AudioFrameHeader};
+use wvst_protocol::{
+    AUDIO_FRAME_HEADER_LEN, AudioFrameChannelCount, AudioFrameFlags, AudioFrameHeader,
+};
 
 use crate::audio_in_flight::AudioInFlightLimiter;
 use crate::audio_stream_tracker::AudioStreamTracker;
@@ -350,10 +351,6 @@ async fn process_binary_payload(payload: Vec<u8>, state: &BridgeState) -> Vec<u8
             state.metrics.increment_audio_frame_route_failures();
             response
         }
-        AudioRouteResult::Fallback => {
-            state.metrics.increment_audio_frame_fallbacks();
-            payload
-        }
     };
     state
         .metrics
@@ -363,17 +360,33 @@ async fn process_binary_payload(payload: Vec<u8>, state: &BridgeState) -> Vec<u8
 
 async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteResult {
     let Ok(header) = AudioFrameHeader::decode(payload) else {
-        return AudioRouteResult::Fallback;
+        state.metrics.increment_audio_frame_invalid_headers();
+        return AudioRouteResult::Diagnostic(Vec::new());
     };
     let Some(expected_len) = AUDIO_FRAME_HEADER_LEN.checked_add(header.payload_len as usize) else {
-        return AudioRouteResult::Fallback;
+        state.metrics.increment_audio_frame_invalid_lengths();
+        return diagnostic_silence_frame_with_channels(
+            header,
+            header.channels,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
+        );
     };
     if payload.len() != expected_len {
-        return AudioRouteResult::Fallback;
+        state.metrics.increment_audio_frame_invalid_lengths();
+        return diagnostic_silence_frame_with_channels(
+            header,
+            header.channels,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
+        );
     }
 
     let Some(instance) = state.instances.find_by_stream_id(header.stream_id.get()) else {
-        return AudioRouteResult::Fallback;
+        state.metrics.increment_audio_frame_unmatched_streams();
+        return diagnostic_silence_frame_with_channels(
+            header,
+            header.channels,
+            AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
+        );
     };
     if instance.stream_state != StreamState::Open {
         return diagnostic_silence_frame(
@@ -458,25 +471,35 @@ fn diagnostic_silence_frame(
     instance: &InstanceRecord,
     flags: AudioFrameFlags,
 ) -> AudioRouteResult {
-    match encode_silence_frame(input_header, instance.output_channels, flags) {
+    let Ok(channels) = AudioFrameChannelCount::new(instance.output_channels) else {
+        return AudioRouteResult::Diagnostic(Vec::new());
+    };
+    diagnostic_silence_frame_with_channels(input_header, channels, flags)
+}
+
+fn diagnostic_silence_frame_with_channels(
+    input_header: AudioFrameHeader,
+    output_channels: AudioFrameChannelCount,
+    flags: AudioFrameFlags,
+) -> AudioRouteResult {
+    match encode_silence_frame(input_header, output_channels, flags) {
         Ok(frame) => AudioRouteResult::Diagnostic(frame),
-        Err(_) => AudioRouteResult::Fallback,
+        Err(_) => AudioRouteResult::Diagnostic(Vec::new()),
     }
 }
 
 fn encode_silence_frame(
     input_header: AudioFrameHeader,
-    output_channels: u16,
+    output_channels: AudioFrameChannelCount,
     flags: AudioFrameFlags,
 ) -> Result<Vec<u8>, String> {
-    let channels = ChannelCount::new(output_channels).map_err(|error| error.to_string())?;
-    let header = AudioFrameHeader::new_f32(
+    let header = AudioFrameHeader::new_f32_with_audio_channels(
         input_header.stream_id,
         input_header.sequence,
         input_header.sent_frame_time,
         input_header.sample_rate,
         input_header.frames,
-        channels,
+        output_channels,
         input_header.flags | flags,
     )
     .map_err(|error| error.to_string())?;
@@ -491,7 +514,6 @@ fn encode_silence_frame(
 enum AudioRouteResult {
     Routed(Vec<u8>),
     Diagnostic(Vec<u8>),
-    Fallback,
 }
 
 #[cfg(test)]

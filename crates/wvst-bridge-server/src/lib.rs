@@ -11,6 +11,7 @@ pub mod instance_registry;
 pub mod metrics;
 pub mod plugin_registry;
 pub mod runtime_capabilities;
+pub(crate) mod runtime_snapshot;
 pub mod server;
 pub mod stream_shared_memory;
 pub mod stream_shared_memory_pump;

@@ -20,7 +20,7 @@ fn control_message_too_large_response_is_structured() {
 }
 
 #[tokio::test]
-async fn responds_to_hello_and_echoes_binary_frames() {
+async fn responds_to_hello_and_rejects_invalid_binary_frames() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let server = BridgeServer::bind(config).await.expect("server binds");
     let addr = server.local_addr().expect("local addr");
@@ -55,14 +55,100 @@ async fn responds_to_hello_and_echoes_binary_frames() {
         .await
         .expect("binary sends");
 
-    let echoed = websocket
+    let response = websocket
         .next()
         .await
-        .expect("echoed response")
+        .expect("binary response")
         .expect("valid websocket message");
-    assert_eq!(echoed.into_data(), vec![1, 2, 3]);
+    assert!(response.into_data().is_empty());
 
     let _ = shutdown_sender.send(());
+}
+
+#[tokio::test]
+async fn returns_diagnostic_silence_for_unmatched_wvst_audio_stream() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let state = BridgeState {
+        config: Arc::new(config),
+        host_worker: Arc::new(HostWorkerClient::new_for_test(
+            PathBuf::from("missing-wvst-host-worker"),
+            Duration::from_secs(5),
+        )),
+        instances: Arc::new(InstanceRegistry::new()),
+        component_handler_events: Arc::new(
+            crate::component_handler_events::ComponentHandlerEventPublisher::new(),
+        ),
+        events: BridgeEventBus::new(),
+        metrics: Arc::new(BridgeMetrics::new()),
+        plugins: Arc::new(PluginRegistry::new()),
+        stream_tracker: Arc::new(AudioStreamTracker::new()),
+        audio_in_flight: Arc::new(AudioInFlightLimiter::new()),
+        shared_memory: Arc::new(SharedMemoryStreamRegistry::new()),
+        shared_memory_pumps: Arc::new(SharedMemoryPumpRegistry::default()),
+        workers: Arc::new(WorkerSupervisor::new_for_test(
+            PathBuf::from("missing-worker"),
+            Duration::from_secs(5),
+        )),
+    };
+
+    let response = process_binary_payload(audio_frame(4242), &state).await;
+    let header = AudioFrameHeader::decode(&response).expect("diagnostic header");
+
+    assert_eq!(header.stream_id.get(), 4242);
+    assert_eq!(header.sequence, 10);
+    assert!(
+        header
+            .flags
+            .contains(wvst_protocol::AudioFrameFlags::SILENCE)
+    );
+    assert!(
+        header
+            .flags
+            .contains(wvst_protocol::AudioFrameFlags::PROCESS_ERROR)
+    );
+    assert_eq!(
+        read_f32_payload(&response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
+        vec![0.0, 0.0, 0.0, 0.0]
+    );
+
+    let metrics = state.metrics.snapshot();
+    assert_eq!(metrics.binary_frames, 1);
+    assert_eq!(metrics.audio_frame_route_failures, 1);
+    assert_eq!(metrics.audio_frame_invalid_headers, 0);
+    assert_eq!(metrics.audio_frame_invalid_lengths, 0);
+    assert_eq!(metrics.audio_frame_unmatched_streams, 1);
+    assert_eq!(metrics.audio_frames_routed, 0);
+    assert_eq!(metrics.audio_route_latency.count, 1);
+
+    let mut truncated = audio_frame(4343);
+    truncated.pop();
+    let response = process_binary_payload(truncated, &state).await;
+    let header = AudioFrameHeader::decode(&response).expect("diagnostic header");
+
+    assert_eq!(header.stream_id.get(), 4343);
+    assert!(
+        header
+            .flags
+            .contains(wvst_protocol::AudioFrameFlags::SILENCE)
+    );
+    assert!(
+        header
+            .flags
+            .contains(wvst_protocol::AudioFrameFlags::PROCESS_ERROR)
+    );
+    assert_eq!(
+        read_f32_payload(&response[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
+        vec![0.0, 0.0, 0.0, 0.0]
+    );
+
+    let metrics = state.metrics.snapshot();
+    assert_eq!(metrics.binary_frames, 2);
+    assert_eq!(metrics.audio_frame_route_failures, 2);
+    assert_eq!(metrics.audio_frame_invalid_headers, 0);
+    assert_eq!(metrics.audio_frame_invalid_lengths, 1);
+    assert_eq!(metrics.audio_frame_unmatched_streams, 1);
+    assert_eq!(metrics.audio_frames_routed, 0);
+    assert_eq!(metrics.audio_route_latency.count, 2);
 }
 
 #[tokio::test]
@@ -212,9 +298,9 @@ async fn does_not_push_events_emitted_before_hello() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn routes_binary_audio_frame_to_worker_passthrough() {
+async fn routes_binary_audio_frame_to_worker_fixture() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
-    let worker_path = passthrough_worker_script();
+    let worker_path = audio_echo_worker_script();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let state = BridgeState {
         config: Arc::new(config),
@@ -239,8 +325,8 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
         )),
     };
 
-    let echoed = process_binary_payload(vec![1, 2, 3], &state).await;
-    assert_eq!(echoed, vec![1, 2, 3]);
+    let rejected = process_binary_payload(vec![1, 2, 3], &state).await;
+    assert!(rejected.is_empty());
 
     let create_request = serde_json::json!({
         "id": 1,
@@ -323,9 +409,9 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
     );
     let metrics = state.metrics.snapshot();
     assert_eq!(metrics.binary_frames, 2);
-    assert_eq!(metrics.audio_frame_fallbacks, 1);
     assert_eq!(metrics.audio_frames_routed, 1);
-    assert_eq!(metrics.audio_frame_route_failures, 0);
+    assert_eq!(metrics.audio_frame_route_failures, 1);
+    assert_eq!(metrics.audio_frame_invalid_headers, 1);
     assert_eq!(metrics.audio_route_latency.count, 2);
     assert!(metrics.audio_route_latency.p50_us.is_some());
 
@@ -368,9 +454,9 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
     );
     let metrics = state.metrics.snapshot();
     assert_eq!(metrics.binary_frames, 5);
-    assert_eq!(metrics.audio_frame_fallbacks, 1);
     assert_eq!(metrics.audio_frames_routed, 3);
-    assert_eq!(metrics.audio_frame_route_failures, 1);
+    assert_eq!(metrics.audio_frame_route_failures, 2);
+    assert_eq!(metrics.audio_frame_invalid_headers, 1);
     assert_eq!(metrics.audio_route_latency.count, 5);
     assert!(metrics.audio_route_latency.p95_us.is_some());
 
@@ -382,7 +468,7 @@ async fn routes_binary_audio_frame_to_worker_passthrough() {
 #[tokio::test]
 async fn drops_overlapping_audio_frame_for_same_stream() {
     let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
-    let worker_path = passthrough_worker_script();
+    let worker_path = audio_echo_worker_script();
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let state = BridgeState {
         config: Arc::new(config),
@@ -596,60 +682,100 @@ fn scanned_plugin_registry() -> (PluginRegistry, PathBuf, String) {
 }
 
 #[cfg(unix)]
-fn passthrough_worker_script() -> PathBuf {
+fn audio_echo_worker_script() -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let directory = unique_temp_dir();
     std::fs::create_dir_all(&directory).expect("temp dir");
-    let worker = directory.join("passthrough-worker.sh");
+    let worker = directory.join("audio-echo-worker.py");
     std::fs::write(
         &worker,
-        r#"#!/bin/sh
-audio_addr=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --audio-connect) audio_addr="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$audio_addr" ]; then
-  python3 - "$audio_addr" <<'PY' &
-import socket
+        r#"#!/usr/bin/env python3
+import json
 import struct
 import sys
+import socket
+import threading
 
-addr = sys.argv[1]
-host, port = addr.rsplit(":", 1)
-sock = socket.create_connection((host, int(port)))
+MAGIC = int.from_bytes(b"WVCI", "little")
+VERSION = 1
+HEADER_LEN = 24
+KIND_RESPONSE = 2
+KIND_ERROR = 3
+MAX_BODY = 16 * 1024 * 1024
+
+def read_exact(stream, size):
+    data = stream.read(size) if hasattr(stream, "read") else stream.recv(size)
+    if not data:
+        return None
+    while len(data) < size:
+        chunk = stream.read(size - len(data)) if hasattr(stream, "read") else stream.recv(size - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
+
+def pack_frame(kind, status, sequence, body):
+    return struct.pack("<IHHHHIQ", MAGIC, VERSION, HEADER_LEN, kind, status, len(body), sequence) + body
+
+def audio_loop(address):
+    host, port = address.rsplit(":", 1)
+    sock = socket.create_connection((host, int(port)))
+    while True:
+        header = read_exact(sock, HEADER_LEN)
+        if header is None:
+            return
+        magic, version, header_len, kind, status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
+        body = read_exact(sock, body_len)
+        if body is None:
+            return
+        sock.sendall(struct.pack("<IHHHHIQ", magic, version, header_len, 2, 0, len(body), sequence) + body)
+
+def ok(request, result):
+    body = json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "result": result}, separators=(",", ":")).encode()
+    return pack_frame(KIND_RESPONSE, 0, request["_sequence"], body)
+
+def err(request, code, message):
+    body = json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "error": {"code": code, "message": message}}, separators=(",", ":")).encode()
+    return pack_frame(KIND_ERROR, code & 0xFFFF, request["_sequence"], body)
+
+def hello(request):
+    return ok(request, {"workerName": "test-worker", "ipcVersion": 1, "capabilities": {"instanceLifecycle": True, "binaryAudioProcess": True, "framedControlIpc": True, "framedControlIpcVersion": 1, "framedControlMaxBodyBytes": MAX_BODY, "framedControlSequenceIds": True, "framedControlStatusCodes": True, "framedControlErrorResponses": True, "framedControlBatching": True}})
+
+def ready(state="ready"):
+    return {"instanceId": 1, "streamId": 1, "workerState": state, "backend": "vst3-runtime", "latencySamples": 0, "tailSamples": 0, "tailInfo": {"samples": 0, "kind": "none", "finiteSamples": 0}}
+
+args = sys.argv[1:]
+if args and args[0] == "serve-framed":
+    args = args[1:]
+while args:
+    if args[0] == "--audio-connect":
+        threading.Thread(target=audio_loop, args=(args[1],), daemon=True).start()
+        args = args[2:]
+    else:
+        args = args[1:]
+
 while True:
-    header = sock.recv(24)
-    if not header:
+    header = read_exact(sys.stdin.buffer, HEADER_LEN)
+    if header is None:
         break
-    while len(header) < 24:
-        chunk = sock.recv(24 - len(header))
-        if not chunk:
-            raise SystemExit(0)
-        header += chunk
-    magic, version, header_len, kind, status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
-    body = b""
-    while len(body) < body_len:
-        chunk = sock.recv(body_len - len(body))
-        if not chunk:
-            raise SystemExit(0)
-        body += chunk
-    response = struct.pack("<IHHHHIQ", magic, version, header_len, 2, 0, len(body), sequence) + body
-    sock.sendall(response)
-PY
-fi
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}\n' "$id" ;;
-    *instance.startProcessing*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
-    *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
-  esac
-done
+    _magic, _version, _header_len, _kind, _status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
+    body = read_exact(sys.stdin.buffer, body_len)
+    if body is None:
+        break
+    request = json.loads(body.decode())
+    request["_sequence"] = sequence
+    method = request.get("method", "")
+    if method == "worker.hello":
+        frame = hello(request)
+    elif method == "instance.create":
+        frame = ok(request, ready())
+    elif method == "instance.startProcessing":
+        frame = ok(request, {"instanceId": 1, "streamId": 1, "workerState": "processing"})
+    else:
+        frame = err(request, -32601, "unknown")
+    sys.stdout.buffer.write(frame)
+    sys.stdout.buffer.flush()
 "#,
     )
     .expect("script");

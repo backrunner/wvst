@@ -42,11 +42,18 @@ impl WorkerSupervisor {
         &self,
         instance_id: u64,
         frames: Option<u16>,
+        midi_events: Vec<Value>,
+        parameter_events: Vec<Value>,
     ) -> Result<Value, WorkerSupervisorError> {
         self.instance_request(
             instance_id,
             "stream.sharedMemory.process",
-            json!({ "instanceId": instance_id, "frames": frames }),
+            json!({
+                "instanceId": instance_id,
+                "frames": frames,
+                "midiEvents": midi_events,
+                "parameterEvents": parameter_events,
+            }),
         )
         .await
     }
@@ -301,7 +308,6 @@ impl WorkerSupervisor {
     pub async fn set_state(
         &self,
         instance_id: u64,
-        state_base64: Option<String>,
         component_state_base64: Option<String>,
         controller_state_base64: Option<String>,
     ) -> Result<Value, WorkerSupervisorError> {
@@ -310,7 +316,6 @@ impl WorkerSupervisor {
             "instance.setState",
             json!({
                 "instanceId": instance_id,
-                "stateBase64": state_base64,
                 "componentStateBase64": component_state_base64,
                 "controllerStateBase64": controller_state_base64,
             }),
@@ -321,7 +326,6 @@ impl WorkerSupervisor {
     pub async fn set_state_and_refresh(
         &self,
         instance_id: u64,
-        state_base64: Option<String>,
         component_state_base64: Option<String>,
         controller_state_base64: Option<String>,
         include_state: bool,
@@ -333,7 +337,6 @@ impl WorkerSupervisor {
                 "instance.setState",
                 json!({
                     "instanceId": instance_id,
-                    "stateBase64": state_base64,
                     "componentStateBase64": component_state_base64,
                     "controllerStateBase64": controller_state_base64,
                 }),

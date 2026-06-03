@@ -44,7 +44,6 @@ pub struct WorkerSupervisor {
     executable: PathBuf,
     timeout: Duration,
     use_audio_ipc: bool,
-    use_framed_control_ipc: bool,
     max_instances: usize,
     resource_limits: WorkerResourceLimits,
     metrics: Option<Arc<BridgeMetrics>>,
@@ -62,7 +61,6 @@ pub struct WorkerSupervisorOptions {
     quarantine_duration: Duration,
     quarantine_failure_threshold: u32,
     use_audio_ipc: bool,
-    use_framed_control_ipc: bool,
     max_instances: usize,
     resource_limits: WorkerResourceLimits,
     metrics: Option<Arc<BridgeMetrics>>,
@@ -76,7 +74,6 @@ struct WorkerProcess {
     stderr: StderrTail,
     audio: Option<WorkerAudioConnection>,
     termination_target: WorkerTerminationTarget,
-    use_framed_control_ipc: bool,
     next_request_id: u64,
 }
 
@@ -175,7 +172,6 @@ impl WorkerSupervisor {
             executable: options.executable,
             timeout: options.timeout,
             use_audio_ipc: options.use_audio_ipc,
-            use_framed_control_ipc: options.use_framed_control_ipc,
             max_instances: options.max_instances,
             resource_limits: options.resource_limits,
             metrics: options.metrics,
@@ -301,7 +297,6 @@ impl WorkerSupervisorOptions {
             quarantine_duration: DEFAULT_QUARANTINE_DURATION,
             quarantine_failure_threshold: DEFAULT_QUARANTINE_FAILURE_THRESHOLD,
             use_audio_ipc: true,
-            use_framed_control_ipc: true,
             max_instances: DEFAULT_MAX_WORKER_INSTANCES,
             resource_limits: WorkerResourceLimits::none(),
             metrics: None,
@@ -328,11 +323,6 @@ impl WorkerSupervisorOptions {
         self
     }
 
-    pub fn with_framed_control_ipc(mut self, enabled: bool) -> Self {
-        self.use_framed_control_ipc = enabled;
-        self
-    }
-
     pub fn with_max_instances(mut self, max_instances: usize) -> Self {
         self.max_instances = max_instances.max(1);
         self
@@ -354,7 +344,6 @@ impl WorkerProcess {
         executable: PathBuf,
         timeout_duration: Duration,
         use_audio_ipc: bool,
-        use_framed_control_ipc: bool,
         resource_limits: WorkerResourceLimits,
         metrics: Option<Arc<BridgeMetrics>>,
     ) -> Result<Self, WorkerSupervisorError> {
@@ -369,11 +358,7 @@ impl WorkerProcess {
         };
 
         let mut command = Command::new(&executable);
-        command.arg(if use_framed_control_ipc {
-            "serve-framed"
-        } else {
-            "serve"
-        });
+        command.arg("serve-framed");
         WorkerTerminationTarget::configure_command(&mut command, resource_limits.clone());
         if let Some(listener) = audio_listener.as_ref() {
             let address = listener
@@ -424,7 +409,6 @@ impl WorkerProcess {
             stderr: StderrTail::spawn(stderr),
             audio: None,
             termination_target,
-            use_framed_control_ipc,
             next_request_id: 1,
         };
 
@@ -495,14 +479,10 @@ impl WorkerProcess {
         request: &str,
         timeout_duration: Duration,
     ) -> Result<(), WorkerSupervisorError> {
-        let body = if self.use_framed_control_ipc {
-            WorkerControlIpcMessage::request(id, request.as_bytes().to_vec())
-                .map_err(|error| self.protocol_error(error.to_string()))?
-                .encode()
-                .map_err(|error| self.protocol_error(error.to_string()))?
-        } else {
-            format!("{request}\n").into_bytes()
-        };
+        let body = WorkerControlIpcMessage::request(id, request.as_bytes().to_vec())
+            .map_err(|error| self.protocol_error(error.to_string()))?
+            .encode()
+            .map_err(|error| self.protocol_error(error.to_string()))?;
 
         match timeout(timeout_duration, self.stdin.write_all(&body)).await {
             Ok(Ok(())) => {}
@@ -530,18 +510,6 @@ impl WorkerProcess {
         method: &'static str,
         timeout_duration: Duration,
     ) -> Result<String, WorkerSupervisorError> {
-        if !self.use_framed_control_ipc {
-            return match timeout(timeout_duration, self.stdout.next_line()).await {
-                Ok(line) => line
-                    .map_err(|error| WorkerSupervisorError::Io(error.to_string()))?
-                    .ok_or_else(|| self.protocol_error("worker stdout closed".to_string())),
-                Err(_) => {
-                    let error = self.timeout_error(method, timeout_duration).await;
-                    Err(error)
-                }
-            };
-        }
-
         let mut header_bytes = [0; WORKER_CONTROL_IPC_HEADER_LEN];
         match timeout(
             timeout_duration,
@@ -644,7 +612,6 @@ impl WorkerSupervisor {
             self.executable.clone(),
             self.timeout,
             self.use_audio_ipc,
-            self.use_framed_control_ipc,
             self.resource_limits.clone(),
             self.metrics.clone(),
         )
@@ -660,12 +627,8 @@ impl WorkerSupervisor {
             }
         };
 
-        if let Err(error) = worker_supervisor_hello::validate_worker_hello(
-            &process.stderr,
-            hello,
-            self.use_framed_control_ipc,
-        )
-        .await
+        if let Err(error) =
+            worker_supervisor_hello::validate_worker_hello(&process.stderr, hello).await
         {
             self.record_shutdown(process.shutdown().await);
             return Err(error);
@@ -888,17 +851,12 @@ impl WorkerSupervisor {
         Self::with_options(
             WorkerSupervisorOptions::new(executable)
                 .with_timeout(timeout)
-                .with_audio_ipc(false)
-                .with_framed_control_ipc(false),
+                .with_audio_ipc(false),
         )
     }
 
     pub fn new_for_test_with_audio(executable: PathBuf, timeout: Duration) -> Self {
-        Self::with_options(
-            WorkerSupervisorOptions::new(executable)
-                .with_timeout(timeout)
-                .with_framed_control_ipc(false),
-        )
+        Self::with_options(WorkerSupervisorOptions::new(executable).with_timeout(timeout))
     }
 
     pub fn new_for_test_with_quarantine(
@@ -910,8 +868,7 @@ impl WorkerSupervisor {
             WorkerSupervisorOptions::new(executable)
                 .with_timeout(timeout)
                 .with_quarantine_duration(quarantine_duration)
-                .with_audio_ipc(false)
-                .with_framed_control_ipc(false),
+                .with_audio_ipc(false),
         )
     }
 }

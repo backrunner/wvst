@@ -293,7 +293,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::instance_registry::{InstanceState, StreamState, WorkerState};
+    use crate::instance_registry::{InstanceState, RuntimeTailInfo, StreamState, WorkerState};
     use crate::runtime_capabilities::RuntimeCapabilities;
 
     #[test]
@@ -483,6 +483,7 @@ mod tests {
             runtime_capabilities: RuntimeCapabilities::default(),
             latency_samples: 0,
             tail_samples: 0,
+            tail_info: RuntimeTailInfo::from_samples(0),
         }
     }
 

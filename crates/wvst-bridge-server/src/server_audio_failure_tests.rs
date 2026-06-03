@@ -137,65 +137,100 @@ fn process_error_worker_script() -> PathBuf {
 
     let directory = unique_temp_dir();
     std::fs::create_dir_all(&directory).expect("temp dir");
-    let worker = directory.join("process-error-worker.sh");
+    let worker = directory.join("process-error-worker.py");
     std::fs::write(
         &worker,
-        r#"#!/bin/sh
-audio_addr=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --audio-connect) audio_addr="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$audio_addr" ]; then
-  python3 - "$audio_addr" <<'PY' &
+        r#"#!/usr/bin/env python3
 import json
 import socket
 import struct
 import sys
+import threading
 
-addr = sys.argv[1]
-host, port = addr.rsplit(":", 1)
-sock = socket.create_connection((host, int(port)))
-while True:
-    header = sock.recv(24)
-    if not header:
-        break
-    while len(header) < 24:
-        chunk = sock.recv(24 - len(header))
+MAGIC = int.from_bytes(b"WVCI", "little")
+VERSION = 1
+HEADER_LEN = 24
+KIND_RESPONSE = 2
+KIND_ERROR = 3
+MAX_BODY = 16 * 1024 * 1024
+
+def read_exact(stream, size):
+    data = stream.read(size) if hasattr(stream, "read") else stream.recv(size)
+    if not data:
+        return None
+    while len(data) < size:
+        chunk = stream.read(size - len(data)) if hasattr(stream, "read") else stream.recv(size - len(data))
         if not chunk:
-            raise SystemExit(0)
-        header += chunk
-    magic, version, header_len, kind, status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
-    body = b""
-    while len(body) < body_len:
-        chunk = sock.recv(body_len - len(body))
-        if not chunk:
-            raise SystemExit(0)
-        body += chunk
-    error = {
-        "message": "VST3 process failed",
-        "data": {
-            "kind": "vst3-runtime-process",
-            "stage": "component.process",
-            "hostError": "audio-processor-call-failed",
+            return None
+        data += chunk
+    return data
+
+def audio_loop(address):
+    host, port = address.rsplit(":", 1)
+    sock = socket.create_connection((host, int(port)))
+    while True:
+        header = read_exact(sock, HEADER_LEN)
+        if header is None:
+            return
+        magic, version, header_len, kind, status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
+        body = read_exact(sock, body_len)
+        if body is None:
+            return
+        error = {
             "message": "VST3 process failed",
-        },
-    }
-    payload = json.dumps(error).encode("utf-8")
-    response = struct.pack("<IHHHHIQ", magic, version, header_len, 3, 4220, len(payload), sequence) + payload
-    sock.sendall(response)
-PY
-fi
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"test-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"vst3-runtime","latencySamples":0,"tailSamples":0}}\n' "$id" ;;
-    *) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"processing"}}\n' "$id" ;;
-  esac
-done
+            "data": {
+                "kind": "vst3-runtime-process",
+                "stage": "component.process",
+                "hostError": "audio-processor-call-failed",
+                "message": "VST3 process failed",
+            },
+        }
+        payload = json.dumps(error).encode("utf-8")
+        response = struct.pack("<IHHHHIQ", magic, version, header_len, 3, 4220, len(payload), sequence) + payload
+        sock.sendall(response)
+
+def pack_frame(kind, status, sequence, body):
+    return struct.pack("<IHHHHIQ", MAGIC, VERSION, HEADER_LEN, kind, status, len(body), sequence) + body
+
+def ok(request, result):
+    body = json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "result": result}, separators=(",", ":")).encode()
+    return pack_frame(KIND_RESPONSE, 0, request["_sequence"], body)
+
+def hello(request):
+    return ok(request, {"workerName": "test-worker", "ipcVersion": 1, "capabilities": {"instanceLifecycle": True, "binaryAudioProcess": True, "framedControlIpc": True, "framedControlIpcVersion": 1, "framedControlMaxBodyBytes": MAX_BODY, "framedControlSequenceIds": True, "framedControlStatusCodes": True, "framedControlErrorResponses": True, "framedControlBatching": True}})
+
+def ready(state="ready"):
+    return {"instanceId": 1, "streamId": 1, "workerState": state, "backend": "vst3-runtime", "latencySamples": 0, "tailSamples": 0, "tailInfo": {"samples": 0, "kind": "none", "finiteSamples": 0}}
+
+args = sys.argv[1:]
+if args and args[0] == "serve-framed":
+    args = args[1:]
+while args:
+    if args[0] == "--audio-connect":
+        threading.Thread(target=audio_loop, args=(args[1],), daemon=True).start()
+        args = args[2:]
+    else:
+        args = args[1:]
+
+while True:
+    header = read_exact(sys.stdin.buffer, HEADER_LEN)
+    if header is None:
+        break
+    _magic, _version, _header_len, _kind, _status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
+    body = read_exact(sys.stdin.buffer, body_len)
+    if body is None:
+        break
+    request = json.loads(body.decode())
+    request["_sequence"] = sequence
+    method = request.get("method", "")
+    if method == "worker.hello":
+        frame = hello(request)
+    elif method == "instance.create":
+        frame = ok(request, ready())
+    else:
+        frame = ok(request, {"instanceId": 1, "streamId": 1, "workerState": "processing"})
+    sys.stdout.buffer.write(frame)
+    sys.stdout.buffer.flush()
 "#,
     )
     .expect("script");

@@ -48,8 +48,7 @@ async fn quarantines_after_configured_failure_threshold() {
         WorkerSupervisorOptions::new(PathBuf::from("missing-wvst-worker"))
             .with_timeout(Duration::from_millis(50))
             .with_quarantine_failure_threshold(2)
-            .with_audio_ipc(false)
-            .with_framed_control_ipc(false),
+            .with_audio_ipc(false),
     );
     let record = record();
 
@@ -101,7 +100,7 @@ async fn releases_quarantine_after_duration() {
 }
 
 #[tokio::test]
-async fn starts_real_worker_with_framed_control_ipc() {
+async fn real_worker_rejects_missing_vst3_bundle() {
     let Some(worker) = option_env!("CARGO_BIN_EXE_wvst-host-worker") else {
         return;
     };
@@ -111,29 +110,28 @@ async fn starts_real_worker_with_framed_control_ipc() {
             .with_audio_ipc(false),
     );
 
-    let ready = supervisor
+    let error = supervisor
         .start_instance(&record())
         .await
-        .expect("framed worker starts");
+        .expect_err("worker rejects non-bundle plugin path");
 
-    assert_eq!(ready["backend"], "passthrough");
-    assert_eq!(
-        supervisor
-            .destroy_instance(1)
-            .await
-            .expect("destroy")
-            .expect("destroy result")["workerState"],
-        "destroyed"
+    assert!(matches!(
+        &error,
+        WorkerSupervisorError::WorkerRejected { code: 4220, .. }
+    ));
+    assert!(
+        error
+            .rpc_message()
+            .contains("pluginPath must point to a VST3 bundle directory")
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn refreshes_metadata_with_framed_control_batch() {
-    let Some(worker) = option_env!("CARGO_BIN_EXE_wvst-host-worker") else {
-        return;
-    };
+    let worker = ready_worker_script();
     let supervisor = WorkerSupervisor::with_options(
-        WorkerSupervisorOptions::new(PathBuf::from(worker))
+        WorkerSupervisorOptions::new(worker.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false),
     );
@@ -154,6 +152,7 @@ async fn refreshes_metadata_with_framed_control_batch() {
     assert_eq!(metadata["worker"]["instances"], 1);
 
     let _ = supervisor.destroy_instance(1).await;
+    let _ = std::fs::remove_dir_all(worker.parent().expect("worker parent"));
 }
 
 #[tokio::test]
@@ -261,7 +260,6 @@ async fn rejects_start_when_instance_limit_is_reached() {
         WorkerSupervisorOptions::new(worker.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
-            .with_framed_control_ipc(false)
             .with_max_instances(1),
     );
     supervisor
@@ -300,7 +298,6 @@ async fn records_worker_shutdown_audit_when_destroying_instance() {
         WorkerSupervisorOptions::new(worker.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
-            .with_framed_control_ipc(false)
             .with_metrics(Arc::clone(&metrics)),
     );
 
@@ -336,7 +333,6 @@ async fn kills_worker_process_group_when_destroying_instance() {
         WorkerSupervisorOptions::new(worker.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
-            .with_framed_control_ipc(false)
             .with_metrics(Arc::clone(&metrics)),
     );
 
@@ -426,6 +422,7 @@ fn record() -> InstanceRecord {
         runtime_capabilities: crate::runtime_capabilities::RuntimeCapabilities::default(),
         latency_samples: 0,
         tail_samples: 0,
+        tail_info: crate::instance_registry::RuntimeTailInfo::from_samples(0),
     }
 }
 
@@ -434,35 +431,234 @@ fn worker_with_child_script(
     directory: &std::path::Path,
     child_pid_file: &std::path::Path,
 ) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
-    let worker = directory.join("worker-with-child.sh");
-    std::fs::write(
-        &worker,
-        format!(
-            r#"#!/bin/sh
-sleep 60 &
-child_pid=$!
-printf '%s\n' "$child_pid" > '{child_pid_file}'
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"workerName":"child-worker","ipcVersion":1,"capabilities":{{"instanceLifecycle":true,"binaryAudioProcess":true}}}}}}\n' "$id" ;;
-    *instance.create*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}}}\n' "$id" ;;
-    *instance.destroy*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"workerState":"destroyed"}}}}\n' "$id"; while :; do sleep 1; done ;;
-    *) printf '{{"jsonrpc":"2.0","id":%s,"result":{{}}}}\n' "$id" ;;
-  esac
-done
-"#,
-            child_pid_file = child_pid_file.display()
-        ),
-    )
-    .expect("script");
-    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&worker, permissions).expect("permissions");
+    let worker = directory.join("worker-with-child.py");
+    let source = format!("{FRAMED_WORKER_PREAMBLE}{CHILD_WORKER_FIXTURE}")
+        .replace("__CHILD_PID_FILE__", &child_pid_file.to_string_lossy());
+    write_framed_worker_script(&worker, &source);
     worker
 }
+
+#[cfg(unix)]
+fn reject_create_worker_script() -> PathBuf {
+    let directory = unique_temp_dir();
+    std::fs::create_dir_all(&directory).expect("temp dir");
+    let worker = directory.join("reject-create-worker.py");
+    let source = format!("{FRAMED_WORKER_PREAMBLE}{REJECT_CREATE_WORKER_FIXTURE}");
+    write_framed_worker_script(&worker, &source);
+    worker
+}
+
+#[cfg(unix)]
+fn incompatible_worker_script() -> PathBuf {
+    let directory = unique_temp_dir();
+    std::fs::create_dir_all(&directory).expect("temp dir");
+    let worker = directory.join("incompatible-worker.py");
+    let source = format!("{FRAMED_WORKER_PREAMBLE}{INCOMPATIBLE_WORKER_FIXTURE}");
+    write_framed_worker_script(&worker, &source);
+    worker
+}
+
+#[cfg(unix)]
+fn ready_worker_script() -> PathBuf {
+    let directory = unique_temp_dir();
+    std::fs::create_dir_all(&directory).expect("temp dir");
+    let worker = directory.join("ready-worker.py");
+    let source = format!("{FRAMED_WORKER_PREAMBLE}{READY_WORKER_FIXTURE}");
+    write_framed_worker_script(&worker, &source);
+    worker
+}
+
+#[cfg(unix)]
+fn write_framed_worker_script(path: &std::path::Path, source: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, source).expect("script");
+    let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).expect("permissions");
+}
+
+#[cfg(unix)]
+const FRAMED_WORKER_PREAMBLE: &str = r#"#!/usr/bin/env python3
+import json
+import os
+import struct
+import subprocess
+import sys
+import time
+
+MAGIC = int.from_bytes(b"WVCI", "little")
+VERSION = 1
+HEADER_LEN = 24
+KIND_RESPONSE = 2
+KIND_ERROR = 3
+MAX_BODY = 16 * 1024 * 1024
+
+def read_exact(size):
+    data = sys.stdin.buffer.read(size)
+    if not data:
+        return None
+    while len(data) < size:
+        chunk = sys.stdin.buffer.read(size - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
+
+def pack_frame(kind, status, sequence, body):
+    return struct.pack("<IHHHHIQ", MAGIC, VERSION, HEADER_LEN, kind, status, len(body), sequence) + body
+
+def ok(request, result):
+    body = json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "result": result}, separators=(",", ":")).encode()
+    return KIND_RESPONSE, 0, body, False
+
+def err(request, code, message, data=None):
+    payload = {"jsonrpc": "2.0", "id": request.get("id"), "error": {"code": code, "message": message}}
+    if data is not None:
+        payload["error"]["data"] = data
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    return KIND_ERROR, code & 0xFFFF, body, False
+
+def hello_result(name="test-worker", ipc_version=1, framed=True):
+    caps = {"instanceLifecycle": True, "binaryAudioProcess": True}
+    if framed:
+        caps.update({
+            "framedControlIpc": True,
+            "framedControlIpcVersion": 1,
+            "framedControlMaxBodyBytes": MAX_BODY,
+            "framedControlSequenceIds": True,
+            "framedControlStatusCodes": True,
+            "framedControlErrorResponses": True,
+            "framedControlBatching": True,
+        })
+    return {"workerName": name, "ipcVersion": ipc_version, "capabilities": caps}
+
+def ready_result(state="ready"):
+    return {"instanceId": 1, "streamId": 1, "workerState": state, "backend": "vst3-runtime", "latencySamples": 0, "tailSamples": 0, "tailInfo": {"samples": 0, "kind": "none", "finiteSamples": 0}}
+
+def runtime_metrics():
+    return {
+        "ipcVersion": 1,
+        "instances": 1,
+        "processingInstances": 0,
+        "vst3RuntimeInstances": 1,
+        "runtime": [{
+            "streamId": 1,
+            "backend": "vst3-runtime",
+            "runtimeCapabilities": {"schemaVersion": 2, "binaryAudioProcess": True},
+            "latencySamples": 0,
+            "tailSamples": 0,
+            "tailInfo": {"samples": 0, "kind": "none", "finiteSamples": 0},
+            "sharedMemory": None,
+            "diagnostics": {},
+        }],
+    }
+
+def run():
+    while True:
+        header = read_exact(HEADER_LEN)
+        if header is None:
+            return
+        _magic, _version, _header_len, kind, _status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
+        body = read_exact(body_len)
+        if body is None:
+            return
+        rkind, rstatus, rbody, should_exit = handle_frame(kind, body)
+        sys.stdout.buffer.write(pack_frame(rkind, rstatus, sequence, rbody))
+        sys.stdout.buffer.flush()
+        if should_exit:
+            return
+
+def handle_frame(kind, body):
+    if kind == 4:
+        responses = []
+        should_exit = False
+        offset = 0
+        while offset < len(body):
+            header = body[offset:offset + HEADER_LEN]
+            _magic, _version, _header_len, child_kind, _status, body_len, sequence = struct.unpack("<IHHHHIQ", header)
+            offset += HEADER_LEN
+            child_body = body[offset:offset + body_len]
+            offset += body_len
+            request = json.loads(child_body.decode())
+            rkind, rstatus, rbody, child_exit = handle(request)
+            responses.append(pack_frame(rkind, rstatus, sequence, rbody))
+            should_exit = should_exit or child_exit
+        return 5, 0, b"".join(responses), should_exit
+
+    request = json.loads(body.decode())
+    return handle(request)
+
+"#;
+
+#[cfg(unix)]
+const READY_WORKER_FIXTURE: &str = r#"
+def handle(request):
+    method = request.get("method", "")
+    if method == "worker.hello":
+        return ok(request, hello_result("ready-worker"))
+    if method == "instance.create":
+        return ok(request, ready_result())
+    if method == "instance.parameters":
+        return ok(request, {"instanceId": 1, "parameters": []})
+    if method == "instance.units":
+        return ok(request, {"instanceId": 1, "unitInfo": None})
+    if method == "worker.metrics":
+        return ok(request, runtime_metrics())
+    if method == "instance.destroy":
+        kind, status, body, _ = ok(request, {"workerState": "destroyed"})
+        return kind, status, body, True
+    return ok(request, {})
+
+run()
+"#;
+
+#[cfg(unix)]
+const REJECT_CREATE_WORKER_FIXTURE: &str = r#"
+def handle(request):
+    method = request.get("method", "")
+    if method == "worker.hello":
+        return ok(request, hello_result("reject-worker"))
+    if method == "instance.create":
+        return err(request, 4220, "controller init failed", {"kind": "vst3-runtime-init", "stage": "controller.initialize", "hostError": "edit-controller-call-failed", "message": "controller init failed"})
+    return ok(request, {})
+
+run()
+"#;
+
+#[cfg(unix)]
+const INCOMPATIBLE_WORKER_FIXTURE: &str = r#"
+def handle(request):
+    method = request.get("method", "")
+    if method == "worker.hello":
+        return ok(request, hello_result("bad-worker", 99, False))
+    return err(request, -32601, "unknown")
+
+run()
+"#;
+
+#[cfg(unix)]
+const CHILD_WORKER_FIXTURE: &str = r#"
+CHILD_PID_FILE = "__CHILD_PID_FILE__"
+child = subprocess.Popen(["sleep", "60"])
+with open(CHILD_PID_FILE, "w") as file:
+    file.write(str(child.pid))
+
+def handle(request):
+    method = request.get("method", "")
+    if method == "worker.hello":
+        return ok(request, hello_result("child-worker"))
+    if method == "instance.create":
+        return ok(request, ready_result())
+    if method == "instance.destroy":
+        kind, status, body, _ = ok(request, {"workerState": "destroyed"})
+        return kind, status, body, False
+    return ok(request, {})
+
+run()
+while True:
+    time.sleep(1)
+"#;
 
 #[cfg(unix)]
 async fn read_child_pid(path: &std::path::Path) -> u32 {
@@ -495,87 +691,6 @@ async fn wait_until_process_exits(pid: u32) -> bool {
 fn process_is_alive(pid: u32) -> bool {
     rustix::process::Pid::from_raw(pid as i32)
         .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
-}
-
-#[cfg(unix)]
-fn reject_create_worker_script() -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = unique_temp_dir();
-    std::fs::create_dir_all(&directory).expect("temp dir");
-    let worker = directory.join("reject-create-worker.sh");
-    std::fs::write(
-        &worker,
-        r#"#!/bin/sh
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"reject-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":4220,"message":"controller init failed","data":{"kind":"vst3-runtime-init","stage":"controller.initialize","hostError":"edit-controller-call-failed","message":"controller init failed"}}}\n' "$id" ;;
-    *) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
-  esac
-done
-"#,
-    )
-    .expect("script");
-    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&worker, permissions).expect("permissions");
-    worker
-}
-
-#[cfg(unix)]
-fn incompatible_worker_script() -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = unique_temp_dir();
-    std::fs::create_dir_all(&directory).expect("temp dir");
-    let worker = directory.join("incompatible-worker.sh");
-    std::fs::write(
-        &worker,
-        r#"#!/bin/sh
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"bad-worker","ipcVersion":99,"capabilities":{"instanceLifecycle":true}}}\n' "$id" ;;
-    *) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}\n' "$id" ;;
-  esac
-done
-"#,
-    )
-    .expect("script");
-    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&worker, permissions).expect("permissions");
-    worker
-}
-
-#[cfg(unix)]
-fn ready_worker_script() -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = unique_temp_dir();
-    std::fs::create_dir_all(&directory).expect("temp dir");
-    let worker = directory.join("ready-worker.sh");
-    std::fs::write(
-        &worker,
-        r#"#!/bin/sh
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *worker.hello*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerName":"ready-worker","ipcVersion":1,"capabilities":{"instanceLifecycle":true,"binaryAudioProcess":true}}}\n' "$id" ;;
-    *instance.create*) printf '{"jsonrpc":"2.0","id":%s,"result":{"instanceId":1,"streamId":1,"workerState":"ready","backend":"passthrough","latencySamples":0,"tailSamples":0}}\n' "$id" ;;
-    *instance.destroy*) printf '{"jsonrpc":"2.0","id":%s,"result":{"workerState":"destroyed"}}\n' "$id"; exit 0 ;;
-    *) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
-  esac
-done
-"#,
-    )
-    .expect("script");
-    let mut permissions = std::fs::metadata(&worker).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&worker, permissions).expect("permissions");
-    worker
 }
 
 #[cfg(unix)]

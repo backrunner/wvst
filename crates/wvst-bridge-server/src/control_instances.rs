@@ -12,8 +12,8 @@ use crate::instance_registry::{
     InstanceConnectionNotifyParams, InstanceCreateParams, InstanceDestroyParams, InstanceError,
     InstanceParameterInfoParams, InstanceParameterNormalizedByPlainParams, InstanceParameterParams,
     InstanceParameterSetParams, InstanceParameterValueByStringParams, InstanceProcessingParams,
-    InstanceRestartParams, InstanceSetStateParams, InstanceState, InstanceStatusParams,
-    StreamLifecycleParams, WorkerRuntimeInfo,
+    InstanceRecord, InstanceRestartParams, InstanceSetStateParams, InstanceState,
+    InstanceStatusParams, StreamLifecycleParams, WorkerRuntimeInfo,
 };
 use crate::worker_supervisor::WorkerSupervisorError;
 
@@ -44,11 +44,9 @@ struct InstanceRuntimeSnapshotParams {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct InstanceStateSetAndRefreshParams {
     instance_id: u64,
-    #[serde(default)]
-    state_base64: Option<String>,
     #[serde(default)]
     component_state_base64: Option<String>,
     #[serde(default)]
@@ -131,7 +129,7 @@ pub async fn handle_instance_create(
         plugin_id: record.plugin_id.clone(),
     });
 
-    match context.workers.start_instance(&record).await {
+    match start_instance_with_idle_reclaim(&record, &context).await {
         Ok(worker) => match context.instances.mark_worker_ready_with_runtime(
             record.instance_id,
             WorkerRuntimeInfo::from_worker_result(&worker),
@@ -187,39 +185,14 @@ pub async fn handle_instance_destroy(
     };
 
     let existing = context.instances.get(params.instance_id).ok();
-    if let Some(record) = &existing {
-        context.events.emit(BridgeEventKind::WorkerDestroying {
-            instance_id: record.instance_id,
-            plugin_id: record.plugin_id.clone(),
-            stream_id: record.stream_id,
-        });
-    }
-    context
-        .component_handler_events
-        .reset_instance(params.instance_id);
-    let _ = context
-        .shared_memory_pumps
-        .stop_by_instance(params.instance_id);
-    let _ = context
-        .workers
-        .detach_shared_memory(params.instance_id)
-        .await;
-    let _ = context.workers.destroy_instance(params.instance_id).await;
-    let _ = context
-        .shared_memory
-        .destroy_by_instance(params.instance_id);
+    let Some(record) = existing else {
+        return response_instance_error(id, InstanceError::InstanceNotFound(params.instance_id));
+    };
 
-    match context.instances.destroy(params) {
+    emit_worker_destroying(&context, &record);
+    match destroy_instance_record(&record, &context).await {
         Ok(result) => {
-            if let Some(record) = existing {
-                let stream_id = record.stream_id;
-                context.stream_tracker.reset(stream_id);
-                context.events.emit(BridgeEventKind::WorkerDestroyed {
-                    instance_id: record.instance_id,
-                    plugin_id: record.plugin_id,
-                    stream_id,
-                });
-            }
+            emit_worker_destroyed(&context, record);
             response_result(id, json!(result))
         }
         Err(error) => response_instance_error(id, error),
@@ -605,6 +578,109 @@ async fn mark_auto_recovered_instance(
     }
 }
 
+async fn start_instance_with_idle_reclaim(
+    record: &InstanceRecord,
+    context: &ControlContext<'_>,
+) -> Result<Value, WorkerSupervisorError> {
+    loop {
+        match context.workers.start_instance(record).await {
+            Ok(worker) => return Ok(worker),
+            Err(error) => {
+                let WorkerSupervisorError::ResourceLimitExceeded { limit, active } = &error else {
+                    return Err(error);
+                };
+
+                let Some(candidate) = context
+                    .instances
+                    .idle_worker_reclaim_candidate(&record.plugin_id, record.instance_id)
+                else {
+                    return Err(error);
+                };
+
+                emit_policy_decision(
+                    context,
+                    Some(record.instance_id),
+                    Some(&record.plugin_id),
+                    "resource-limit",
+                    "reclaim",
+                    "idle-worker",
+                    Some(json!({
+                        "kind": "idle-worker-reclaimed",
+                        "resource": "worker-instances",
+                        "limit": limit,
+                        "active": active,
+                        "targetInstanceId": record.instance_id,
+                        "reclaimedInstanceId": candidate.instance_id,
+                        "reclaimedStreamId": candidate.stream_id,
+                    })),
+                );
+                emit_worker_destroying(context, &candidate);
+
+                if let Err(instance_error) = destroy_instance_record(&candidate, context).await {
+                    emit_policy_decision(
+                        context,
+                        Some(record.instance_id),
+                        Some(&record.plugin_id),
+                        "resource-limit",
+                        "reject",
+                        "idle-worker-reclaim-failed",
+                        Some(json!({
+                            "kind": "idle-worker-reclaim-failed",
+                            "targetInstanceId": record.instance_id,
+                            "reclaimedInstanceId": candidate.instance_id,
+                            "error": instance_error.rpc_data(),
+                        })),
+                    );
+                    return Err(error);
+                }
+
+                emit_worker_destroyed(context, candidate);
+            }
+        }
+    }
+}
+
+async fn destroy_instance_record(
+    record: &InstanceRecord,
+    context: &ControlContext<'_>,
+) -> Result<crate::instance_registry::InstanceDestroyResult, InstanceError> {
+    context
+        .component_handler_events
+        .reset_instance(record.instance_id);
+    let _ = context
+        .shared_memory_pumps
+        .stop_by_instance(record.instance_id);
+    let _ = context
+        .workers
+        .detach_shared_memory(record.instance_id)
+        .await;
+    let _ = context.workers.destroy_instance(record.instance_id).await;
+    let _ = context
+        .shared_memory
+        .destroy_by_instance(record.instance_id);
+    let result = context.instances.destroy(InstanceDestroyParams {
+        instance_id: record.instance_id,
+    })?;
+    context.stream_tracker.reset(record.stream_id);
+    Ok(result)
+}
+
+fn emit_worker_destroying(context: &ControlContext<'_>, record: &InstanceRecord) {
+    context.events.emit(BridgeEventKind::WorkerDestroying {
+        instance_id: record.instance_id,
+        plugin_id: record.plugin_id.clone(),
+        stream_id: record.stream_id,
+    });
+}
+
+fn emit_worker_destroyed(context: &ControlContext<'_>, record: InstanceRecord) {
+    context.events.emit(BridgeEventKind::WorkerDestroyed {
+        instance_id: record.instance_id,
+        plugin_id: record.plugin_id,
+        stream_id: record.stream_id,
+    });
+}
+
 fn emit_worker_error(
     context: &ControlContext<'_>,
     instance_id: u64,
@@ -679,6 +755,24 @@ fn emit_policy_decision(
         reason: reason.to_string(),
         data,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn set_and_refresh_rejects_removed_state_base64_alias() {
+        let error = serde_json::from_value::<InstanceStateSetAndRefreshParams>(json!({
+            "instanceId": 1,
+            "stateBase64": "AQID",
+        }))
+        .expect_err("removed alias should be rejected");
+
+        assert!(error.to_string().contains("unknown field `stateBase64`"));
+    }
 }
 
 fn emit_recovery_failed(
@@ -812,6 +906,10 @@ pub async fn handle_instance_runtime_snapshot(
             json!({
                 "instance": instance,
                 "metadata": metadata,
+                "dataPlane": crate::runtime_snapshot::data_plane_snapshot(
+                    params.instance_id,
+                    &context,
+                ),
                 "recentEvents": if params.include_recent_events {
                     json!(context.events.recent_since(params.after_event_sequence))
                 } else {
@@ -1156,7 +1254,6 @@ pub async fn handle_instance_set_state(
         .workers
         .set_state(
             params.instance_id,
-            params.state_base64,
             params.component_state_base64,
             params.controller_state_base64,
         )
@@ -1190,7 +1287,6 @@ pub async fn handle_instance_state_set_and_refresh(
         .workers
         .set_state_and_refresh(
             params.instance_id,
-            params.state_base64,
             params.component_state_base64,
             params.controller_state_base64,
             params.include_state,

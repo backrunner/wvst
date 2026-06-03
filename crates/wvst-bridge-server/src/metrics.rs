@@ -14,8 +14,10 @@ pub struct BridgeMetrics {
     control_messages: AtomicU64,
     binary_frames: AtomicU64,
     audio_frames_routed: AtomicU64,
-    audio_frame_fallbacks: AtomicU64,
     audio_frame_route_failures: AtomicU64,
+    audio_frame_invalid_headers: AtomicU64,
+    audio_frame_invalid_lengths: AtomicU64,
+    audio_frame_unmatched_streams: AtomicU64,
     hello_requests: AtomicU64,
     worker_failures: AtomicU64,
     worker_restarts: AtomicU64,
@@ -35,6 +37,16 @@ pub struct BridgeMetrics {
     shared_memory_process_blocks: AtomicU64,
     shared_memory_process_frames: AtomicU64,
     shared_memory_process_failures: AtomicU64,
+    shared_memory_pump_preflight_skips: AtomicU64,
+    shared_memory_pump_overruns: AtomicU64,
+    shared_memory_pump_input_underruns: AtomicU64,
+    shared_memory_pump_output_backpressure: AtomicU64,
+    shared_memory_pump_worker_errors: AtomicU64,
+    shared_memory_pump_events_enqueued: AtomicU64,
+    shared_memory_pump_events_drained: AtomicU64,
+    shared_memory_pump_events_late: AtomicU64,
+    shared_memory_pump_events_dropped: AtomicU64,
+    shared_memory_pump_events_cleared: AtomicU64,
     audio_route_latency: LatencyHistogram,
     audio_interarrival_jitter: LatencyHistogram,
     shared_memory_process_latency: LatencyHistogram,
@@ -64,8 +76,10 @@ impl BridgeMetrics {
             control_messages: AtomicU64::new(0),
             binary_frames: AtomicU64::new(0),
             audio_frames_routed: AtomicU64::new(0),
-            audio_frame_fallbacks: AtomicU64::new(0),
             audio_frame_route_failures: AtomicU64::new(0),
+            audio_frame_invalid_headers: AtomicU64::new(0),
+            audio_frame_invalid_lengths: AtomicU64::new(0),
+            audio_frame_unmatched_streams: AtomicU64::new(0),
             hello_requests: AtomicU64::new(0),
             worker_failures: AtomicU64::new(0),
             worker_restarts: AtomicU64::new(0),
@@ -85,6 +99,16 @@ impl BridgeMetrics {
             shared_memory_process_blocks: AtomicU64::new(0),
             shared_memory_process_frames: AtomicU64::new(0),
             shared_memory_process_failures: AtomicU64::new(0),
+            shared_memory_pump_preflight_skips: AtomicU64::new(0),
+            shared_memory_pump_overruns: AtomicU64::new(0),
+            shared_memory_pump_input_underruns: AtomicU64::new(0),
+            shared_memory_pump_output_backpressure: AtomicU64::new(0),
+            shared_memory_pump_worker_errors: AtomicU64::new(0),
+            shared_memory_pump_events_enqueued: AtomicU64::new(0),
+            shared_memory_pump_events_drained: AtomicU64::new(0),
+            shared_memory_pump_events_late: AtomicU64::new(0),
+            shared_memory_pump_events_dropped: AtomicU64::new(0),
+            shared_memory_pump_events_cleared: AtomicU64::new(0),
             audio_route_latency: LatencyHistogram::new(),
             audio_interarrival_jitter: LatencyHistogram::new(),
             shared_memory_process_latency: LatencyHistogram::new(),
@@ -107,12 +131,23 @@ impl BridgeMetrics {
         self.audio_frames_routed.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn increment_audio_frame_fallbacks(&self) {
-        self.audio_frame_fallbacks.fetch_add(1, Ordering::Relaxed);
-    }
-
     pub fn increment_audio_frame_route_failures(&self) {
         self.audio_frame_route_failures
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_audio_frame_invalid_headers(&self) {
+        self.audio_frame_invalid_headers
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_audio_frame_invalid_lengths(&self) {
+        self.audio_frame_invalid_lengths
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_audio_frame_unmatched_streams(&self) {
+        self.audio_frame_unmatched_streams
             .fetch_add(1, Ordering::Relaxed);
     }
 
@@ -176,6 +211,53 @@ impl BridgeMetrics {
         self.shared_memory_process_latency.record(latency_us);
     }
 
+    pub fn increment_shared_memory_pump_preflight_skips(&self) {
+        self.shared_memory_pump_preflight_skips
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_shared_memory_pump_overruns(&self) {
+        self.shared_memory_pump_overruns
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_shared_memory_pump_input_underruns(&self) {
+        self.shared_memory_pump_input_underruns
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_shared_memory_pump_output_backpressure(&self) {
+        self.shared_memory_pump_output_backpressure
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn increment_shared_memory_pump_worker_errors(&self) {
+        self.shared_memory_pump_worker_errors
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_shared_memory_pump_events_enqueued(&self, events: u64) {
+        self.shared_memory_pump_events_enqueued
+            .fetch_add(events, Ordering::Relaxed);
+    }
+
+    pub fn record_shared_memory_pump_events_drained(&self, events: u64, late_events: u64) {
+        self.shared_memory_pump_events_drained
+            .fetch_add(events, Ordering::Relaxed);
+        self.shared_memory_pump_events_late
+            .fetch_add(late_events, Ordering::Relaxed);
+    }
+
+    pub fn record_shared_memory_pump_events_dropped(&self, events: u64) {
+        self.shared_memory_pump_events_dropped
+            .fetch_add(events, Ordering::Relaxed);
+    }
+
+    pub fn record_shared_memory_pump_events_cleared(&self, events: u64) {
+        self.shared_memory_pump_events_cleared
+            .fetch_add(events, Ordering::Relaxed);
+    }
+
     pub fn record_audio_stream_observation(&self, observation: AudioStreamObservation) {
         if observation.sequence_gap > 0 {
             self.audio_sequence_gap_events
@@ -205,8 +287,12 @@ impl BridgeMetrics {
             control_messages: self.control_messages.load(Ordering::Relaxed),
             binary_frames: self.binary_frames.load(Ordering::Relaxed),
             audio_frames_routed: self.audio_frames_routed.load(Ordering::Relaxed),
-            audio_frame_fallbacks: self.audio_frame_fallbacks.load(Ordering::Relaxed),
             audio_frame_route_failures: self.audio_frame_route_failures.load(Ordering::Relaxed),
+            audio_frame_invalid_headers: self.audio_frame_invalid_headers.load(Ordering::Relaxed),
+            audio_frame_invalid_lengths: self.audio_frame_invalid_lengths.load(Ordering::Relaxed),
+            audio_frame_unmatched_streams: self
+                .audio_frame_unmatched_streams
+                .load(Ordering::Relaxed),
             hello_requests: self.hello_requests.load(Ordering::Relaxed),
             worker_failures: self.worker_failures.load(Ordering::Relaxed),
             worker_restarts: self.worker_restarts.load(Ordering::Relaxed),
@@ -227,6 +313,34 @@ impl BridgeMetrics {
             shared_memory_process_frames: self.shared_memory_process_frames.load(Ordering::Relaxed),
             shared_memory_process_failures: self
                 .shared_memory_process_failures
+                .load(Ordering::Relaxed),
+            shared_memory_pump_preflight_skips: self
+                .shared_memory_pump_preflight_skips
+                .load(Ordering::Relaxed),
+            shared_memory_pump_overruns: self.shared_memory_pump_overruns.load(Ordering::Relaxed),
+            shared_memory_pump_input_underruns: self
+                .shared_memory_pump_input_underruns
+                .load(Ordering::Relaxed),
+            shared_memory_pump_output_backpressure: self
+                .shared_memory_pump_output_backpressure
+                .load(Ordering::Relaxed),
+            shared_memory_pump_worker_errors: self
+                .shared_memory_pump_worker_errors
+                .load(Ordering::Relaxed),
+            shared_memory_pump_events_enqueued: self
+                .shared_memory_pump_events_enqueued
+                .load(Ordering::Relaxed),
+            shared_memory_pump_events_drained: self
+                .shared_memory_pump_events_drained
+                .load(Ordering::Relaxed),
+            shared_memory_pump_events_late: self
+                .shared_memory_pump_events_late
+                .load(Ordering::Relaxed),
+            shared_memory_pump_events_dropped: self
+                .shared_memory_pump_events_dropped
+                .load(Ordering::Relaxed),
+            shared_memory_pump_events_cleared: self
+                .shared_memory_pump_events_cleared
                 .load(Ordering::Relaxed),
             audio_route_latency: self.audio_route_latency.snapshot(),
             audio_interarrival_jitter: self.audio_interarrival_jitter.snapshot(),
@@ -273,8 +387,10 @@ pub struct BridgeMetricsSnapshot {
     pub control_messages: u64,
     pub binary_frames: u64,
     pub audio_frames_routed: u64,
-    pub audio_frame_fallbacks: u64,
     pub audio_frame_route_failures: u64,
+    pub audio_frame_invalid_headers: u64,
+    pub audio_frame_invalid_lengths: u64,
+    pub audio_frame_unmatched_streams: u64,
     pub hello_requests: u64,
     pub worker_failures: u64,
     pub worker_restarts: u64,
@@ -294,6 +410,16 @@ pub struct BridgeMetricsSnapshot {
     pub shared_memory_process_blocks: u64,
     pub shared_memory_process_frames: u64,
     pub shared_memory_process_failures: u64,
+    pub shared_memory_pump_preflight_skips: u64,
+    pub shared_memory_pump_overruns: u64,
+    pub shared_memory_pump_input_underruns: u64,
+    pub shared_memory_pump_output_backpressure: u64,
+    pub shared_memory_pump_worker_errors: u64,
+    pub shared_memory_pump_events_enqueued: u64,
+    pub shared_memory_pump_events_drained: u64,
+    pub shared_memory_pump_events_late: u64,
+    pub shared_memory_pump_events_dropped: u64,
+    pub shared_memory_pump_events_cleared: u64,
     pub audio_route_latency: LatencySnapshot,
     pub audio_interarrival_jitter: LatencySnapshot,
     pub shared_memory_process_latency: LatencySnapshot,
@@ -384,91 +510,5 @@ fn bucket_upper_bound(index: usize) -> Option<u64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reports_audio_route_latency_percentiles() {
-        let metrics = BridgeMetrics::new();
-
-        metrics.record_audio_route_latency_us(80);
-        metrics.record_audio_route_latency_us(700);
-        metrics.record_audio_route_latency_us(60_000);
-
-        let latency = metrics.snapshot().audio_route_latency;
-        assert_eq!(latency.count, 3);
-        assert_eq!(latency.p50_us, Some(1_000));
-        assert_eq!(latency.p95_us, Some(100_000));
-        assert_eq!(latency.p99_us, Some(100_000));
-        assert_eq!(latency.buckets[0].count, 1);
-    }
-
-    #[test]
-    fn reports_audio_stream_observation_counters() {
-        let metrics = BridgeMetrics::new();
-
-        metrics.record_audio_stream_observation(AudioStreamObservation {
-            sequence_gap: 3,
-            duplicate: true,
-            out_of_order: true,
-            late: true,
-            interarrival_jitter_us: Some(1_200),
-        });
-
-        let snapshot = metrics.snapshot();
-        assert_eq!(snapshot.audio_sequence_gap_events, 1);
-        assert_eq!(snapshot.audio_sequence_gap_frames, 3);
-        assert_eq!(snapshot.audio_frames_duplicate, 1);
-        assert_eq!(snapshot.audio_frames_out_of_order, 1);
-        assert_eq!(snapshot.audio_frames_late, 1);
-        assert_eq!(snapshot.audio_interarrival_jitter.count, 1);
-        assert_eq!(snapshot.audio_interarrival_jitter.p50_us, Some(2_000));
-
-        metrics.increment_audio_backpressure_drops();
-        assert_eq!(metrics.snapshot().audio_backpressure_drops, 1);
-    }
-
-    #[test]
-    fn reports_worker_shutdown_audit_counters() {
-        let metrics = BridgeMetrics::new();
-
-        metrics.record_worker_shutdown(WorkerShutdownAudit {
-            kill_requested: true,
-            tree_kill_requested: true,
-            forced_kill_requested: false,
-            wait_succeeded: true,
-            wait_timed_out: false,
-        });
-        metrics.record_worker_shutdown(WorkerShutdownAudit {
-            kill_requested: true,
-            tree_kill_requested: true,
-            forced_kill_requested: true,
-            wait_succeeded: false,
-            wait_timed_out: true,
-        });
-
-        let snapshot = metrics.snapshot();
-        assert_eq!(snapshot.worker_shutdowns, 2);
-        assert_eq!(snapshot.worker_kill_requests, 2);
-        assert_eq!(snapshot.worker_tree_kill_requests, 2);
-        assert_eq!(snapshot.worker_forced_kill_requests, 1);
-        assert_eq!(snapshot.worker_wait_successes, 1);
-        assert_eq!(snapshot.worker_wait_timeouts, 1);
-    }
-
-    #[test]
-    fn reports_shared_memory_process_counters() {
-        let metrics = BridgeMetrics::new();
-
-        metrics.record_shared_memory_process_success(128, 250);
-        metrics.record_shared_memory_process_success(64, 700);
-        metrics.record_shared_memory_process_failure(1_200);
-
-        let snapshot = metrics.snapshot();
-        assert_eq!(snapshot.shared_memory_process_blocks, 2);
-        assert_eq!(snapshot.shared_memory_process_frames, 192);
-        assert_eq!(snapshot.shared_memory_process_failures, 1);
-        assert_eq!(snapshot.shared_memory_process_latency.count, 3);
-        assert_eq!(snapshot.shared_memory_process_latency.p50_us, Some(1_000));
-    }
-}
+#[path = "metrics_tests.rs"]
+mod tests;

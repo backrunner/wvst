@@ -94,11 +94,9 @@ pub struct InstanceParameterSetParams {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstanceSetStateParams {
     pub instance_id: u64,
-    #[serde(default)]
-    pub state_base64: Option<String>,
     #[serde(default)]
     pub component_state_base64: Option<String>,
     #[serde(default)]
@@ -204,6 +202,62 @@ pub struct InstanceRecord {
     pub runtime_capabilities: RuntimeCapabilities,
     pub latency_samples: u32,
     pub tail_samples: u32,
+    pub tail_info: RuntimeTailInfo,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeTailKind {
+    None,
+    Finite,
+    Infinite,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeTailInfo {
+    pub samples: u32,
+    pub kind: RuntimeTailKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finite_samples: Option<u32>,
+}
+
+impl RuntimeTailInfo {
+    pub const fn from_samples(samples: u32) -> Self {
+        match samples {
+            0 => Self {
+                samples,
+                kind: RuntimeTailKind::None,
+                finite_samples: Some(0),
+            },
+            u32::MAX => Self {
+                samples,
+                kind: RuntimeTailKind::Infinite,
+                finite_samples: None,
+            },
+            samples => Self {
+                samples,
+                kind: RuntimeTailKind::Finite,
+                finite_samples: Some(samples),
+            },
+        }
+    }
+
+    fn from_worker_result(value: &Value) -> Self {
+        let samples = value
+            .get("tailInfo")
+            .and_then(|tail| tail.get("samples"))
+            .and_then(Value::as_u64)
+            .and_then(|samples| u32::try_from(samples).ok())
+            .unwrap_or(0);
+        Self::from_samples(samples)
+    }
+}
+
+impl Default for RuntimeTailInfo {
+    fn default() -> Self {
+        Self::from_samples(0)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -255,6 +309,7 @@ pub struct WorkerRuntimeInfo {
     pub runtime_capabilities: RuntimeCapabilities,
     pub latency_samples: u32,
     pub tail_samples: u32,
+    pub tail_info: RuntimeTailInfo,
 }
 
 impl WorkerRuntimeInfo {
@@ -273,6 +328,7 @@ impl WorkerRuntimeInfo {
             ),
             latency_samples: json_u32(value, "latencySamples"),
             tail_samples: json_u32(value, "tailSamples"),
+            tail_info: RuntimeTailInfo::from_worker_result(value),
         }
     }
 }
@@ -334,6 +390,7 @@ impl InstanceRegistry {
             runtime_capabilities: RuntimeCapabilities::default(),
             latency_samples: 0,
             tail_samples: 0,
+            tail_info: RuntimeTailInfo::default(),
         };
 
         let mut records = self
@@ -377,6 +434,23 @@ impl InstanceRegistry {
             .values()
             .find(|record| {
                 record.stream_id == stream_id && record.stream_state == StreamState::Open
+            })
+            .cloned()
+    }
+
+    pub fn idle_worker_reclaim_candidate(
+        &self,
+        plugin_id: &str,
+        exclude_instance_id: u64,
+    ) -> Option<InstanceRecord> {
+        self.records
+            .lock()
+            .ok()?
+            .values()
+            .find(|record| {
+                record.plugin_id == plugin_id
+                    && record.instance_id != exclude_instance_id
+                    && is_reclaimable_idle_worker(record)
             })
             .cloned()
     }
@@ -449,6 +523,7 @@ impl InstanceRegistry {
             record.runtime_capabilities = runtime.runtime_capabilities;
             record.latency_samples = runtime.latency_samples;
             record.tail_samples = runtime.tail_samples;
+            record.tail_info = runtime.tail_info;
         }
 
         Ok(record.clone())
@@ -676,6 +751,15 @@ fn select_class<'a>(
         .find(|class| class.class_id.as_deref() == Some(requested_class_id))
         .ok_or_else(|| InstanceError::ClassNotFound(requested_class_id.to_string()))
         .map(Some)
+}
+
+fn is_reclaimable_idle_worker(record: &InstanceRecord) -> bool {
+    matches!(record.stream_state, StreamState::Closed)
+        && matches!(record.state, InstanceState::Ready | InstanceState::Stopped)
+        && matches!(
+            record.worker_state,
+            WorkerState::Ready | WorkerState::Stopped
+        )
 }
 
 #[cfg(test)]

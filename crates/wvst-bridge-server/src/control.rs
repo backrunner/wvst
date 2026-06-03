@@ -28,7 +28,7 @@ pub(crate) struct ControlContext<'a> {
     pub(crate) plugins: &'a PluginRegistry,
     pub(crate) stream_tracker: &'a AudioStreamTracker,
     pub(crate) audio_in_flight: &'a AudioInFlightLimiter,
-    pub(crate) shared_memory: &'a SharedMemoryStreamRegistry,
+    pub(crate) shared_memory: &'a Arc<SharedMemoryStreamRegistry>,
     pub(crate) shared_memory_pumps: &'a SharedMemoryPumpRegistry,
     pub(crate) origin: Option<&'a str>,
     pub(crate) session_authorized: bool,
@@ -505,6 +505,24 @@ pub(crate) async fn handle_control_text(
         ),
         "stream.sharedMemory.pump.status" => ControlResponse::new(
             control_stream_shared_memory::handle_stream_shared_memory_pump_status(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "stream.sharedMemory.pump.enqueueEvents" => ControlResponse::new(
+            control_stream_shared_memory::handle_stream_shared_memory_pump_enqueue_events(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "stream.sharedMemory.pump.clearEvents" => ControlResponse::new(
+            control_stream_shared_memory::handle_stream_shared_memory_pump_clear_events(
                 request.id,
                 request.params,
                 context,

@@ -60,16 +60,6 @@ impl WorkerProcess {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        if !self.use_framed_control_ipc {
-            let mut results = Vec::with_capacity(requests.len());
-            for request in requests {
-                results.push(
-                    self.request(request.method, request.params.clone(), timeout_duration)
-                        .await?,
-                );
-            }
-            return Ok(results);
-        }
 
         let mut request_ids = Vec::with_capacity(requests.len());
         let mut child_frames = Vec::with_capacity(requests.len());
