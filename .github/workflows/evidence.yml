@@ -167,11 +167,15 @@ jobs:
           fi
 
           if [ -n "${LATENCY_SNAPSHOT}" ] || [ -n "${STABILITY_BUDGET}" ] || [ -n "${WEBAUDIO_METRICS}" ] || [ -n "${BRIDGE_METRICS}" ]; then
-            if [ -z "${LATENCY_SNAPSHOT}" ] || [ -z "${STABILITY_BUDGET}" ]; then
+            latency_snapshot="${LATENCY_SNAPSHOT}"
+            if [ -z "${latency_snapshot}" ] && [ "${BRIDGE_WEB_SMOKE}" = "true" ]; then
+              latency_snapshot="evidence/web-bridge-smoke.json"
+            fi
+            if [ -z "${latency_snapshot}" ] || [ -z "${STABILITY_BUDGET}" ]; then
               echo "latency_snapshot and stability_budget are required for the stability gate" >&2
               exit 2
             fi
-            args=(--snapshot "${LATENCY_SNAPSHOT}" --budget "${STABILITY_BUDGET}")
+            args=(--snapshot "${latency_snapshot}" --budget "${STABILITY_BUDGET}")
             webaudio_metrics="${WEBAUDIO_METRICS}"
             if [ -z "${webaudio_metrics}" ] && [ "${BROWSER_SMOKE}" = "true" ]; then
               webaudio_metrics="evidence/browser-smoke.json"

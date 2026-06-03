@@ -4,7 +4,9 @@ use std::fmt;
 use serde::Deserialize;
 use wvst_protocol::AudioFrameFlags;
 
-use crate::latency::{LatencyHarness, LatencyHarnessConfig, LatencyObservation, LatencySnapshot};
+use crate::latency::{
+    LatencyHarness, LatencyHarnessConfig, LatencyObservation, LatencyPercentiles, LatencySnapshot,
+};
 
 const SCHEMA_VERSION: u16 = 1;
 
@@ -63,6 +65,201 @@ impl LatencySnapshotInput {
 
         Ok(harness.snapshot())
     }
+}
+
+impl LatencySnapshot {
+    pub fn from_json_str(text: &str) -> Result<Self, LatencySnapshotParseError> {
+        serde_json::from_str::<LatencySnapshotJsonInput>(text)
+            .map_err(|error| LatencySnapshotParseError::InvalidJson(error.to_string()))?
+            .into_snapshot()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum LatencySnapshotParseError {
+    InvalidJson(String),
+    BridgeSmokeFailed { error: Option<String> },
+    MissingBridgeSmokeMetrics,
+}
+
+impl fmt::Display for LatencySnapshotParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidJson(error) => write!(formatter, "{error}"),
+            Self::BridgeSmokeFailed { error } => {
+                write!(formatter, "web bridge smoke report did not pass")?;
+                if let Some(error) = error {
+                    write!(formatter, ": {error}")?;
+                }
+                Ok(())
+            }
+            Self::MissingBridgeSmokeMetrics => {
+                write!(formatter, "web bridge smoke report did not include metrics")
+            }
+        }
+    }
+}
+
+impl Error for LatencySnapshotParseError {}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum LatencySnapshotJsonInput {
+    Snapshot(LatencySnapshot),
+    WebBridgeSmoke(WebBridgeSmokeLatencyReport),
+}
+
+impl LatencySnapshotJsonInput {
+    fn into_snapshot(self) -> Result<LatencySnapshot, LatencySnapshotParseError> {
+        match self {
+            Self::Snapshot(snapshot) => Ok(snapshot),
+            Self::WebBridgeSmoke(report) => report.into_snapshot(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebBridgeSmokeLatencyReport {
+    ok: bool,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    sample_rate: u32,
+    #[serde(default)]
+    config: WebBridgeSmokeConfig,
+    metrics: Option<WebBridgeSmokeMetrics>,
+    #[serde(default)]
+    bridge_metrics: Option<WebBridgeSmokeBridgeMetrics>,
+}
+
+impl WebBridgeSmokeLatencyReport {
+    fn into_snapshot(self) -> Result<LatencySnapshot, LatencySnapshotParseError> {
+        if !self.ok {
+            return Err(LatencySnapshotParseError::BridgeSmokeFailed { error: self.error });
+        }
+        let metrics = self
+            .metrics
+            .ok_or(LatencySnapshotParseError::MissingBridgeSmokeMetrics)?;
+        let bridge = self.bridge_metrics.unwrap_or_default();
+        let route_observations = bridge.audio_route_latency.count.unwrap_or(0);
+        let observations = if route_observations > 0 {
+            route_observations
+        } else {
+            metrics.end_to_end_round_trip_us.count as u64
+        };
+        let dropped_frames = metrics
+            .dropped_input_quanta
+            .saturating_add(metrics.dropped_output_quanta)
+            .saturating_add(metrics.transport_failures)
+            .saturating_add(bridge.audio_frame_route_failures);
+
+        Ok(LatencySnapshot {
+            config: LatencyHarnessConfig::new(self.sample_rate, self.config.frames),
+            observations: observations as usize,
+            dropped_frames,
+            sequence_gap_events: bridge.audio_sequence_gap_events,
+            sequence_gap_frames: bridge.audio_sequence_gap_frames,
+            duplicate_frames: bridge.audio_frames_duplicate,
+            out_of_order_frames: bridge.audio_frames_out_of_order,
+            late_frames: bridge.audio_frames_late,
+            timeout_frames: metrics.transport_failures,
+            silence_frames: 0,
+            process_error_frames: bridge.audio_frame_route_failures,
+            route_latency_us: bridge.audio_route_latency.into_latency_percentiles(),
+            round_trip_frames: metrics
+                .end_to_end_round_trip_us
+                .to_frame_percentiles(self.sample_rate),
+            round_trip_us: metrics.end_to_end_round_trip_us,
+        })
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebBridgeSmokeConfig {
+    frames: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebBridgeSmokeMetrics {
+    #[serde(default)]
+    dropped_input_quanta: u64,
+    #[serde(default)]
+    dropped_output_quanta: u64,
+    #[serde(default)]
+    transport_failures: u64,
+    #[serde(default, rename = "endToEndRoundTripUs")]
+    end_to_end_round_trip_us: LatencyPercentiles,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebBridgeSmokeBridgeMetrics {
+    #[serde(default)]
+    audio_frame_route_failures: u64,
+    #[serde(default)]
+    audio_sequence_gap_events: u64,
+    #[serde(default)]
+    audio_sequence_gap_frames: u64,
+    #[serde(default)]
+    audio_frames_duplicate: u64,
+    #[serde(default)]
+    audio_frames_out_of_order: u64,
+    #[serde(default)]
+    audio_frames_late: u64,
+    #[serde(default)]
+    audio_route_latency: WebBridgeSmokeLatencyPercentiles,
+}
+
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebBridgeSmokeLatencyPercentiles {
+    #[serde(default)]
+    count: Option<u64>,
+    #[serde(default)]
+    p50_us: Option<u64>,
+    #[serde(default)]
+    p95_us: Option<u64>,
+    #[serde(default)]
+    p99_us: Option<u64>,
+}
+
+impl WebBridgeSmokeLatencyPercentiles {
+    fn into_latency_percentiles(self) -> LatencyPercentiles {
+        LatencyPercentiles {
+            count: self.count.unwrap_or(0) as usize,
+            p50: self.p50_us,
+            p95: self.p95_us,
+            p99: self.p99_us,
+        }
+    }
+}
+
+trait RoundTripFramePercentiles {
+    fn to_frame_percentiles(self, sample_rate_hz: u32) -> LatencyPercentiles;
+}
+
+impl RoundTripFramePercentiles for LatencyPercentiles {
+    fn to_frame_percentiles(self, sample_rate_hz: u32) -> LatencyPercentiles {
+        LatencyPercentiles {
+            count: self.count,
+            p50: self
+                .p50
+                .map(|micros| micros_to_frames(micros, sample_rate_hz)),
+            p95: self
+                .p95
+                .map(|micros| micros_to_frames(micros, sample_rate_hz)),
+            p99: self
+                .p99
+                .map(|micros| micros_to_frames(micros, sample_rate_hz)),
+        }
+    }
+}
+
+fn micros_to_frames(micros: u64, sample_rate_hz: u32) -> u64 {
+    micros.saturating_mul(u64::from(sample_rate_hz)) / 1_000_000
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -276,6 +473,76 @@ mod tests {
         assert_eq!(snapshot.sequence_gap_events, 1);
         assert_eq!(snapshot.sequence_gap_frames, 1);
         assert_eq!(snapshot.dropped_frames, 1);
+    }
+
+    #[test]
+    fn derives_snapshot_from_web_bridge_smoke_report() {
+        let report = json!({
+            "ok": true,
+            "mode": "bridge-vst3",
+            "sampleRate": 48000,
+            "config": {
+                "frames": 128
+            },
+            "metrics": {
+                "droppedInputQuanta": 1,
+                "droppedOutputQuanta": 2,
+                "transportFailures": 3,
+                "endToEndRoundTripUs": {
+                    "count": 5,
+                    "p50": 3000,
+                    "p95": 4000,
+                    "p99": 5000
+                }
+            },
+            "bridgeMetrics": {
+                "audioFrameRouteFailures": 4,
+                "audioSequenceGapEvents": 5,
+                "audioSequenceGapFrames": 6,
+                "audioFramesDuplicate": 7,
+                "audioFramesOutOfOrder": 8,
+                "audioFramesLate": 9,
+                "audioRouteLatency": {
+                    "count": 10,
+                    "p50Us": 100,
+                    "p95Us": 200,
+                    "p99Us": 300
+                }
+            }
+        });
+
+        let snapshot =
+            LatencySnapshot::from_json_str(&report.to_string()).expect("web bridge smoke snapshot");
+
+        assert_eq!(snapshot.config.sample_rate_hz(), 48_000);
+        assert_eq!(snapshot.config.block_frames(), 128);
+        assert_eq!(snapshot.observations, 10);
+        assert_eq!(snapshot.dropped_frames, 10);
+        assert_eq!(snapshot.timeout_frames, 3);
+        assert_eq!(snapshot.process_error_frames, 4);
+        assert_eq!(snapshot.sequence_gap_events, 5);
+        assert_eq!(snapshot.duplicate_frames, 7);
+        assert_eq!(snapshot.out_of_order_frames, 8);
+        assert_eq!(snapshot.late_frames, 9);
+        assert_eq!(snapshot.route_latency_us.p95, Some(200));
+        assert_eq!(snapshot.round_trip_us.p95, Some(4_000));
+        assert_eq!(snapshot.round_trip_frames.p95, Some(192));
+    }
+
+    #[test]
+    fn rejects_failed_web_bridge_smoke_report_as_snapshot() {
+        let report = json!({
+            "ok": false,
+            "error": "bridge worker failed"
+        });
+
+        let error = LatencySnapshot::from_json_str(&report.to_string())
+            .expect_err("failed web bridge smoke report");
+
+        assert_eq!(
+            error.to_string(),
+            "web bridge smoke report did not pass: bridge worker failed"
+        );
     }
 
     #[test]

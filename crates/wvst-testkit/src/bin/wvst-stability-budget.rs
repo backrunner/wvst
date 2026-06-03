@@ -9,7 +9,7 @@ use wvst_testkit::stability_budget::{
 };
 
 const USAGE: &str = "\
-usage: wvst-stability-budget --snapshot <latency-snapshot.json> --budget <budget.json> [--webaudio <loopback-metrics-or-browser-smoke.json>] [--bridge <bridge-metrics-or-web-bridge-smoke.json>]
+usage: wvst-stability-budget --snapshot <latency-snapshot-or-web-bridge-smoke.json> --budget <budget.json> [--webaudio <loopback-metrics-or-browser-smoke.json>] [--bridge <bridge-metrics-or-web-bridge-smoke.json>]
 
 Evaluates a WVST latency/stability snapshot against a JSON stability budget and writes a JSON report to stdout.
 ";
@@ -77,7 +77,7 @@ fn evaluate_json(
     webaudio_text: Option<&str>,
     bridge_text: Option<&str>,
 ) -> Result<StabilityBudgetReport, String> {
-    let snapshot = serde_json::from_str::<LatencySnapshot>(snapshot_text)
+    let snapshot = LatencySnapshot::from_json_str(snapshot_text)
         .map_err(|error| format!("invalid snapshot json: {error}"))?;
     let budget = serde_json::from_str::<StabilityBudget>(budget_text)
         .map_err(|error| format!("invalid budget json: {error}"))?;
@@ -372,6 +372,72 @@ mod tests {
                 actual: 5000,
             }
         );
+    }
+
+    #[test]
+    fn evaluates_web_bridge_smoke_payloads_as_all_metric_inputs() {
+        let budget = json!({
+            "minObservations": 4,
+            "maxDroppedFrames": 0,
+            "maxProcessErrorFrames": 0,
+            "maxRouteLatencyP95Us": 1000,
+            "maxRoundTripP95Us": 10000,
+            "maxWebAudioUnderflows": 0,
+            "maxWebAudioTransportFailures": 0,
+            "maxWebAudioEndToEndRoundTripP95Us": 10000,
+            "minBridgeAudioFramesRouted": 4,
+            "maxBridgeAudioFrameRouteFailures": 0,
+            "maxBridgeAudioBackpressureDrops": 0,
+            "maxBridgeAudioRouteLatencyP95Us": 1000
+        });
+        let web_bridge_smoke = json!({
+            "ok": true,
+            "mode": "bridge-vst3",
+            "sampleRate": 48000,
+            "config": {
+                "frames": 128
+            },
+            "metrics": {
+                "inputFrames": 512,
+                "outputFrames": 512,
+                "underflows": 0,
+                "overflows": 0,
+                "transportFailures": 0,
+                "endToEndRoundTripUs": {
+                    "count": 4,
+                    "p50": 5000,
+                    "p95": 7000,
+                    "p99": 8000
+                },
+                "inputSequence": 4,
+                "inputConsumedSequence": 4,
+                "outputSequence": 4,
+                "outputConsumedSequence": 4,
+                "pendingInputQuanta": 0,
+                "pendingOutputQuanta": 0
+            },
+            "bridgeMetrics": {
+                "audioFramesRouted": 4,
+                "audioBackpressureDrops": 0,
+                "audioFrameRouteFailures": 0,
+                "audioRouteLatency": {
+                    "count": 4,
+                    "p50Us": 200,
+                    "p95Us": 500,
+                    "p99Us": 700
+                }
+            }
+        });
+
+        let report = evaluate_json(
+            &web_bridge_smoke.to_string(),
+            &budget.to_string(),
+            Some(&web_bridge_smoke.to_string()),
+            Some(&web_bridge_smoke.to_string()),
+        )
+        .expect("budget report");
+
+        assert!(report.passed);
     }
 
     #[test]
