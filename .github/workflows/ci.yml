@@ -33,6 +33,25 @@ jobs:
       - name: Check Web WASM crate
         run: RUSTC="$(rustup which rustc)" cargo check -p wvst-web-wasm --target wasm32-unknown-unknown
 
+  rust-platform:
+    name: Rust platform (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Rust workspace
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Run Rust tests
+        run: cargo test --workspace
+
   web:
     name: Web SDK
     runs-on: ubuntu-latest

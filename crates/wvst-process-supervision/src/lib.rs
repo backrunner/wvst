@@ -115,6 +115,9 @@ impl LinuxCgroupLimits {
 #[derive(Debug)]
 pub enum WorkerSupervisionError {
     MissingChildId,
+    JobObjectSetupFailed {
+        operation: &'static str,
+    },
     Io {
         path: PathBuf,
         source: std::io::Error,
@@ -125,6 +128,12 @@ impl Display for WorkerSupervisionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MissingChildId => write!(formatter, "worker child pid is unavailable"),
+            Self::JobObjectSetupFailed { operation } => {
+                write!(
+                    formatter,
+                    "worker Windows job object setup failed at {operation}"
+                )
+            }
             Self::Io { path, source } => {
                 write!(formatter, "{}: {source}", path.display())
             }
@@ -136,6 +145,7 @@ impl Error for WorkerSupervisionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::MissingChildId => None,
+            Self::JobObjectSetupFailed { .. } => None,
             Self::Io { source, .. } => Some(source),
         }
     }
@@ -267,9 +277,16 @@ impl WorkerTerminationTarget {
     }
 
     pub fn from_child_with_limits(child: &Child, limits: WorkerResourceLimits) -> Self {
-        Self {
-            job: windows::JobHandle::create_for_child(child, limits),
-        }
+        Self::try_from_child_with_limits(child, limits).unwrap_or(Self { job: None })
+    }
+
+    pub fn try_from_child_with_limits(
+        child: &Child,
+        limits: WorkerResourceLimits,
+    ) -> Result<Self, WorkerSupervisionError> {
+        Ok(Self {
+            job: Some(windows::JobHandle::create_for_child(child, limits)?),
+        })
     }
 
     pub fn terminate_tree(&self) -> bool {
@@ -295,6 +312,13 @@ impl WorkerTerminationTarget {
 
     pub fn from_child_with_limits(_child: &Child, _limits: WorkerResourceLimits) -> Self {
         Self {}
+    }
+
+    pub fn try_from_child_with_limits(
+        child: &Child,
+        limits: WorkerResourceLimits,
+    ) -> Result<Self, WorkerSupervisionError> {
+        Ok(Self::from_child_with_limits(child, limits))
     }
 
     pub fn terminate_tree(&self) -> bool {
@@ -420,7 +444,7 @@ mod linux {
 
 #[cfg(windows)]
 mod windows {
-    use super::WorkerResourceLimits;
+    use super::{WorkerResourceLimits, WorkerSupervisionError};
     use tokio::process::Child;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::JobObjects::{
@@ -447,19 +471,31 @@ mod windows {
     unsafe impl Sync for JobHandle {}
 
     impl JobHandle {
-        pub fn create_for_child(child: &Child, limits: WorkerResourceLimits) -> Option<Self> {
-            let process = child.raw_handle()?;
+        pub fn create_for_child(
+            child: &Child,
+            limits: WorkerResourceLimits,
+        ) -> Result<Self, WorkerSupervisionError> {
+            let process = child
+                .raw_handle()
+                .ok_or(WorkerSupervisionError::MissingChildId)?;
             let job = unsafe {
                 // SAFETY: Null security attributes and name are accepted by
                 // CreateJobObjectW. The returned handle is validated below and
                 // owned by JobHandle on success.
                 CreateJobObjectW(std::ptr::null(), std::ptr::null())
             };
-            let handle = Self::from_raw(job)?;
+            let handle =
+                Self::from_raw(job).ok_or(WorkerSupervisionError::JobObjectSetupFailed {
+                    operation: "CreateJobObjectW",
+                })?;
 
             let mut job_limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             apply_resource_limits(&mut job_limits, limits);
-            let limit_size = u32::try_from(std::mem::size_of_val(&job_limits)).ok()?;
+            let limit_size = u32::try_from(std::mem::size_of_val(&job_limits)).map_err(|_| {
+                WorkerSupervisionError::JobObjectSetupFailed {
+                    operation: "SetInformationJobObject.size",
+                }
+            })?;
             let limits_set = unsafe {
                 // SAFETY: `job_limits` points to a properly initialized
                 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION value and size matches
@@ -472,7 +508,9 @@ mod windows {
                 )
             };
             if limits_set == 0 {
-                return None;
+                return Err(WorkerSupervisionError::JobObjectSetupFailed {
+                    operation: "SetInformationJobObject",
+                });
             }
 
             let assigned = unsafe {
@@ -481,10 +519,12 @@ mod windows {
                 AssignProcessToJobObject(handle.0, process.cast())
             };
             if assigned == 0 {
-                return None;
+                return Err(WorkerSupervisionError::JobObjectSetupFailed {
+                    operation: "AssignProcessToJobObject",
+                });
             }
 
-            Some(handle)
+            Ok(handle)
         }
 
         fn from_raw(handle: HANDLE) -> Option<Self> {
