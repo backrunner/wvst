@@ -803,6 +803,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wvst-shm-transport"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "wvst-testkit"
 version = "0.1.0"
 dependencies = [

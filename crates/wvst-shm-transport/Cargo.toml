@@ -1,0 +1,17 @@
+[package]
+name = "wvst-shm-transport"
+description = "Shared-memory audio transport layout descriptors for WVST."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
