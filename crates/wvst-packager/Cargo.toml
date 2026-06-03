@@ -1,0 +1,18 @@
+[package]
+name = "wvst-packager"
+description = "Release bundle generator for WVST bridge deployments."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "wvst-packager"
+path = "src/main.rs"
+
+[lints]
+workspace = true

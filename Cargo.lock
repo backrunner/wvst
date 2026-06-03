@@ -771,6 +771,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wvst-packager"
+version = "0.1.0"
+
+[[package]]
 name = "wvst-process-supervision"
 version = "0.1.0"
 dependencies = [
