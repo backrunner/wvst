@@ -126,6 +126,11 @@ pub fn build_macos_package(config: &MacosPackageConfig) -> io::Result<MacosPacka
         &uninstall_script(config),
         true,
     )?);
+    files.push(write_text(
+        &scripts_dir.join("diagnose-macos.sh"),
+        &diagnose_script(config),
+        true,
+    )?);
     files.push(write_text(&root.join("README.md"), &readme(config), false)?);
 
     Ok(MacosPackageManifest {
@@ -252,9 +257,20 @@ fn uninstall_script(config: &MacosPackageConfig) -> String {
     )
 }
 
+fn diagnose_script(config: &MacosPackageConfig) -> String {
+    let install_prefix = shell_quote_path(&config.install_prefix);
+    let launchd_label = shell_quote(&config.launchd_label);
+
+    format!(
+        "#!/bin/sh\nset -eu\n\nINSTALL_PREFIX={install_prefix}\nLAUNCHD_LABEL={launchd_label}\nCONFIG_FILE=${{WVST_CONFIG_FILE:-$INSTALL_PREFIX/config/wvst.env}}\nif [ -f \"$CONFIG_FILE\" ]; then\n  set -a\n  . \"$CONFIG_FILE\"\n  set +a\nfi\nexport WVST_HOST_WORKER=${{WVST_HOST_WORKER:-$INSTALL_PREFIX/bin/wvst-host-worker}}\nprintf 'WVST LaunchAgent status for %s:\\n' \"$LAUNCHD_LABEL\" >&2\nlaunchctl print \"gui/$(id -u)/$LAUNCHD_LABEL\" >/dev/null 2>&1 && printf 'loaded\\n' >&2 || printf 'not loaded\\n' >&2\nexec \"$INSTALL_PREFIX/bin/wvst-bridge-server\" diagnose\n",
+        install_prefix = install_prefix,
+        launchd_label = launchd_label,
+    )
+}
+
 fn readme(config: &MacosPackageConfig) -> String {
     format!(
-        "# WVST macOS Bundle\n\nInstall with:\n\n```sh\n./scripts/install-macos.sh\n```\n\nThe installer copies the bridge server, host worker, and launcher into `{install_prefix}`; creates `config/wvst.env` with a generated token if missing; installs the `{label}` user LaunchAgent; and writes logs under `{log_dir}`.\n\nUninstall the LaunchAgent and installed binaries with:\n\n```sh\n./scripts/uninstall-macos.sh\n```\n\nConfiguration and logs are intentionally preserved by uninstall.\n",
+        "# WVST macOS Bundle\n\nInstall with:\n\n```sh\n./scripts/install-macos.sh\n```\n\nThe installer copies the bridge server, host worker, and launcher into `{install_prefix}`; creates `config/wvst.env` with a generated token if missing; installs the `{label}` user LaunchAgent; and writes logs under `{log_dir}`.\n\nRun local diagnostics with:\n\n```sh\n./scripts/diagnose-macos.sh\n```\n\nUninstall the LaunchAgent and installed binaries with:\n\n```sh\n./scripts/uninstall-macos.sh\n```\n\nConfiguration and logs are intentionally preserved by uninstall.\n",
         install_prefix = config.install_prefix.display(),
         label = config.launchd_label,
         log_dir = default_log_dir().display(),
@@ -366,6 +382,17 @@ mod tests {
         .expect("install script");
         assert!(install.contains("launchctl bootstrap"));
         assert!(install.contains("openssl rand -hex 24"));
+
+        let diagnose = fs::read_to_string(
+            manifest
+                .package_root
+                .join("scripts")
+                .join("diagnose-macos.sh"),
+        )
+        .expect("diagnose script");
+        assert!(diagnose.contains("wvst-bridge-server\" diagnose"));
+        assert!(diagnose.contains("WVST_HOST_WORKER"));
+        assert!(diagnose.contains("launchctl print"));
 
         let _ = fs::remove_dir_all(root);
     }

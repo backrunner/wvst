@@ -84,6 +84,11 @@ pub fn build_windows_package(config: &WindowsPackageConfig) -> io::Result<Window
             &uninstall_script(config),
             false,
         )?,
+        write_text(
+            &scripts_dir.join("diagnose-windows.ps1"),
+            &diagnose_script(config),
+            false,
+        )?,
         write_text(&root.join("README.md"), &readme(config), false)?,
     ];
 
@@ -146,9 +151,20 @@ fn uninstall_script(config: &WindowsPackageConfig) -> String {
     )
 }
 
+fn diagnose_script(config: &WindowsPackageConfig) -> String {
+    let install_prefix = powershell_quote_path(&config.install_prefix);
+    let task_name = powershell_quote(&config.scheduled_task_name);
+
+    format!(
+        "$ErrorActionPreference = 'Stop'\n$InstallPrefix = {install_prefix}\n$TaskName = {task_name}\n$ConfigFile = if ($env:WVST_CONFIG_FILE) {{ $env:WVST_CONFIG_FILE }} else {{ Join-Path $InstallPrefix 'config\\wvst.env' }}\nif (Test-Path -LiteralPath $ConfigFile) {{\n  Get-Content -LiteralPath $ConfigFile | ForEach-Object {{\n    if ($_ -match '^\\s*(#|$)') {{ return }}\n    $Parts = $_ -split '=', 2\n    if ($Parts.Count -eq 2) {{ [Environment]::SetEnvironmentVariable($Parts[0].Trim(), $Parts[1], 'Process') }}\n  }}\n}}\nif (-not $env:WVST_HOST_WORKER) {{ $env:WVST_HOST_WORKER = Join-Path $InstallPrefix 'bin\\wvst-host-worker.exe' }}\n$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue\nif ($Task) {{ [Console]::Error.WriteLine(\"WVST scheduled task state: $($Task.State)\") }} else {{ [Console]::Error.WriteLine('WVST scheduled task state: not registered') }}\n& (Join-Path $InstallPrefix 'bin\\wvst-bridge-server.exe') diagnose\nexit $LASTEXITCODE\n",
+        install_prefix = install_prefix,
+        task_name = task_name,
+    )
+}
+
 fn readme(config: &WindowsPackageConfig) -> String {
     format!(
-        "# WVST Windows Bundle\n\nInstall the per-user scheduled task with PowerShell:\n\n```powershell\nSet-ExecutionPolicy -Scope Process Bypass\n.\\scripts\\install-windows.ps1\n```\n\nThe installer copies the bridge server, host worker, and launcher into `{install_prefix}`; creates `config\\wvst.env` with a generated token if missing; registers the `{task}` scheduled task; and starts it for the current user.\n\nUninstall the scheduled task and installed binaries with:\n\n```powershell\n.\\scripts\\uninstall-windows.ps1\n```\n\nConfiguration is intentionally preserved by uninstall.\n",
+        "# WVST Windows Bundle\n\nInstall the per-user scheduled task with PowerShell:\n\n```powershell\nSet-ExecutionPolicy -Scope Process Bypass\n.\\scripts\\install-windows.ps1\n```\n\nThe installer copies the bridge server, host worker, and launcher into `{install_prefix}`; creates `config\\wvst.env` with a generated token if missing; registers the `{task}` scheduled task; and starts it for the current user.\n\nRun local diagnostics with:\n\n```powershell\n.\\scripts\\diagnose-windows.ps1\n```\n\nUninstall the scheduled task and installed binaries with:\n\n```powershell\n.\\scripts\\uninstall-windows.ps1\n```\n\nConfiguration is intentionally preserved by uninstall.\n",
         install_prefix = windows_path(&config.install_prefix),
         task = config.scheduled_task_name,
     )
@@ -230,6 +246,19 @@ mod tests {
         .expect("launcher");
         assert!(launcher.contains("WVST_HOST_WORKER"));
         assert!(launcher.contains("wvst-bridge-server.exe"));
+
+        let diagnose = std::fs::read_to_string(
+            manifest
+                .package_root
+                .join("scripts")
+                .join("diagnose-windows.ps1"),
+        )
+        .expect("diagnose script");
+        assert!(diagnose.contains("wvst-bridge-server.exe') diagnose"));
+        assert!(diagnose.contains("WVST_HOST_WORKER"));
+        assert!(diagnose.contains("Get-ScheduledTask"));
+        assert!(diagnose.contains("[Console]::Error.WriteLine"));
+        assert!(!diagnose.contains("Write-Error"));
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -105,6 +105,11 @@ pub fn build_linux_package(config: &LinuxPackageConfig) -> io::Result<LinuxPacka
         &uninstall_script(config),
         true,
     )?);
+    files.push(write_text(
+        &scripts_dir.join("diagnose-linux.sh"),
+        &diagnose_script(config),
+        true,
+    )?);
     files.push(write_text(&root.join("README.md"), &readme(config), false)?);
 
     Ok(LinuxPackageManifest {
@@ -173,9 +178,20 @@ fn uninstall_script(config: &LinuxPackageConfig) -> String {
     )
 }
 
+fn diagnose_script(config: &LinuxPackageConfig) -> String {
+    let install_prefix = shell_quote_path(&config.install_prefix);
+    let service_name = shell_quote(&config.systemd_service_name);
+
+    format!(
+        "#!/bin/sh\nset -eu\n\nINSTALL_PREFIX={install_prefix}\nSERVICE_NAME={service_name}\nCONFIG_FILE=${{WVST_CONFIG_FILE:-$INSTALL_PREFIX/config/wvst.env}}\nif [ -f \"$CONFIG_FILE\" ]; then\n  set -a\n  . \"$CONFIG_FILE\"\n  set +a\nfi\nexport WVST_HOST_WORKER=${{WVST_HOST_WORKER:-$INSTALL_PREFIX/bin/wvst-host-worker}}\nprintf 'WVST systemd user service status for %s:\\n' \"$SERVICE_NAME.service\" >&2\nsystemctl --user is-active \"$SERVICE_NAME.service\" >&2 || true\nexec \"$INSTALL_PREFIX/bin/wvst-bridge-server\" diagnose\n",
+        install_prefix = install_prefix,
+        service_name = service_name,
+    )
+}
+
 fn readme(config: &LinuxPackageConfig) -> String {
     format!(
-        "# WVST Linux Bundle\n\nInstall the user service with:\n\n```sh\n./scripts/install-linux.sh\n```\n\nThe installer copies the bridge server, host worker, and launcher into `{install_prefix}`; creates `config/wvst.env` with a generated token if missing; installs the `{service}` systemd user service; and starts it with `systemctl --user enable --now {service}.service`.\n\nCheck service status with:\n\n```sh\nsystemctl --user status {service}.service\njournalctl --user -u {service}.service\n```\n\nUninstall the service and installed binaries with:\n\n```sh\n./scripts/uninstall-linux.sh\n```\n\nConfiguration is intentionally preserved by uninstall.\n",
+        "# WVST Linux Bundle\n\nInstall the user service with:\n\n```sh\n./scripts/install-linux.sh\n```\n\nThe installer copies the bridge server, host worker, and launcher into `{install_prefix}`; creates `config/wvst.env` with a generated token if missing; installs the `{service}` systemd user service; and starts it with `systemctl --user enable --now {service}.service`.\n\nCheck service status with:\n\n```sh\nsystemctl --user status {service}.service\njournalctl --user -u {service}.service\n```\n\nRun local diagnostics with:\n\n```sh\n./scripts/diagnose-linux.sh\n```\n\nUninstall the service and installed binaries with:\n\n```sh\n./scripts/uninstall-linux.sh\n```\n\nConfiguration is intentionally preserved by uninstall.\n",
         install_prefix = config.install_prefix.display(),
         service = config.systemd_service_name,
     )
@@ -250,6 +266,17 @@ mod tests {
         .expect("install script");
         assert!(install.contains("systemctl --user enable --now"));
         assert!(install.contains("openssl rand -hex 24"));
+
+        let diagnose = std::fs::read_to_string(
+            manifest
+                .package_root
+                .join("scripts")
+                .join("diagnose-linux.sh"),
+        )
+        .expect("diagnose script");
+        assert!(diagnose.contains("wvst-bridge-server\" diagnose"));
+        assert!(diagnose.contains("WVST_HOST_WORKER"));
+        assert!(diagnose.contains("systemctl --user is-active"));
 
         let _ = std::fs::remove_dir_all(root);
     }
