@@ -166,16 +166,49 @@ jobs:
             ran_gate=1
           fi
 
-          if [ -n "${LATENCY_SNAPSHOT}" ] || [ -n "${STABILITY_BUDGET}" ] || [ -n "${WEBAUDIO_METRICS}" ] || [ -n "${BRIDGE_METRICS}" ]; then
+          if [ -n "${LATENCY_SNAPSHOT}" ] || [ -n "${STABILITY_BUDGET}" ] || [ -n "${WEBAUDIO_METRICS}" ] || [ -n "${BRIDGE_METRICS}" ] || [ "${BRIDGE_WEB_SMOKE}" = "true" ]; then
             latency_snapshot="${LATENCY_SNAPSHOT}"
             if [ -z "${latency_snapshot}" ] && [ "${BRIDGE_WEB_SMOKE}" = "true" ]; then
               latency_snapshot="evidence/web-bridge-smoke.json"
             fi
-            if [ -z "${latency_snapshot}" ] || [ -z "${STABILITY_BUDGET}" ]; then
+            stability_budget="${STABILITY_BUDGET}"
+            if [ -z "${stability_budget}" ] && [ "${BRIDGE_WEB_SMOKE}" = "true" ]; then
+              stability_budget="evidence/bridge-web-smoke-budget.json"
+              cat > "${stability_budget}" <<'JSON'
+          {
+            "minObservations": 8,
+            "maxDroppedFrames": 0,
+            "maxTimeoutFrames": 0,
+            "maxLateFrames": 0,
+            "maxProcessErrorFrames": 0,
+            "maxRouteLatencyP95Us": 1000,
+            "maxRoundTripP95Us": 10000,
+            "maxWebAudioUnderflows": 10,
+            "maxWebAudioOverflows": 0,
+            "maxWebAudioDroppedInputQuanta": 0,
+            "maxWebAudioDroppedOutputQuanta": 0,
+            "maxWebAudioTransportFailures": 0,
+            "maxWebAudioEndToEndRoundTripP95Us": 10000,
+            "maxPendingInputQuanta": 0,
+            "maxPendingOutputQuanta": 8,
+            "minBridgeAudioFramesRouted": 8,
+            "maxBridgeAudioBackpressureDrops": 0,
+            "maxBridgeAudioFrameRouteFailures": 0,
+            "maxBridgeAudioSequenceGapEvents": 0,
+            "maxBridgeAudioSequenceGapFrames": 0,
+            "maxBridgeAudioFramesDuplicate": 0,
+            "maxBridgeAudioFramesOutOfOrder": 0,
+            "maxBridgeAudioFramesLate": 0,
+            "maxBridgeAudioRouteLatencyP95Us": 1000,
+            "maxBridgeAudioInterarrivalJitterP99Us": 10000
+          }
+          JSON
+            fi
+            if [ -z "${latency_snapshot}" ] || [ -z "${stability_budget}" ]; then
               echo "latency_snapshot and stability_budget are required for the stability gate" >&2
               exit 2
             fi
-            args=(--snapshot "${latency_snapshot}" --budget "${STABILITY_BUDGET}")
+            args=(--snapshot "${latency_snapshot}" --budget "${stability_budget}")
             webaudio_metrics="${WEBAUDIO_METRICS}"
             if [ -z "${webaudio_metrics}" ] && [ "${BROWSER_SMOKE}" = "true" ]; then
               webaudio_metrics="evidence/browser-smoke.json"
