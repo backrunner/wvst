@@ -83,6 +83,7 @@
 - `wvst-embed` 的 `BridgeHandle` 已提供只读 metrics snapshot 和 runtime diagnostics 聚合，嵌入式宿主可直接读取本地地址、指标和 recent events 做健康检查/日志集成；`BridgeRuntimeLogRecord` 已提供 event/diagnostics JSON-lines 写入 helper，`crates/wvst-embed/examples/embedded_bridge.rs` 提供可编译的应用生命周期和结构化日志管线集成示例，覆盖配置、事件订阅、启动、diagnostics 读取和优雅 shutdown。
 - Workspace 已新增 `wvst-process-supervision` crate，将 worker 进程树终止的 Unix process group 与 Windows Job Object 平台 FFI 收敛到独立安全 API；`wvst-bridge-server` 继续保持 `unsafe_code = deny`。
 - Bridge worker supervisor 已接入可选 worker address-space memory cap 和 CPU time hard cap：`WVST_WORKER_MEMORY_LIMIT_BYTES` / `BridgeConfig::with_worker_memory_limit_bytes()` 与 `WVST_WORKER_CPU_TIME_LIMIT_SECONDS` / `BridgeConfig::with_worker_cpu_time_limit_seconds()` 会通过 `wvst-process-supervision::WorkerResourceLimits` 传给 worker spawn；Unix/macOS/Linux 在 child `exec` 前设置 `RLIMIT_AS` / `RLIMIT_CPU`，Windows Job Object 会设置 job memory 和 job user-time limit。Linux 还新增 cgroup v2 backend，可通过 `WVST_WORKER_LINUX_CGROUP_PARENT`、`WVST_WORKER_LINUX_CGROUP_MEMORY_MAX_BYTES`、`WVST_WORKER_LINUX_CGROUP_CPU_QUOTA_MICROS` 和 `WVST_WORKER_LINUX_CGROUP_CPU_PERIOD_MICROS` 为每个 worker 创建独立 cgroup 并写入 `memory.max` / `cpu.max` / `cgroup.procs`；cgroup 配置失败会以 `supervision-setup-failed` 结构化错误返回，Bridge Server 自身仍不含 unsafe。
+- `wvst-bridge-server diagnose` 已提供本地 JSON 诊断命令，可输出 bridge version、平台信息、当前 env-derived config、token 是否启用但不泄露 token 值、host worker 路径/存在性/timeout 和 WVST 环境变量状态，便于 macOS 安装、启动和嵌入式宿主集成排查。
 
 ## 距离完整能力的主要差距
 
@@ -142,7 +143,7 @@
 仍缺少：
 
 - `wvst-embed` 已有 runtime builder、事件订阅、事件快照、只读 metrics diagnostics、外部 worker executable 注入、timeout 配置、JSON-lines 日志 helper 和可编译应用生命周期/日志管线示例；仍缺少打包脚本。
-- macOS 安装、启动、授权、日志和诊断命令。
+- macOS 安装、启动、授权和日志已有基础诊断命令支持；仍缺少发布安装脚本和更完整的日志采集/轮转命令。
 - Windows 真实运行验证、Linux cgroup 资源限制 backend 和发布打包脚本。
 
 ## 建议下一阶段
