@@ -1,5 +1,8 @@
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn builds_linux_bundle_with_systemd_and_scripts() {
@@ -159,8 +162,9 @@ fn unique_temp_dir() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
+    let nonce = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "wvst-linux-packager-{}-{nanos}",
+        "wvst-linux-packager-{}-{nanos}-{nonce}",
         std::process::id()
     ))
 }
