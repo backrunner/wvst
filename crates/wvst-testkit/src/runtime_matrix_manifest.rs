@@ -331,6 +331,10 @@ mod tests {
         assert_eq!(matrix.cases()[0].input_channels, 0);
         let mut executor = RecordingExecutor::default();
         let report = matrix.run_with(&mut executor);
+        assert_eq!(
+            report.schema_version,
+            crate::runtime_matrix::RUNTIME_PROBE_MATRIX_REPORT_SCHEMA_VERSION
+        );
         assert!(report.all_passed());
         assert!(
             executor.invocations[0]
