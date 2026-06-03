@@ -229,8 +229,10 @@ impl Vst3ComponentInstance {
             parameter_changes,
             output,
         )?;
-        self.buffers.output_events_into(&mut process_output.events);
-        self.buffers
+        process_output.diagnostics.output_events =
+            self.buffers.output_events_into(&mut process_output.events);
+        process_output.diagnostics.output_parameter_changes = self
+            .buffers
             .output_parameter_changes_into(&mut process_output.parameter_changes);
         Ok(())
     }

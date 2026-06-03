@@ -4,7 +4,8 @@ use wvst_vst3_host::{
     HeadlessPluginInstance, HostError, VST3_MIDI_CONTROLLER_AFTERTOUCH,
     VST3_MIDI_CONTROLLER_PITCH_BEND, Vst3BusDirection, Vst3HostMessage, Vst3InputEvent,
     Vst3LifecycleState, Vst3LoadedComponent, Vst3ParameterChange, Vst3ParameterInfo,
-    Vst3ProcessOutput, Vst3ProcessingConfig, Vst3UnitMetadata, create_vst3_component_instance,
+    Vst3ProcessOutput, Vst3ProcessOutputDiagnostics, Vst3ProcessingConfig, Vst3UnitMetadata,
+    create_vst3_component_instance,
 };
 
 use super::{
@@ -55,6 +56,8 @@ pub(super) struct WorkerBackendDiagnostics {
     component_handler: Option<wvst_vst3_host::Vst3ComponentHandlerSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     process_context_requirements: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    process_output: Option<Vst3ProcessOutputDiagnostics>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -165,12 +168,16 @@ impl WorkerBackend {
         }
     }
 
-    pub(super) fn diagnostics(&self) -> WorkerBackendDiagnostics {
+    pub(super) fn diagnostics_with_process_output(
+        &self,
+        process_output: Option<&Vst3ProcessOutput>,
+    ) -> WorkerBackendDiagnostics {
         match self {
             Self::Passthrough(_) => WorkerBackendDiagnostics {
                 passthrough_reason: self.passthrough_reason(),
                 component_handler: None,
                 process_context_requirements: None,
+                process_output: None,
             },
             Self::Vst3Runtime(runtime) => WorkerBackendDiagnostics {
                 passthrough_reason: None,
@@ -179,6 +186,7 @@ impl WorkerBackend {
                     .component
                     .instance()
                     .process_context_requirements(),
+                process_output: process_output.map(|output| output.diagnostics),
             },
         }
     }

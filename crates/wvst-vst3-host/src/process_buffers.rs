@@ -5,6 +5,7 @@ use wvst_core::audio::MAX_CHANNEL_COUNT;
 
 use crate::event_list::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3EventList, Vst3InputEvent, Vst3OutputEvent,
+    Vst3OutputEventStats,
 };
 use crate::parameter_changes::{
     DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK, Vst3ParameterChange, Vst3ParameterChanges,
@@ -14,6 +15,14 @@ use crate::vst3_abi::{
     VST3_PROCESS_MODE_REALTIME, VST3_SAMPLE_32,
 };
 use crate::{HostError, HostResult};
+
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vst3OutputParameterChangeStats {
+    pub raw_points: u32,
+    pub normalized_points: u32,
+    pub filtered_points: u32,
+}
 
 #[derive(Debug)]
 pub struct Vst3ProcessBuffers {
@@ -174,18 +183,31 @@ impl Vst3ProcessBuffers {
         self.output_events.events()
     }
 
-    pub fn output_events_into(&self, destination: &mut Vec<Vst3OutputEvent>) {
+    pub fn output_events_into(
+        &self,
+        destination: &mut Vec<Vst3OutputEvent>,
+    ) -> Vst3OutputEventStats {
         self.output_events
-            .output_events_into(self.prepared_frames, destination);
+            .output_events_into(self.prepared_frames, destination)
     }
 
     pub fn output_parameter_changes(&self) -> Vec<Vst3ParameterChange> {
         self.output_parameter_changes.changes()
     }
 
-    pub fn output_parameter_changes_into(&self, destination: &mut Vec<Vst3ParameterChange>) {
+    pub fn output_parameter_changes_into(
+        &self,
+        destination: &mut Vec<Vst3ParameterChange>,
+    ) -> Vst3OutputParameterChangeStats {
         self.output_parameter_changes.changes_into(destination);
+        let raw_points = destination.len() as u32;
         destination.retain(|change| usize::from(change.sample_offset) < self.prepared_frames);
+        let normalized_points = destination.len() as u32;
+        Vst3OutputParameterChangeStats {
+            raw_points,
+            normalized_points,
+            filtered_points: raw_points.saturating_sub(normalized_points),
+        }
     }
 
     pub fn copy_output_to_interleaved(&self, frames: usize, output: &mut [f32]) -> HostResult<()> {

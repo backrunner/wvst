@@ -608,7 +608,9 @@ fn worker_metrics(state: &WorkerIpcState) -> Value {
                     "runtimeCapabilities": instance.capabilities,
                     "latencySamples": instance.backend.latency_samples(),
                     "tailSamples": instance.backend.tail_samples(),
-                    "diagnostics": instance.backend.diagnostics(),
+                    "diagnostics": instance
+                        .backend
+                        .diagnostics_with_process_output(Some(&instance.process_output)),
                 })
             })
             .collect::<Vec<_>>(),

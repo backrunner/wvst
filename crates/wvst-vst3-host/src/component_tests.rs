@@ -136,6 +136,25 @@ fn captures_process_output_events_and_parameter_changes() {
             value_normalized: 0.75,
         }]
     );
+    assert_eq!(process_output.diagnostics.output_events.raw_events, 1);
+    assert_eq!(
+        process_output.diagnostics.output_events.normalized_events,
+        1
+    );
+    assert_eq!(
+        process_output
+            .diagnostics
+            .output_parameter_changes
+            .raw_points,
+        1
+    );
+    assert_eq!(
+        process_output
+            .diagnostics
+            .output_parameter_changes
+            .normalized_points,
+        1
+    );
 }
 
 #[test]

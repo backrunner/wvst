@@ -42,7 +42,7 @@ pub use edit_controller::{Vst3EditController, Vst3ParameterFlags, Vst3ParameterI
 pub use error::{HostError, HostResult};
 pub use event_list::{
     DEFAULT_MAX_VST3_EVENTS_PER_BLOCK, Vst3InputEvent, Vst3NoteEvent, Vst3OutputEvent,
-    Vst3PolyPressureEvent,
+    Vst3OutputEventStats, Vst3PolyPressureEvent,
 };
 pub use factory::{
     Vst3ComponentProbe, Vst3FactoryClass, Vst3FactoryInfo, Vst3LoadedComponent,
@@ -58,8 +58,8 @@ pub use module::{Vst3ModuleProbe, Vst3ModuleSymbols, find_vst3_executable, probe
 pub use parameter_changes::{
     DEFAULT_MAX_VST3_PARAMETER_CHANGES_PER_BLOCK, Vst3ParameterChange, Vst3ParameterChanges,
 };
-pub use process_buffers::Vst3ProcessBuffers;
-pub use process_output::Vst3ProcessOutput;
+pub use process_buffers::{Vst3OutputParameterChangeStats, Vst3ProcessBuffers};
+pub use process_output::{Vst3ProcessOutput, Vst3ProcessOutputDiagnostics};
 pub use processor::{HeadlessPluginInstance, ProcessStats};
 pub use state_stream::DEFAULT_MAX_VST3_STATE_BYTES;
 pub use unit_data::{Vst3ProgramListData, Vst3UnitData};

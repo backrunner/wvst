@@ -1,3 +1,5 @@
+use std::ptr;
+
 use super::*;
 use crate::event_list::{Vst3InputEvent, Vst3NoteEvent};
 use crate::parameter_changes::Vst3ParameterChange;
@@ -342,11 +344,42 @@ fn captures_output_parameter_changes_written_by_plugin() {
             value_normalized: 0.25,
         }]
     );
+    let mut output_changes = Vec::new();
+    let stats = buffers.output_parameter_changes_into(&mut output_changes);
+    assert_eq!(stats.raw_points, 1);
+    assert_eq!(stats.normalized_points, 1);
+    assert_eq!(stats.filtered_points, 0);
 
     buffers
         .prepare_interleaved_f32(64, &[])
         .expect("next block");
     assert!(buffers.output_parameter_changes().is_empty());
+}
+
+#[test]
+fn reports_filtered_output_parameter_changes_outside_block() {
+    let mut buffers = Vst3ProcessBuffers::new(48_000.0, 128, 0, 2).expect("buffers");
+    buffers.prepare_interleaved_f32(64, &[]).expect("prepare");
+    let changes = buffers
+        .process_data
+        .output_parameter_changes
+        .cast::<IParameterChanges>();
+    let parameter_id: ParamId = 42;
+    let queue = unsafe {
+        ((*(*changes).vtable).add_parameter_data)(changes, &parameter_id, ptr::null_mut())
+    };
+    let mut point_index = -1;
+    let result = unsafe { ((*(*queue).vtable).add_point)(queue, 80, 0.25, &mut point_index) };
+    let mut output_changes = Vec::new();
+
+    let stats = buffers.output_parameter_changes_into(&mut output_changes);
+
+    assert_eq!(result, 0);
+    assert_eq!(point_index, 0);
+    assert!(output_changes.is_empty());
+    assert_eq!(stats.raw_points, 1);
+    assert_eq!(stats.normalized_points, 0);
+    assert_eq!(stats.filtered_points, 1);
 }
 
 #[test]

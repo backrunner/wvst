@@ -1,6 +1,8 @@
 use std::ffi::c_void;
 use std::ptr;
 
+use serde::Serialize;
+
 use crate::vst3_abi::{
     Event, EventPayload, IEventList, IEventListVTable, NoteOffEvent, NoteOnEvent,
     PolyPressureEvent, VST3_EVENT_TYPE_NOTE_OFF, VST3_EVENT_TYPE_NOTE_ON,
@@ -42,6 +44,17 @@ pub enum Vst3OutputEvent {
     PolyPressure(Vst3PolyPressureEvent),
 }
 
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vst3OutputEventStats {
+    pub raw_events: u32,
+    pub normalized_events: u32,
+    pub filtered_events: u32,
+    pub invalid_sample_offset_events: u32,
+    pub invalid_payload_events: u32,
+    pub unknown_type_events: u32,
+}
+
 #[derive(Debug)]
 pub struct Vst3EventList {
     object: Box<EventListObject>,
@@ -72,13 +85,41 @@ impl Vst3EventList {
         &self.object.events
     }
 
-    pub fn output_events_into(&self, frames: usize, destination: &mut Vec<Vst3OutputEvent>) {
+    pub fn output_events_into(
+        &self,
+        frames: usize,
+        destination: &mut Vec<Vst3OutputEvent>,
+    ) -> Vst3OutputEventStats {
         destination.clear();
+        let mut stats = Vst3OutputEventStats {
+            raw_events: self.object.events.len() as u32,
+            ..Vst3OutputEventStats::default()
+        };
         for event in &self.object.events {
-            if let Some(event) = from_vst3_event(frames, *event) {
-                destination.push(event);
+            match from_vst3_event(frames, *event) {
+                Ok(event) => {
+                    stats.normalized_events = stats.normalized_events.saturating_add(1);
+                    destination.push(event);
+                }
+                Err(reason) => {
+                    stats.filtered_events = stats.filtered_events.saturating_add(1);
+                    match reason {
+                        OutputEventFilterReason::InvalidSampleOffset => {
+                            stats.invalid_sample_offset_events =
+                                stats.invalid_sample_offset_events.saturating_add(1);
+                        }
+                        OutputEventFilterReason::InvalidPayload => {
+                            stats.invalid_payload_events =
+                                stats.invalid_payload_events.saturating_add(1);
+                        }
+                        OutputEventFilterReason::UnknownType => {
+                            stats.unknown_type_events = stats.unknown_type_events.saturating_add(1);
+                        }
+                    }
+                }
             }
         }
+        stats
     }
 
     pub fn set_events(&mut self, frames: usize, events: &[Vst3InputEvent]) -> HostResult<()> {
@@ -220,9 +261,19 @@ fn to_vst3_event(frames: usize, event: Vst3InputEvent) -> HostResult<Event> {
     })
 }
 
-fn from_vst3_event(frames: usize, event: Event) -> Option<Vst3OutputEvent> {
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum OutputEventFilterReason {
+    InvalidSampleOffset,
+    InvalidPayload,
+    UnknownType,
+}
+
+fn from_vst3_event(
+    frames: usize,
+    event: Event,
+) -> Result<Vst3OutputEvent, OutputEventFilterReason> {
     if event.sample_offset < 0 || event.sample_offset as usize >= frames {
-        return None;
+        return Err(OutputEventFilterReason::InvalidSampleOffset);
     }
     let sample_offset = event.sample_offset as u16;
 
@@ -238,6 +289,7 @@ fn from_vst3_event(frames: usize, event: Event) -> Option<Vst3OutputEvent> {
                 note.note_id,
             )
             .map(Vst3OutputEvent::NoteOn)
+            .ok_or(OutputEventFilterReason::InvalidPayload)
         }
         VST3_EVENT_TYPE_NOTE_OFF => {
             // SAFETY: The VST3 event type tag says this union arm is a note-off payload.
@@ -250,6 +302,7 @@ fn from_vst3_event(frames: usize, event: Event) -> Option<Vst3OutputEvent> {
                 note.note_id,
             )
             .map(Vst3OutputEvent::NoteOff)
+            .ok_or(OutputEventFilterReason::InvalidPayload)
         }
         VST3_EVENT_TYPE_POLY_PRESSURE => {
             // SAFETY: The VST3 event type tag says this union arm is a poly-pressure payload.
@@ -262,8 +315,9 @@ fn from_vst3_event(frames: usize, event: Event) -> Option<Vst3OutputEvent> {
                 pressure.note_id,
             )
             .map(Vst3OutputEvent::PolyPressure)
+            .ok_or(OutputEventFilterReason::InvalidPayload)
         }
-        _ => None,
+        _ => Err(OutputEventFilterReason::UnknownType),
     }
 }
 
@@ -453,14 +507,20 @@ mod tests {
             },
             ..Event::default()
         };
+        let mut unknown_type = Event {
+            sample_offset: 4,
+            event_type: 99,
+            ..Event::default()
+        };
         unsafe {
             ((*(*ptr).vtable).add_event)(ptr, &mut note_on);
             ((*(*ptr).vtable).add_event)(ptr, &mut bad_offset);
             ((*(*ptr).vtable).add_event)(ptr, &mut bad_channel);
+            ((*(*ptr).vtable).add_event)(ptr, &mut unknown_type);
         }
         let mut events = Vec::new();
 
-        list.output_events_into(8, &mut events);
+        let stats = list.output_events_into(8, &mut events);
 
         assert_eq!(
             events,
@@ -472,5 +532,11 @@ mod tests {
                 note_id: 10,
             })]
         );
+        assert_eq!(stats.raw_events, 4);
+        assert_eq!(stats.normalized_events, 1);
+        assert_eq!(stats.filtered_events, 3);
+        assert_eq!(stats.invalid_sample_offset_events, 1);
+        assert_eq!(stats.invalid_payload_events, 1);
+        assert_eq!(stats.unknown_type_events, 1);
     }
 }
