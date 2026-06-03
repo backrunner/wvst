@@ -205,6 +205,15 @@ pub(crate) async fn handle_control_text(
             .await,
             session_authorized,
         ),
+        "instance.runtime.snapshot" => ControlResponse::new(
+            control_instances::handle_instance_runtime_snapshot(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
         "instance.selectUnit" => ControlResponse::new(
             control_instance_units::handle_instance_select_unit(
                 request.id,

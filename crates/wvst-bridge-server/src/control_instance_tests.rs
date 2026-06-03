@@ -229,6 +229,33 @@ async fn creates_lists_and_destroys_instance() {
     assert_eq!(metadata_refresh_value["result"]["state"], Value::Null);
     assert_eq!(metadata_refresh_value["result"]["worker"]["instances"], 1);
 
+    let runtime_snapshot_request = serde_json::json!({
+        "id": 74,
+        "method": "instance.runtime.snapshot",
+        "params": { "instanceId": instance_id, "includeRecentEvents": true }
+    })
+    .to_string();
+    let runtime_snapshot_value = request_json(&runtime_snapshot_request, context).await;
+    assert_eq!(
+        runtime_snapshot_value["result"]["instance"]["instanceId"],
+        instance_id
+    );
+    assert_eq!(
+        runtime_snapshot_value["result"]["metadata"]["parameters"][0]["id"],
+        42
+    );
+    assert_eq!(
+        runtime_snapshot_value["result"]["metadata"]["worker"]["instances"],
+        1
+    );
+    assert!(
+        runtime_snapshot_value["result"]["recentEvents"]
+            .as_array()
+            .expect("recent events")
+            .iter()
+            .any(|event| event["kind"]["type"] == "worker-ready")
+    );
+
     let parameter_info_request = serde_json::json!({
         "id": 32,
         "method": "instance.parameter.info",
