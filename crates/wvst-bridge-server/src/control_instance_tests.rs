@@ -1,5 +1,6 @@
 use super::*;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ use crate::instance_registry::{
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::stream_shared_memory::SharedMemoryStreamRegistry;
+use crate::stream_shared_memory_pump::SharedMemoryPumpRegistry;
 use crate::worker_supervisor::WorkerSupervisor;
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -25,12 +27,13 @@ struct RequestContext<'a> {
     instances: &'a InstanceRegistry,
     component_handler_events: &'a ComponentHandlerEventPublisher,
     events: &'a BridgeEventBus,
-    metrics: &'a BridgeMetrics,
+    metrics: &'a Arc<BridgeMetrics>,
     plugins: &'a PluginRegistry,
     stream_tracker: &'a AudioStreamTracker,
     audio_in_flight: &'a AudioInFlightLimiter,
     shared_memory: &'a SharedMemoryStreamRegistry,
-    workers: &'a WorkerSupervisor,
+    shared_memory_pumps: &'a SharedMemoryPumpRegistry,
+    workers: &'a Arc<WorkerSupervisor>,
 }
 
 #[cfg(unix)]
@@ -41,13 +44,17 @@ async fn creates_lists_and_destroys_instance() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_script();
-    let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let workers = Arc::new(WorkerSupervisor::new_for_test(
+        worker_path.clone(),
+        Duration::from_secs(5),
+    ));
     let context = RequestContext {
         config: &config,
         host_worker: &host_worker,
@@ -59,6 +66,7 @@ async fn creates_lists_and_destroys_instance() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         workers: &workers,
     };
 
@@ -803,20 +811,23 @@ async fn creates_lists_and_destroys_instance() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn marks_instance_failed_when_heartbeat_worker_exits() {
-    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
-        .with_worker_auto_restart(false);
+async fn shared_memory_pump_runs_until_stopped() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
     let host_worker = test_host_worker();
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
-    let worker_path = serve_worker_exits_on_metrics_script();
-    let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let worker_path = serve_worker_script();
+    let workers = Arc::new(WorkerSupervisor::new_for_test(
+        worker_path.clone(),
+        Duration::from_secs(5),
+    ));
     let context = RequestContext {
         config: &config,
         host_worker: &host_worker,
@@ -828,6 +839,119 @@ async fn marks_instance_failed_when_heartbeat_worker_exits() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
+        workers: &workers,
+    };
+
+    let create = request_json(&instance_create_request(1, &plugin_id), context).await;
+    let instance_id = create["result"]["instanceId"]
+        .as_u64()
+        .expect("instance id");
+    let shared_memory_create = serde_json::json!({
+        "id": 2,
+        "method": "stream.sharedMemory.create",
+        "params": { "instanceId": instance_id, "capacityBlocks": 2 }
+    })
+    .to_string();
+    let shared_memory_value = request_json(&shared_memory_create, context).await;
+    assert_eq!(shared_memory_value["result"]["worker"]["attached"], true);
+
+    let start = request_json(&instance_request(3, "instance.start", instance_id), context).await;
+    assert_eq!(start["result"]["instance"]["state"], "processing");
+
+    let pump_start = serde_json::json!({
+        "id": 4,
+        "method": "stream.sharedMemory.pump.start",
+        "params": { "instanceId": instance_id, "frames": 2, "intervalMicros": 1_000 }
+    })
+    .to_string();
+    let pump_start_value = request_json(&pump_start, context).await;
+    assert_eq!(pump_start_value["result"]["started"], true);
+    assert_eq!(pump_start_value["result"]["status"]["config"]["frames"], 2);
+
+    let pump_status = wait_for_pump_success(instance_id, context).await;
+    assert_eq!(pump_status["result"]["running"], true);
+    assert!(
+        pump_status["result"]["status"]["successes"]
+            .as_u64()
+            .expect("successes")
+            >= 1
+    );
+    assert_eq!(pump_status["result"]["status"]["lastSuccessFrames"], 2);
+
+    let metrics_value =
+        request_json(r#"{"id":6,"method":"bridge.metrics","params":{}}"#, context).await;
+    assert!(
+        metrics_value["result"]["sharedMemoryProcessBlocks"]
+            .as_u64()
+            .expect("process blocks")
+            >= 1
+    );
+
+    let pump_stop = serde_json::json!({
+        "id": 7,
+        "method": "stream.sharedMemory.pump.stop",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+    let pump_stop_value = request_json(&pump_stop, context).await;
+    assert_eq!(pump_stop_value["result"]["stopped"], true);
+    assert_eq!(pump_stop_value["result"]["status"]["running"], true);
+
+    let stopped_status = request_json(
+        &serde_json::json!({
+            "id": 8,
+            "method": "stream.sharedMemory.pump.status",
+            "params": { "instanceId": instance_id }
+        })
+        .to_string(),
+        context,
+    )
+    .await;
+    assert_eq!(stopped_status["result"]["running"], false);
+    assert_eq!(stopped_status["result"]["status"], Value::Null);
+
+    let _ = request_json(
+        &instance_request(9, "instance.destroy", instance_id),
+        context,
+    )
+    .await;
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn marks_instance_failed_when_heartbeat_worker_exits() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"))
+        .with_worker_auto_restart(false);
+    let host_worker = test_host_worker();
+    let instances = InstanceRegistry::new();
+    let component_handler_events = ComponentHandlerEventPublisher::new();
+    let events = BridgeEventBus::new();
+    let metrics = Arc::new(BridgeMetrics::new());
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let stream_tracker = AudioStreamTracker::new();
+    let audio_in_flight = AudioInFlightLimiter::new();
+    let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let worker_path = serve_worker_exits_on_metrics_script();
+    let workers = Arc::new(WorkerSupervisor::new_for_test(
+        worker_path.clone(),
+        Duration::from_secs(5),
+    ));
+    let context = RequestContext {
+        config: &config,
+        host_worker: &host_worker,
+        instances: &instances,
+        component_handler_events: &component_handler_events,
+        events: &events,
+        metrics: &metrics,
+        plugins: &plugins,
+        stream_tracker: &stream_tracker,
+        audio_in_flight: &audio_in_flight,
+        shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         workers: &workers,
     };
 
@@ -862,19 +986,20 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_script();
-    let workers = WorkerSupervisor::with_options(
+    let workers = Arc::new(WorkerSupervisor::with_options(
         crate::worker_supervisor::WorkerSupervisorOptions::new(worker_path.clone())
             .with_timeout(Duration::from_secs(5))
             .with_audio_ipc(false)
             .with_framed_control_ipc(false)
             .with_max_instances(1),
-    );
+    ));
     let context = RequestContext {
         config: &config,
         host_worker: &host_worker,
@@ -886,6 +1011,7 @@ async fn rejects_instance_create_when_worker_limit_is_reached() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         workers: &workers,
     };
 
@@ -931,13 +1057,17 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_exits_on_metrics_script();
-    let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let workers = Arc::new(WorkerSupervisor::new_for_test(
+        worker_path.clone(),
+        Duration::from_secs(5),
+    ));
     let context = RequestContext {
         config: &config,
         host_worker: &host_worker,
@@ -949,6 +1079,7 @@ async fn auto_recovers_processing_instance_when_heartbeat_worker_exits() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         workers: &workers,
     };
 
@@ -1038,13 +1169,17 @@ async fn emits_recovery_failed_when_auto_restart_recreate_fails() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_rejects_recreate_after_metrics_exit_script();
-    let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let workers = Arc::new(WorkerSupervisor::new_for_test(
+        worker_path.clone(),
+        Duration::from_secs(5),
+    ));
     let context = RequestContext {
         config: &config,
         host_worker: &host_worker,
@@ -1056,6 +1191,7 @@ async fn emits_recovery_failed_when_auto_restart_recreate_fails() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         workers: &workers,
     };
 
@@ -1111,13 +1247,17 @@ async fn restarts_failed_instance_with_same_stream() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
     let worker_path = serve_worker_exits_on_metrics_script();
-    let workers = WorkerSupervisor::new_for_test(worker_path.clone(), Duration::from_secs(5));
+    let workers = Arc::new(WorkerSupervisor::new_for_test(
+        worker_path.clone(),
+        Duration::from_secs(5),
+    ));
     let context = RequestContext {
         config: &config,
         host_worker: &host_worker,
@@ -1129,6 +1269,7 @@ async fn restarts_failed_instance_with_same_stream() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         workers: &workers,
     };
 
@@ -1218,16 +1359,17 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let (plugins, root, plugin_id) = scanned_plugin_registry();
     let plugin = plugins.find(&plugin_id).expect("plugin");
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
-    let workers = WorkerSupervisor::new_for_test(
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let workers = Arc::new(WorkerSupervisor::new_for_test(
         PathBuf::from("missing-wvst-host-worker"),
         Duration::from_secs(5),
-    );
+    ));
     let record = instances
         .create(
             InstanceCreateParams {
@@ -1260,6 +1402,7 @@ async fn stream_close_waits_for_in_flight_audio_to_drain() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         workers: &workers,
     };
     let close_request = serde_json::json!({
@@ -1344,6 +1487,7 @@ async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
             stream_tracker: context.stream_tracker,
             audio_in_flight: context.audio_in_flight,
             shared_memory: context.shared_memory,
+            shared_memory_pumps: context.shared_memory_pumps,
             session_authorized: true,
             workers: context.workers,
         },
@@ -1351,6 +1495,30 @@ async fn request_json(text: &str, context: RequestContext<'_>) -> Value {
     .await;
 
     serde_json::from_str(&response.text).expect("valid control json")
+}
+
+async fn wait_for_pump_success(instance_id: u64, context: RequestContext<'_>) -> Value {
+    let status_request = serde_json::json!({
+        "id": 99,
+        "method": "stream.sharedMemory.pump.status",
+        "params": { "instanceId": instance_id }
+    })
+    .to_string();
+
+    let mut last_status = Value::Null;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        last_status = request_json(&status_request, context).await;
+        if last_status["result"]["status"]["successes"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+        {
+            return last_status;
+        }
+    }
+
+    last_status
 }
 
 fn worker_policy_decision<'a>(

@@ -27,6 +27,7 @@ async fn publishes_worker_failed_event_for_audio_process_error() {
         stream_tracker: Arc::new(AudioStreamTracker::new()),
         audio_in_flight: Arc::new(AudioInFlightLimiter::new()),
         shared_memory: Arc::new(SharedMemoryStreamRegistry::new()),
+        shared_memory_pumps: Arc::new(SharedMemoryPumpRegistry::default()),
         workers: Arc::new(WorkerSupervisor::new_for_test_with_audio(
             worker_path.clone(),
             Duration::from_secs(5),

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wvst_core::ProtocolVersion;
@@ -13,6 +15,7 @@ use crate::instance_registry::{InstanceError, InstanceRegistry};
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::stream_shared_memory::SharedMemoryStreamRegistry;
+use crate::stream_shared_memory_pump::SharedMemoryPumpRegistry;
 use crate::worker_supervisor::{WorkerSupervisor, WorkerSupervisorError};
 
 pub(crate) struct ControlContext<'a> {
@@ -21,14 +24,15 @@ pub(crate) struct ControlContext<'a> {
     pub(crate) instances: &'a InstanceRegistry,
     pub(crate) component_handler_events: &'a ComponentHandlerEventPublisher,
     pub(crate) events: &'a BridgeEventBus,
-    pub(crate) metrics: &'a BridgeMetrics,
+    pub(crate) metrics: &'a Arc<BridgeMetrics>,
     pub(crate) plugins: &'a PluginRegistry,
     pub(crate) stream_tracker: &'a AudioStreamTracker,
     pub(crate) audio_in_flight: &'a AudioInFlightLimiter,
     pub(crate) shared_memory: &'a SharedMemoryStreamRegistry,
+    pub(crate) shared_memory_pumps: &'a SharedMemoryPumpRegistry,
     pub(crate) origin: Option<&'a str>,
     pub(crate) session_authorized: bool,
-    pub(crate) workers: &'a WorkerSupervisor,
+    pub(crate) workers: &'a Arc<WorkerSupervisor>,
 }
 
 #[derive(Debug, Clone)]
@@ -474,6 +478,33 @@ pub(crate) async fn handle_control_text(
         ),
         "stream.sharedMemory.status" => ControlResponse::new(
             control_stream_shared_memory::handle_stream_shared_memory_status(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "stream.sharedMemory.pump.start" => ControlResponse::new(
+            control_stream_shared_memory::handle_stream_shared_memory_pump_start(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "stream.sharedMemory.pump.stop" => ControlResponse::new(
+            control_stream_shared_memory::handle_stream_shared_memory_pump_stop(
+                request.id,
+                request.params,
+                context,
+            )
+            .await,
+            session_authorized,
+        ),
+        "stream.sharedMemory.pump.status" => ControlResponse::new(
+            control_stream_shared_memory::handle_stream_shared_memory_pump_status(
                 request.id,
                 request.params,
                 context,

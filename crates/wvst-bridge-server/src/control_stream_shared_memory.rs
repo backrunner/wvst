@@ -6,9 +6,14 @@ use super::{
     ControlContext, response_error, response_error_data, response_instance_error, response_result,
     response_worker_supervisor_error,
 };
+use crate::instance_registry::{InstanceState, StreamState};
 use crate::stream_shared_memory::{
     SharedMemoryStreamError, StreamSharedMemoryCreateParams, StreamSharedMemoryDestroyParams,
     StreamSharedMemoryProcessParams, StreamSharedMemoryStatusParams,
+};
+use crate::stream_shared_memory_pump::{
+    SharedMemoryPumpError, SharedMemoryPumpInstanceParams, SharedMemoryPumpStartParams,
+    pump_config_from_params,
 };
 
 pub async fn handle_stream_shared_memory_create(
@@ -139,6 +144,137 @@ pub async fn handle_stream_shared_memory_status(
     }
 }
 
+pub async fn handle_stream_shared_memory_pump_start(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<SharedMemoryPumpStartParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid stream shared memory pump start params: {error}"),
+            );
+        }
+    };
+    let record = match context.instances.get(params.instance_id) {
+        Ok(record) => record,
+        Err(error) => return response_instance_error(id, error),
+    };
+    if record.stream_state != StreamState::Open {
+        return response_pump_error(
+            id,
+            SharedMemoryPumpError::StreamClosed {
+                instance_id: record.instance_id,
+            },
+        );
+    }
+    if record.state != InstanceState::Processing {
+        return response_pump_error(
+            id,
+            SharedMemoryPumpError::InstanceNotProcessing {
+                instance_id: record.instance_id,
+            },
+        );
+    }
+    match context.shared_memory.status_by_instance(record.instance_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return response_pump_error(
+                id,
+                SharedMemoryPumpError::NotAttached {
+                    instance_id: record.instance_id,
+                },
+            );
+        }
+        Err(error) => return response_shared_memory_error(id, error),
+    }
+    let config = match pump_config_from_params(params, record.max_block_frames, record.sample_rate)
+    {
+        Ok(config) => config,
+        Err(error) => return response_pump_error(id, error),
+    };
+
+    match context.shared_memory_pumps.start(
+        config,
+        std::sync::Arc::clone(context.workers),
+        std::sync::Arc::clone(context.metrics),
+    ) {
+        Ok(status) => response_result(id, json!({ "started": true, "status": status })),
+        Err(error) => response_pump_error(id, error),
+    }
+}
+
+pub async fn handle_stream_shared_memory_pump_stop(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<SharedMemoryPumpInstanceParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid stream shared memory pump stop params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .shared_memory_pumps
+        .stop_by_instance(params.instance_id)
+    {
+        Ok(status) => response_result(
+            id,
+            json!({
+                "stopped": status.is_some(),
+                "status": status,
+            }),
+        ),
+        Err(error) => response_pump_error(id, error),
+    }
+}
+
+pub async fn handle_stream_shared_memory_pump_status(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
+    let params = match serde_json::from_value::<SharedMemoryPumpInstanceParams>(params) {
+        Ok(params) => params,
+        Err(error) => {
+            return response_error(
+                id,
+                -32602,
+                format!("invalid stream shared memory pump status params: {error}"),
+            );
+        }
+    };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+
+    match context
+        .shared_memory_pumps
+        .status_by_instance(params.instance_id)
+    {
+        Ok(status) => response_result(
+            id,
+            json!({
+                "running": status.is_some(),
+                "status": status,
+            }),
+        ),
+        Err(error) => response_pump_error(id, error),
+    }
+}
+
 pub async fn handle_stream_shared_memory_process(
     id: Value,
     params: Value,
@@ -181,6 +317,10 @@ pub async fn handle_stream_shared_memory_process(
 }
 
 fn response_shared_memory_error(id: Value, error: SharedMemoryStreamError) -> String {
+    response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
+}
+
+fn response_pump_error(id: Value, error: SharedMemoryPumpError) -> String {
     response_error_data(id, error.rpc_code(), error.rpc_message(), error.rpc_data())
 }
 

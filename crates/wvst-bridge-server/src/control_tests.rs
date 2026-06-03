@@ -1,5 +1,6 @@
 use super::*;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::audio_in_flight::AudioInFlightLimiter;
@@ -10,6 +11,7 @@ use crate::instance_registry::InstanceRegistry;
 use crate::metrics::BridgeMetrics;
 use crate::plugin_registry::PluginRegistry;
 use crate::stream_shared_memory::SharedMemoryStreamRegistry;
+use crate::stream_shared_memory_pump::SharedMemoryPumpRegistry;
 use crate::worker_supervisor::WorkerSupervisor;
 
 #[tokio::test]
@@ -19,12 +21,13 @@ async fn responds_to_hello() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
-    let workers = test_workers();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let workers = Arc::new(test_workers());
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
@@ -36,6 +39,7 @@ async fn responds_to_hello() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         origin: Some("http://localhost:5173"),
         session_authorized: false,
         workers: &workers,
@@ -60,12 +64,13 @@ async fn rejects_denied_origin() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
-    let workers = test_workers();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let workers = Arc::new(test_workers());
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
@@ -77,6 +82,7 @@ async fn rejects_denied_origin() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         origin: Some("https://example.com"),
         session_authorized: false,
         workers: &workers,
@@ -100,12 +106,13 @@ async fn rejects_plugin_list_before_hello() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
-    let workers = test_workers();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let workers = Arc::new(test_workers());
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
@@ -117,6 +124,7 @@ async fn rejects_plugin_list_before_hello() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         origin: None,
         session_authorized: false,
         workers: &workers,
@@ -136,12 +144,13 @@ async fn lists_cached_plugins_after_hello() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
-    let workers = test_workers();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let workers = Arc::new(test_workers());
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
@@ -153,6 +162,7 @@ async fn lists_cached_plugins_after_hello() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         origin: None,
         session_authorized: true,
         workers: &workers,
@@ -178,12 +188,13 @@ async fn returns_recent_bridge_events() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
-    let workers = test_workers();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let workers = Arc::new(test_workers());
     events.emit(BridgeEventKind::ServerStarting);
     events.emit(BridgeEventKind::ServerStopped);
     let context = ControlContext {
@@ -197,6 +208,7 @@ async fn returns_recent_bridge_events() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         origin: None,
         session_authorized: true,
         workers: &workers,
@@ -229,12 +241,13 @@ async fn routes_factory_info_to_host_worker() {
     let instances = InstanceRegistry::new();
     let component_handler_events = ComponentHandlerEventPublisher::new();
     let events = BridgeEventBus::new();
-    let metrics = BridgeMetrics::new();
+    let metrics = Arc::new(BridgeMetrics::new());
     let plugins = PluginRegistry::new();
     let stream_tracker = AudioStreamTracker::new();
     let audio_in_flight = AudioInFlightLimiter::new();
     let shared_memory = SharedMemoryStreamRegistry::new();
-    let workers = test_workers();
+    let shared_memory_pumps = SharedMemoryPumpRegistry::default();
+    let workers = Arc::new(test_workers());
     let context = ControlContext {
         config: &config,
         host_worker: &host_worker,
@@ -246,6 +259,7 @@ async fn routes_factory_info_to_host_worker() {
         stream_tracker: &stream_tracker,
         audio_in_flight: &audio_in_flight,
         shared_memory: &shared_memory,
+        shared_memory_pumps: &shared_memory_pumps,
         origin: None,
         session_authorized: true,
         workers: &workers,

@@ -198,6 +198,9 @@ pub async fn handle_instance_destroy(
         .component_handler_events
         .reset_instance(params.instance_id);
     let _ = context
+        .shared_memory_pumps
+        .stop_by_instance(params.instance_id);
+    let _ = context
         .workers
         .detach_shared_memory(params.instance_id)
         .await;
@@ -1411,6 +1414,9 @@ pub async fn handle_stream_close(id: Value, params: Value, context: ControlConte
                 .audio_in_flight
                 .wait_until_idle(record.stream_id, STREAM_CLOSE_DRAIN_TIMEOUT)
                 .await;
+            let _ = context
+                .shared_memory_pumps
+                .stop_by_instance(record.instance_id);
             let _ = context
                 .workers
                 .detach_shared_memory(record.instance_id)
