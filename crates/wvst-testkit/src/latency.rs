@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
 use wvst_protocol::AudioFrameFlags;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LatencyHarnessConfig {
     sample_rate_hz: u32,
     block_frames: u16,
@@ -57,7 +59,8 @@ impl LatencyObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LatencyPercentiles {
     pub count: usize,
     pub p50: Option<u64>,
@@ -65,7 +68,8 @@ pub struct LatencyPercentiles {
     pub p99: Option<u64>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LatencySnapshot {
     pub config: LatencyHarnessConfig,
     pub observations: usize,

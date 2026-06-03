@@ -24,9 +24,13 @@ pub struct StabilityBudget {
     pub max_route_latency_p99_us: Option<u64>,
     pub max_round_trip_p95_us: Option<u64>,
     pub max_round_trip_p99_us: Option<u64>,
+    #[serde(rename = "minWebAudioInputFrames", alias = "minWebaudioInputFrames")]
     pub min_webaudio_input_frames: Option<u64>,
+    #[serde(rename = "minWebAudioOutputFrames", alias = "minWebaudioOutputFrames")]
     pub min_webaudio_output_frames: Option<u64>,
+    #[serde(rename = "maxWebAudioUnderflows", alias = "maxWebaudioUnderflows")]
     pub max_webaudio_underflows: Option<u64>,
+    #[serde(rename = "maxWebAudioOverflows", alias = "maxWebaudioOverflows")]
     pub max_webaudio_overflows: Option<u64>,
     pub max_pending_input_quanta: Option<u64>,
     pub max_pending_output_quanta: Option<u64>,
