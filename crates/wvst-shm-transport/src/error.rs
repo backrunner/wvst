@@ -45,6 +45,10 @@ pub enum SharedAudioLayoutError {
         requested: u64,
         available: u64,
     },
+    SampleBufferLengthMismatch {
+        expected: usize,
+        actual: usize,
+    },
     LayoutOverflow,
 }
 
@@ -111,6 +115,10 @@ impl Display for SharedAudioLayoutError {
             } => write!(
                 formatter,
                 "shared audio write requested {requested} frames but only {available} are available"
+            ),
+            Self::SampleBufferLengthMismatch { expected, actual } => write!(
+                formatter,
+                "shared audio sample buffer length mismatch: expected {expected} samples, got {actual}"
             ),
             Self::LayoutOverflow => formatter.write_str("shared audio layout size overflowed"),
         }

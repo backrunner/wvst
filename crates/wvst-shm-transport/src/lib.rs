@@ -2,6 +2,7 @@
 
 mod cursor;
 mod error;
+mod io;
 mod layout;
 mod memory;
 
@@ -13,6 +14,7 @@ pub use cursor::{
     SharedAudioRingCursorState,
 };
 pub use error::SharedAudioLayoutError;
+pub use io::SharedAudioRingIoReport;
 pub use layout::{
     CACHE_LINE_BYTES, F32_SAMPLE_BYTES, MAX_SHARED_AUDIO_CHANNELS, SHARED_AUDIO_DESCRIPTOR_BYTES,
     SHARED_AUDIO_HEADER_BYTES, SHARED_AUDIO_LAYOUT_MAGIC, SHARED_AUDIO_LAYOUT_VERSION,
