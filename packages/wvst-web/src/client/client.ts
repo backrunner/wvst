@@ -1,4 +1,4 @@
-import { AUDIO_FRAME_VERSION } from "./protocol.js";
+import { AUDIO_FRAME_VERSION } from "../protocol/index.js";
 import type {
   InstanceApi,
   InstanceConnectionNotifyOptions,
@@ -9,6 +9,12 @@ import type {
   InstanceDestroyResult,
   InstanceGetStateOptions,
   InstanceGetStateResult,
+  InstanceConnectionNotifyAndRefreshOptions,
+  InstanceConnectionNotifyAndRefreshResult,
+  InstanceMetadataRefreshOptions,
+  InstanceMetadataRefreshResult,
+  InstanceParameterEditOptions,
+  InstanceParameterEditAggregateResult,
   InstanceParameterGetOptions,
   InstanceParameterGetResult,
   InstanceParameterBeginEditOptions,
@@ -34,14 +40,24 @@ import type {
   InstanceProcessingResult,
   InstanceRestartOptions,
   InstanceRestartResult,
+  InstanceRuntimeSnapshotOptions,
+  InstanceRuntimeSnapshotResult,
   InstanceSelectUnitOptions,
   InstanceSelectUnitResult,
+  InstanceSetProgramDataAndRefreshOptions,
+  InstanceSetProgramDataAndRefreshResult,
   InstanceSetProgramDataOptions,
   InstanceSetProgramDataResult,
+  InstanceSetStateAndRefreshOptions,
+  InstanceSetStateAndRefreshResult,
   InstanceSetStateOptions,
   InstanceSetStateResult,
+  InstanceSetUnitDataAndRefreshOptions,
+  InstanceSetUnitDataAndRefreshResult,
   InstanceSetUnitDataOptions,
   InstanceSetUnitDataResult,
+  InstanceSetUnitProgramDataAndRefreshOptions,
+  InstanceSetUnitProgramDataAndRefreshResult,
   InstanceSetUnitProgramDataOptions,
   InstanceSetUnitProgramDataResult,
   InstanceStatusOptions,
@@ -53,8 +69,21 @@ import type {
   InstanceUnitDataSupportedResult,
   InstanceUnitsOptions,
   InstanceUnitsResult,
+  StreamSharedMemoryCreateOptions,
+  StreamSharedMemoryCreateResult,
+  StreamSharedMemoryDestroyResult,
+  StreamSharedMemoryProcessOptions,
+  StreamSharedMemoryProcessResult,
+  StreamSharedMemoryPumpEnqueueEventsOptions,
+  StreamSharedMemoryPumpEnqueueEventsResult,
+  StreamSharedMemoryPumpClearEventsResult,
+  StreamSharedMemoryPumpStartOptions,
+  StreamSharedMemoryPumpStartResult,
+  StreamSharedMemoryPumpStatusResult,
+  StreamSharedMemoryPumpStopResult,
+  StreamSharedMemoryStatusResult,
   StreamLifecycleOptions,
-} from "./instances.js";
+} from "../control/instances.js";
 import type {
   PluginApi,
   PluginFactoryInfo,
@@ -62,7 +91,7 @@ import type {
   PluginListOptions,
   PluginScanOptions,
   PluginScanReport,
-} from "./plugins.js";
+} from "../control/plugins.js";
 import {
   WebSocketRpcTransport,
   type BridgeEvent,
@@ -177,6 +206,16 @@ export class WVSTClient {
       list: () => this.request<InstanceDescriptor[]>("instance.list", {}),
       status: (options: InstanceStatusOptions) =>
         this.request<InstanceStatusResult>("instance.status", options),
+      metadataRefresh: (options: InstanceMetadataRefreshOptions) =>
+        this.request<InstanceMetadataRefreshResult>(
+          "instance.metadata.refresh",
+          options,
+        ),
+      runtimeSnapshot: (options: InstanceRuntimeSnapshotOptions) =>
+        this.request<InstanceRuntimeSnapshotResult>(
+          "instance.runtime.snapshot",
+          options,
+        ),
       restart: (options: InstanceRestartOptions) =>
         this.request<InstanceRestartResult>("instance.restart", options),
       start: (options: InstanceProcessingOptions) =>
@@ -207,6 +246,11 @@ export class WVSTClient {
         this.request<InstanceParameterPerformEditResult>("instance.parameter.performEdit", options),
       parameterEndEdit: (options: InstanceParameterEndEditOptions) =>
         this.request<InstanceParameterEndEditResult>("instance.parameter.endEdit", options),
+      parameterEdit: (options: InstanceParameterEditOptions) =>
+        this.request<InstanceParameterEditAggregateResult>(
+          "instance.parameter.edit",
+          options,
+        ),
       units: (options: InstanceUnitsOptions) =>
         this.request<InstanceUnitsResult>("instance.units", options),
       selectUnit: (options: InstanceSelectUnitOptions) =>
@@ -215,22 +259,44 @@ export class WVSTClient {
         this.request<InstanceUnitByBusResult>("instance.unitByBus", options),
       setUnitProgramData: (options: InstanceSetUnitProgramDataOptions) =>
         this.request<InstanceSetUnitProgramDataResult>("instance.setUnitProgramData", options),
+      setUnitProgramDataAndRefresh: (
+        options: InstanceSetUnitProgramDataAndRefreshOptions,
+      ) =>
+        this.request<InstanceSetUnitProgramDataAndRefreshResult>(
+          "instance.setUnitProgramDataAndRefresh",
+          options,
+        ),
       programDataSupported: (options: InstanceProgramDataOptions) =>
         this.request<InstanceProgramDataSupportedResult>("instance.programData.supported", options),
       getProgramData: (options: InstanceProgramDataOptions) =>
         this.request<InstanceProgramDataResult>("instance.programData.get", options),
       setProgramData: (options: InstanceSetProgramDataOptions) =>
         this.request<InstanceSetProgramDataResult>("instance.programData.set", options),
+      setProgramDataAndRefresh: (options: InstanceSetProgramDataAndRefreshOptions) =>
+        this.request<InstanceSetProgramDataAndRefreshResult>(
+          "instance.programData.setAndRefresh",
+          options,
+        ),
       unitDataSupported: (options: InstanceUnitDataOptions) =>
         this.request<InstanceUnitDataSupportedResult>("instance.unitData.supported", options),
       getUnitData: (options: InstanceUnitDataOptions) =>
         this.request<InstanceUnitDataResult>("instance.unitData.get", options),
       setUnitData: (options: InstanceSetUnitDataOptions) =>
         this.request<InstanceSetUnitDataResult>("instance.unitData.set", options),
+      setUnitDataAndRefresh: (options: InstanceSetUnitDataAndRefreshOptions) =>
+        this.request<InstanceSetUnitDataAndRefreshResult>(
+          "instance.unitData.setAndRefresh",
+          options,
+        ),
       getState: (options: InstanceGetStateOptions) =>
         this.request<InstanceGetStateResult>("instance.getState", options),
       setState: (options: InstanceSetStateOptions) =>
         this.request<InstanceSetStateResult>("instance.setState", options),
+      setStateAndRefresh: (options: InstanceSetStateAndRefreshOptions) =>
+        this.request<InstanceSetStateAndRefreshResult>(
+          "instance.state.setAndRefresh",
+          options,
+        ),
       notifyComponent: (options: InstanceConnectionNotifyOptions) =>
         this.request<InstanceConnectionNotifyResult>(
           "instance.connection.notifyComponent",
@@ -241,12 +307,69 @@ export class WVSTClient {
           "instance.connection.notifyController",
           options,
         ),
+      notifyComponentAndRefresh: (options: InstanceConnectionNotifyAndRefreshOptions) =>
+        this.request<InstanceConnectionNotifyAndRefreshResult>(
+          "instance.connection.notifyComponentAndRefresh",
+          options,
+        ),
+      notifyControllerAndRefresh: (options: InstanceConnectionNotifyAndRefreshOptions) =>
+        this.request<InstanceConnectionNotifyAndRefreshResult>(
+          "instance.connection.notifyControllerAndRefresh",
+          options,
+        ),
       destroy: (options: InstanceDestroyOptions) =>
         this.request<InstanceDestroyResult>("instance.destroy", options),
       openStream: (options: StreamLifecycleOptions) =>
         this.request<InstanceDescriptor>("stream.open", options),
       closeStream: (options: StreamLifecycleOptions) =>
         this.request<InstanceDescriptor>("stream.close", options),
+      sharedMemoryCreate: (options: StreamSharedMemoryCreateOptions) =>
+        this.request<StreamSharedMemoryCreateResult>(
+          "stream.sharedMemory.create",
+          options,
+        ),
+      sharedMemoryDestroy: (options: StreamLifecycleOptions) =>
+        this.request<StreamSharedMemoryDestroyResult>(
+          "stream.sharedMemory.destroy",
+          options,
+        ),
+      sharedMemoryStatus: (options: StreamLifecycleOptions) =>
+        this.request<StreamSharedMemoryStatusResult>(
+          "stream.sharedMemory.status",
+          options,
+        ),
+      sharedMemoryProcess: (options: StreamSharedMemoryProcessOptions) =>
+        this.request<StreamSharedMemoryProcessResult>(
+          "stream.sharedMemory.process",
+          options,
+        ),
+      sharedMemoryPumpStart: (options: StreamSharedMemoryPumpStartOptions) =>
+        this.request<StreamSharedMemoryPumpStartResult>(
+          "stream.sharedMemory.pump.start",
+          options,
+        ),
+      sharedMemoryPumpStop: (options: StreamLifecycleOptions) =>
+        this.request<StreamSharedMemoryPumpStopResult>(
+          "stream.sharedMemory.pump.stop",
+          options,
+        ),
+      sharedMemoryPumpStatus: (options: StreamLifecycleOptions) =>
+        this.request<StreamSharedMemoryPumpStatusResult>(
+          "stream.sharedMemory.pump.status",
+          options,
+        ),
+      sharedMemoryPumpEnqueueEvents: (
+        options: StreamSharedMemoryPumpEnqueueEventsOptions,
+      ) =>
+        this.request<StreamSharedMemoryPumpEnqueueEventsResult>(
+          "stream.sharedMemory.pump.enqueueEvents",
+          options,
+        ),
+      sharedMemoryPumpClearEvents: (options: StreamLifecycleOptions) =>
+        this.request<StreamSharedMemoryPumpClearEventsResult>(
+          "stream.sharedMemory.pump.clearEvents",
+          options,
+        ),
     };
     this.plugins = {
       scan: (options?: PluginScanOptions) =>

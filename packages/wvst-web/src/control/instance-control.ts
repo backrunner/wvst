@@ -1,8 +1,13 @@
 import type {
+  BridgeEvent,
   JsonValue,
   Vst3ComponentHandlerEventKind,
   Vst3RestartFlags,
-} from "./transport.js";
+} from "../client/transport.js";
+import type {
+  StreamSharedMemoryPumpStatusResult,
+  StreamSharedMemoryStatusResult,
+} from "./shared-memory.js";
 
 export interface InstanceCreateOptions {
   pluginId: string;
@@ -48,6 +53,13 @@ export interface InstanceDescriptor {
   runtimeCapabilities: RuntimeCapabilities;
   latencySamples: number;
   tailSamples: number;
+  tailInfo: RuntimeTailInfo;
+}
+
+export interface RuntimeTailInfo {
+  samples: number;
+  kind: "none" | "finite" | "infinite";
+  finiteSamples?: number;
 }
 
 export interface RuntimeCapabilities {
@@ -68,6 +80,32 @@ export interface RuntimeCapabilities {
   componentHandlerEvents: boolean;
   connectionPoints: boolean;
   processContext: boolean;
+  unavailable?: RuntimeCapabilityDiagnostic[];
+}
+
+export interface RuntimeCapabilityDiagnostic {
+  capability:
+    | "component-state"
+    | "controller"
+    | "controller-state"
+    | "parameters"
+    | "units"
+    | "unit-program-data"
+    | "program-list-data"
+    | "unit-data"
+    | "midi-mapping"
+    | "component-handler-events"
+    | "connection-points"
+    | "process-context"
+    | "output-events"
+    | "output-parameter-changes";
+  reason:
+    | "controller-unavailable"
+    | "interface-unavailable"
+    | "feature-unavailable"
+    | "probe-failed";
+  message?: string;
+  hint: string;
 }
 
 export interface InstanceStatusOptions {
@@ -284,12 +322,10 @@ export interface InstanceGetStateResult {
   instanceId: number;
   componentStateBase64: string | null;
   controllerStateBase64: string | null;
-  stateBase64: string | null;
 }
 
 export interface InstanceSetStateOptions {
   instanceId: number;
-  stateBase64?: string;
   componentStateBase64?: string;
   controllerStateBase64?: string;
 }
@@ -298,7 +334,6 @@ export interface InstanceSetStateResult {
   instanceId: number;
   componentStateBytes: number | null;
   controllerStateBytes: number | null;
-  stateBytes: number | null;
 }
 
 export interface InstanceConnectionNotifyOptions {
@@ -333,19 +368,48 @@ export interface InstanceWorkerRuntimeMetrics {
   runtimeCapabilities: RuntimeCapabilities;
   latencySamples: number;
   tailSamples: number;
+  tailInfo: RuntimeTailInfo;
   diagnostics?: InstanceWorkerRuntimeDiagnostics;
 }
 
 export interface InstanceWorkerRuntimeDiagnostics {
-  passthroughReason?: PassthroughFallbackReason | null;
   componentHandler?: Vst3ComponentHandlerSnapshot | null;
+  connectionPoints?: Vst3ConnectionPointDiagnostics | null;
   processContextRequirements?: number;
+  audioBuses?: Vst3WorkerAudioBusDiagnostics | null;
 }
 
-export interface PassthroughFallbackReason {
-  kind: "missing-class-id" | "non-bundle-path" | "invalid-class-id";
-  message?: string;
+export interface Vst3ConnectionPointDiagnostics {
+  connected: boolean;
 }
+
+export interface Vst3WorkerAudioBusDiagnostics {
+  input?: Vst3WorkerSelectedAudioBus | null;
+  output: Vst3WorkerSelectedAudioBus;
+}
+
+export interface Vst3WorkerSelectedAudioBus {
+  direction: "input" | "output";
+  requestedChannels: number;
+  selectedIndex: number;
+  selected?: Vst3WorkerAudioBusInfo | null;
+  available: Vst3WorkerAudioBusInfo[];
+}
+
+export interface Vst3WorkerAudioBusInfo {
+  index: number;
+  direction: "input" | "output";
+  channelCount: number;
+  busType: Vst3WorkerAudioBusType;
+  defaultActive: boolean;
+  controlVoltage: boolean;
+  name?: string;
+}
+
+export type Vst3WorkerAudioBusType =
+  | { kind: "main" }
+  | { kind: "aux" }
+  | { kind: "unknown"; raw: number };
 
 export interface Vst3ComponentHandlerSnapshot {
   totalEvents: number;
@@ -367,6 +431,36 @@ export interface InstanceStatusResult {
   instance: InstanceDescriptor;
   worker: InstanceWorkerMetrics;
   recovered?: boolean;
+}
+
+export interface InstanceMetadataRefreshOptions extends InstanceStatusOptions {
+  includeState?: boolean;
+  includeWorkerMetrics?: boolean;
+}
+
+export interface InstanceMetadataRefreshResult {
+  instanceId: number;
+  parameters: Vst3ParameterInfo[] | null;
+  unitInfo: Vst3UnitMetadata | null;
+  state: InstanceGetStateResult | null;
+  worker: InstanceWorkerMetrics | null;
+}
+
+export interface InstanceRuntimeSnapshotOptions extends InstanceMetadataRefreshOptions {
+  includeRecentEvents?: boolean;
+  afterEventSequence?: number;
+}
+
+export interface InstanceRuntimeSnapshotResult {
+  instance: InstanceDescriptor;
+  metadata: InstanceMetadataRefreshResult;
+  dataPlane: InstanceDataPlaneSnapshot;
+  recentEvents: BridgeEvent[] | null;
+}
+
+export interface InstanceDataPlaneSnapshot {
+  sharedMemory: StreamSharedMemoryStatusResult;
+  sharedMemoryPump: StreamSharedMemoryPumpStatusResult;
 }
 
 export interface InstanceRestartOptions {
@@ -395,55 +489,66 @@ export interface StreamLifecycleOptions {
   instanceId: number;
 }
 
-export interface InstanceApi {
-  create(options: InstanceCreateOptions): Promise<InstanceDescriptor>;
-  list(): Promise<InstanceDescriptor[]>;
-  status(options: InstanceStatusOptions): Promise<InstanceStatusResult>;
-  restart(options: InstanceRestartOptions): Promise<InstanceRestartResult>;
-  start(options: InstanceProcessingOptions): Promise<InstanceProcessingResult>;
-  stop(options: InstanceProcessingOptions): Promise<InstanceProcessingResult>;
-  parameters(options: InstanceParametersOptions): Promise<InstanceParametersResult>;
-  parameterGet(options: InstanceParameterGetOptions): Promise<InstanceParameterGetResult>;
-  parameterInfo(options: InstanceParameterInfoOptions): Promise<InstanceParameterInfoResult>;
-  parameterValueByString(
-    options: InstanceParameterValueByStringOptions,
-  ): Promise<InstanceParameterValueByStringResult>;
-  parameterNormalizedByPlain(
-    options: InstanceParameterNormalizedByPlainOptions,
-  ): Promise<InstanceParameterNormalizedByPlainResult>;
-  parameterSet(options: InstanceParameterSetOptions): Promise<InstanceParameterSetResult>;
-  parameterBeginEdit(
-    options: InstanceParameterBeginEditOptions,
-  ): Promise<InstanceParameterBeginEditResult>;
-  parameterPerformEdit(
-    options: InstanceParameterPerformEditOptions,
-  ): Promise<InstanceParameterPerformEditResult>;
-  parameterEndEdit(
-    options: InstanceParameterEndEditOptions,
-  ): Promise<InstanceParameterEndEditResult>;
-  units(options: InstanceUnitsOptions): Promise<InstanceUnitsResult>;
-  selectUnit(options: InstanceSelectUnitOptions): Promise<InstanceSelectUnitResult>;
-  unitByBus(options: InstanceUnitByBusOptions): Promise<InstanceUnitByBusResult>;
-  setUnitProgramData(
-    options: InstanceSetUnitProgramDataOptions,
-  ): Promise<InstanceSetUnitProgramDataResult>;
-  programDataSupported(
-    options: InstanceProgramDataOptions,
-  ): Promise<InstanceProgramDataSupportedResult>;
-  getProgramData(options: InstanceProgramDataOptions): Promise<InstanceProgramDataResult>;
-  setProgramData(options: InstanceSetProgramDataOptions): Promise<InstanceSetProgramDataResult>;
-  unitDataSupported(options: InstanceUnitDataOptions): Promise<InstanceUnitDataSupportedResult>;
-  getUnitData(options: InstanceUnitDataOptions): Promise<InstanceUnitDataResult>;
-  setUnitData(options: InstanceSetUnitDataOptions): Promise<InstanceSetUnitDataResult>;
-  getState(options: InstanceGetStateOptions): Promise<InstanceGetStateResult>;
-  setState(options: InstanceSetStateOptions): Promise<InstanceSetStateResult>;
-  notifyComponent(
-    options: InstanceConnectionNotifyOptions,
-  ): Promise<InstanceConnectionNotifyResult>;
-  notifyController(
-    options: InstanceConnectionNotifyOptions,
-  ): Promise<InstanceConnectionNotifyResult>;
-  destroy(options: InstanceDestroyOptions): Promise<InstanceDestroyResult>;
-  openStream(options: StreamLifecycleOptions): Promise<InstanceDescriptor>;
-  closeStream(options: StreamLifecycleOptions): Promise<InstanceDescriptor>;
+export interface InstanceParameterEditOptions extends InstanceParameterSetOptions {}
+
+export interface InstanceParameterEditAggregateResult extends InstanceParameterSetResult {
+  beginEdit: InstanceParameterBeginEditResult | null;
+  performEdit: InstanceParameterPerformEditResult | null;
+  endEdit: InstanceParameterEndEditResult | null;
+}
+
+export interface InstanceRefreshRequestOptions {
+  includeState?: boolean;
+  includeWorkerMetrics?: boolean;
+}
+
+export interface InstanceSetStateAndRefreshOptions
+  extends InstanceSetStateOptions,
+    InstanceRefreshRequestOptions {}
+
+export interface InstanceSetStateAndRefreshResult {
+  instanceId: number;
+  setState: InstanceSetStateResult | null;
+  metadata: InstanceMetadataRefreshResult;
+}
+
+export interface InstanceSetUnitProgramDataAndRefreshOptions
+  extends InstanceSetUnitProgramDataOptions,
+    InstanceRefreshRequestOptions {}
+
+export interface InstanceSetUnitProgramDataAndRefreshResult {
+  instanceId: number;
+  setUnitProgramData: InstanceSetUnitProgramDataResult | null;
+  metadata: InstanceMetadataRefreshResult;
+}
+
+export interface InstanceSetProgramDataAndRefreshOptions
+  extends InstanceSetProgramDataOptions,
+    InstanceRefreshRequestOptions {}
+
+export interface InstanceSetProgramDataAndRefreshResult {
+  instanceId: number;
+  setProgramData: InstanceSetProgramDataResult | null;
+  metadata: InstanceMetadataRefreshResult;
+}
+
+export interface InstanceSetUnitDataAndRefreshOptions
+  extends InstanceSetUnitDataOptions,
+    InstanceRefreshRequestOptions {}
+
+export interface InstanceSetUnitDataAndRefreshResult {
+  instanceId: number;
+  setUnitData: InstanceSetUnitDataResult | null;
+  metadata: InstanceMetadataRefreshResult;
+}
+
+export interface InstanceConnectionNotifyAndRefreshOptions
+  extends InstanceConnectionNotifyOptions,
+    InstanceRefreshRequestOptions {}
+
+export interface InstanceConnectionNotifyAndRefreshResult {
+  instanceId: number;
+  notifyComponent?: InstanceConnectionNotifyResult | null;
+  notifyController?: InstanceConnectionNotifyResult | null;
+  metadata: InstanceMetadataRefreshResult;
 }

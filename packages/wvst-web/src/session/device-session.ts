@@ -4,19 +4,32 @@ import {
   type WVSTAudioInputSource,
   type WVSTMediaElementOutputRoute,
 } from "./devices.js";
-import type { InstanceDescriptor } from "./instances.js";
+import type { InstanceDescriptor } from "../control/instances.js";
 import {
   createLoopbackAudioWorkletNode,
   createLoopbackSharedBuffers,
   readLoopbackMetrics,
   type LoopbackMetrics,
   type LoopbackSharedBuffers,
-} from "./loopback.js";
-import type { MidiEvent, ParameterAutomationEvent } from "./protocol.js";
+} from "../audio/loopback.js";
+import type { MidiEvent, ParameterAutomationEvent } from "../protocol/index.js";
+import {
+  createWVSTAudioSessionRecovery,
+  type WVSTAudioDeviceSessionRecoveryMetrics,
+  type WVSTAudioStreamAutoRestartOptions,
+} from "./recovery.js";
 import type {
   BridgeWorkerAudioStreamOptions,
   WVSTBridgeWorkerClient,
-} from "./worker-client.js";
+} from "../client/worker-client.js";
+
+export type {
+  WVSTAudioGraphRebuildRequiredEvent,
+  WVSTAudioStreamAutoRestartOptions,
+  WVSTAudioStreamRestartEvent,
+  WVSTAudioStreamRestartFailureEvent,
+  WVSTAudioStreamRestartReason,
+} from "./recovery.js";
 
 export interface WVSTAudioDeviceSessionOptions {
   context: AudioContext;
@@ -30,12 +43,17 @@ export interface WVSTAudioDeviceSessionOptions {
   inputConstraints?: MediaTrackConstraints;
   outputElement?: HTMLMediaElement;
   startOutput?: boolean;
+  autoRestartAudioStream?: boolean | WVSTAudioStreamAutoRestartOptions;
 }
 
 export interface WVSTAudioInputSwitchOptions {
   inputDeviceId?: string;
   inputConstraints?: MediaTrackConstraints;
 }
+
+export interface WVSTAudioDeviceSessionMetrics
+  extends LoopbackMetrics,
+    WVSTAudioDeviceSessionRecoveryMetrics {}
 
 export interface WVSTAudioDeviceSession {
   instance: InstanceDescriptor;
@@ -48,7 +66,7 @@ export interface WVSTAudioDeviceSession {
   sendMidiEvents(events: MidiEvent[]): Promise<void>;
   sendParameterEvents(events: ParameterAutomationEvent[]): Promise<void>;
   restartAudioStream(): Promise<void>;
-  getMetrics(): LoopbackMetrics;
+  getMetrics(): WVSTAudioDeviceSessionMetrics;
   startOutput(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -151,12 +169,16 @@ function streamOptions(
 }
 
 function assertSampleRateMatchesContext(options: WVSTAudioDeviceSessionOptions): void {
-  const contextSampleRate = Math.round(options.context.sampleRate);
+  const contextSampleRate = currentContextSampleRate(options);
   if (contextSampleRate !== options.instance.sampleRate) {
     throw new Error(
       `WVST session sample rate mismatch: AudioContext is ${contextSampleRate} Hz, instance is ${options.instance.sampleRate} Hz`,
     );
   }
+}
+
+function currentContextSampleRate(options: WVSTAudioDeviceSessionOptions): number {
+  return Math.round(options.context.sampleRate);
 }
 
 function createSession(
@@ -169,6 +191,14 @@ function createSession(
   let stopped = false;
   let streamActive = true;
   let currentInput = input;
+  const recovery = createWVSTAudioSessionRecovery({
+    context: options.context,
+    instanceSampleRate: options.instance.sampleRate,
+    buffers,
+    autoRestartAudioStream: options.autoRestartAudioStream,
+    isStopped: () => stopped,
+    restartStream,
+  });
 
   const session: WVSTAudioDeviceSession = {
     instance: options.instance,
@@ -229,19 +259,17 @@ function createSession(
         events,
       });
     },
-    restartAudioStream: async () => {
+    restartAudioStream: () => {
       if (stopped) {
         throw new Error("WVST audio device session is stopped");
       }
 
-      if (streamActive) {
-        await options.bridgeWorker.stopAudioStream(options.instance.streamId);
-        streamActive = false;
-      }
-      await startBridgeAudioStream(options, buffers, buffers.frames);
-      streamActive = true;
+      return recovery.restartManually();
     },
-    getMetrics: () => readLoopbackMetrics(buffers),
+    getMetrics: () => ({
+      ...readLoopbackMetrics(buffers),
+      ...recovery.metrics(),
+    }),
     startOutput: () => {
       if (stopped) {
         throw new Error("WVST audio device session is stopped");
@@ -254,6 +282,7 @@ function createSession(
         return;
       }
       stopped = true;
+      recovery.stop();
       try {
         if (streamActive) {
           await options.bridgeWorker.stopAudioStream(options.instance.streamId);
@@ -267,5 +296,19 @@ function createSession(
     },
   };
 
+  recovery.start();
   return session;
+
+  async function restartStream(): Promise<boolean> {
+    if (streamActive) {
+      await options.bridgeWorker.stopAudioStream(options.instance.streamId);
+      streamActive = false;
+    }
+    if (stopped) {
+      return false;
+    }
+    await startBridgeAudioStream(options, buffers, buffers.frames);
+    streamActive = true;
+    return true;
+  }
 }

@@ -14,8 +14,10 @@ export interface BridgeMetrics {
   controlMessages: number;
   binaryFrames: number;
   audioFramesRouted: number;
-  audioFrameFallbacks: number;
   audioFrameRouteFailures: number;
+  audioFrameInvalidHeaders: number;
+  audioFrameInvalidLengths: number;
+  audioFrameUnmatchedStreams: number;
   helloRequests: number;
   workerFailures: number;
   workerRestarts: number;
@@ -32,8 +34,22 @@ export interface BridgeMetrics {
   audioFramesOutOfOrder: number;
   audioFramesLate: number;
   audioBackpressureDrops: number;
+  sharedMemoryProcessBlocks: number;
+  sharedMemoryProcessFrames: number;
+  sharedMemoryProcessFailures: number;
+  sharedMemoryPumpPreflightSkips: number;
+  sharedMemoryPumpOverruns: number;
+  sharedMemoryPumpInputUnderruns: number;
+  sharedMemoryPumpOutputBackpressure: number;
+  sharedMemoryPumpWorkerErrors: number;
+  sharedMemoryPumpEventsEnqueued: number;
+  sharedMemoryPumpEventsDrained: number;
+  sharedMemoryPumpEventsLate: number;
+  sharedMemoryPumpEventsDropped: number;
+  sharedMemoryPumpEventsCleared: number;
   audioRouteLatency: BridgeLatencyMetrics;
   audioInterarrivalJitter: BridgeLatencyMetrics;
+  sharedMemoryProcessLatency: BridgeLatencyMetrics;
 }
 
 export interface BridgeEventsOptions {
@@ -60,7 +76,30 @@ export type BridgeEventKind =
   | { type: "worker-starting"; instanceId: number; pluginId: string }
   | { type: "worker-ready"; instanceId: number; pluginId: string }
   | { type: "worker-processing"; instanceId: number }
+  | { type: "worker-processing-starting"; instanceId: number; pluginId: string }
+  | { type: "worker-processing-stopping"; instanceId: number; pluginId: string }
   | { type: "worker-stopped"; instanceId: number }
+  | {
+      type: "worker-destroying";
+      instanceId: number;
+      pluginId: string;
+      streamId: number;
+    }
+  | {
+      type: "worker-destroyed";
+      instanceId: number;
+      pluginId: string;
+      streamId: number;
+    }
+  | { type: "stream-opened"; instanceId: number; pluginId: string; streamId: number }
+  | { type: "stream-closing"; instanceId: number; pluginId: string; streamId: number }
+  | {
+      type: "stream-closed";
+      instanceId: number;
+      pluginId: string;
+      streamId: number;
+      drainTimedOut: boolean;
+    }
   | {
       type: "worker-failed";
       instanceId: number;
@@ -69,15 +108,45 @@ export type BridgeEventKind =
       message: string;
       errorData?: JsonValue;
     }
-  | { type: "worker-recovering"; instanceId: number; pluginId: string }
+  | {
+      type: "worker-recovering";
+      instanceId: number;
+      pluginId: string;
+      mode: WorkerRecoveryMode;
+      reason: string;
+      errorData?: JsonValue;
+    }
   | {
       type: "worker-recovered";
       instanceId: number;
       pluginId: string;
       processingRestored: boolean;
+      mode: WorkerRecoveryMode;
     }
-  | { type: "worker-quarantined"; pluginId: string; failures: number }
+  | {
+      type: "worker-recovery-failed";
+      instanceId: number;
+      pluginId: string;
+      mode: WorkerRecoveryMode;
+      reason: string;
+      errorData?: JsonValue;
+    }
+  | {
+      type: "worker-quarantined";
+      pluginId: string;
+      failures: number;
+      releaseAfterMs: number;
+    }
   | { type: "worker-quarantine-released"; pluginId: string }
+  | {
+      type: "worker-policy-decision";
+      instanceId?: number;
+      pluginId?: string;
+      policy: string;
+      decision: string;
+      reason: string;
+      data?: JsonValue;
+    }
   | {
       type: "vst3-component-handler-event";
       instanceId: number;
@@ -108,8 +177,11 @@ export type BridgeEventKind =
       streamId: number;
       handlerSequence: number;
       reasons: Vst3MetadataInvalidationReason[];
+      refreshPolicy: Vst3MetadataRefreshPolicy;
       restartFlags: Vst3RestartFlags;
     };
+
+export type WorkerRecoveryMode = "manual-restart" | "auto-heartbeat";
 
 export type Vst3MetadataInvalidationReason =
   | "reload-component"
@@ -122,6 +194,11 @@ export type Vst3MetadataInvalidationReason =
   | "routing-info"
   | "prefetchable-support"
   | "keyswitches";
+
+export type Vst3MetadataRefreshPolicy =
+  | "refresh-metadata"
+  | "rebuild-audio-graph"
+  | "reload-component";
 
 export type Vst3ComponentHandlerEventKind =
   | "begin-edit"

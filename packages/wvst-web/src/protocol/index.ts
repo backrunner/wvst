@@ -1,3 +1,27 @@
+import {
+  VST3_OUTPUT_EVENT_BYTES,
+  decodeVst3OutputEvents,
+  encodeVst3OutputEvents,
+  vst3OutputEventPayloadBytes,
+  type Vst3OutputEvent,
+} from "./vst3-output-events.js";
+
+export {
+  VST3_OUTPUT_EVENT_BYTES,
+  VST3_OUTPUT_EVENT_FIXED_FIELDS_BYTES,
+  VST3_OUTPUT_EVENT_PAYLOAD_BYTES,
+  Vst3OutputEventKind,
+  Vst3OutputEventPayloadEncoding,
+  Vst3OutputEventPayloadFlags,
+  decodeVst3OutputEvent,
+  decodeVst3OutputEventPayloadText,
+  decodeVst3OutputEvents,
+  encodeVst3OutputEvent,
+  encodeVst3OutputEvents,
+  vst3OutputEventPayloadBytes,
+} from "./vst3-output-events.js";
+export type { Vst3OutputEvent } from "./vst3-output-events.js";
+
 export const AUDIO_FRAME_MAGIC = 0x54535657;
 export const AUDIO_FRAME_VERSION = 1;
 export const AUDIO_FRAME_HEADER_BYTES = 56;
@@ -28,6 +52,7 @@ export interface AudioFrameHeader {
   flags: number;
   eventCount: number;
   parameterEventCount?: number;
+  vst3OutputEventCount?: number;
 }
 
 export enum MidiEventKind {
@@ -76,6 +101,7 @@ export function encodeAudioFrameHeader(header: AudioFrameHeader): ArrayBuffer {
   view.setUint16(46, header.flags, true);
   view.setUint16(48, header.eventCount, true);
   view.setUint16(50, header.parameterEventCount ?? 0, true);
+  view.setUint16(52, header.vst3OutputEventCount ?? 0, true);
 
   return buffer;
 }
@@ -85,11 +111,16 @@ export function encodeAudioFrame(
   audioPayload: ArrayBuffer,
   events: MidiEvent[] = [],
   parameterEvents: ParameterAutomationEvent[] = [],
+  vst3OutputEvents: Vst3OutputEvent[] = [],
 ): ArrayBuffer {
   const eventPayload = encodeMidiEvents(events);
   const parameterEventPayload = encodeParameterAutomationEvents(parameterEvents);
+  const vst3OutputEventPayload = encodeVst3OutputEvents(vst3OutputEvents);
   const payloadBytes =
-    audioPayload.byteLength + eventPayload.byteLength + parameterEventPayload.byteLength;
+    audioPayload.byteLength +
+    eventPayload.byteLength +
+    parameterEventPayload.byteLength +
+    vst3OutputEventPayload.byteLength;
   if (payloadBytes !== header.payloadBytes) {
     throw new Error(
       `WVST payload length mismatch: expected ${header.payloadBytes}, got ${payloadBytes}`,
@@ -106,6 +137,12 @@ export function encodeAudioFrame(
       `WVST parameter event count mismatch: expected ${parameterEventCount}, got ${parameterEvents.length}`,
     );
   }
+  const vst3OutputEventCount = header.vst3OutputEventCount ?? 0;
+  if (vst3OutputEvents.length !== vst3OutputEventCount) {
+    throw new Error(
+      `WVST VST3 output event count mismatch: expected ${vst3OutputEventCount}, got ${vst3OutputEvents.length}`,
+    );
+  }
 
   const frame = new Uint8Array(AUDIO_FRAME_HEADER_BYTES + payloadBytes);
   frame.set(new Uint8Array(encodeAudioFrameHeader(header)), 0);
@@ -117,6 +154,13 @@ export function encodeAudioFrame(
   frame.set(
     new Uint8Array(parameterEventPayload),
     AUDIO_FRAME_HEADER_BYTES + audioPayload.byteLength + eventPayload.byteLength,
+  );
+  frame.set(
+    new Uint8Array(vst3OutputEventPayload),
+    AUDIO_FRAME_HEADER_BYTES +
+      audioPayload.byteLength +
+      eventPayload.byteLength +
+      parameterEventPayload.byteLength,
   );
 
   return frame.buffer;
@@ -158,6 +202,7 @@ export function decodeAudioFrameHeader(buffer: ArrayBufferLike): AudioFrameHeade
     flags: view.getUint16(46, true),
     eventCount: view.getUint16(48, true),
     parameterEventCount: view.getUint16(50, true),
+    vst3OutputEventCount: view.getUint16(52, true),
   };
 }
 
@@ -167,8 +212,10 @@ export interface DecodedAudioFrame {
   audioPayload: ArrayBuffer;
   eventPayload: ArrayBuffer;
   parameterEventPayload: ArrayBuffer;
+  vst3OutputEventPayload: ArrayBuffer;
   events: MidiEvent[];
   parameterEvents: ParameterAutomationEvent[];
+  vst3OutputEvents: Vst3OutputEvent[];
 }
 
 export function decodeAudioFrame(buffer: ArrayBuffer): DecodedAudioFrame {
@@ -186,26 +233,39 @@ export function decodeAudioFrame(buffer: ArrayBuffer): DecodedAudioFrame {
   const parameterEventBytes = parameterAutomationEventPayloadBytes(
     header.parameterEventCount ?? 0,
   );
+  const vst3OutputEventBytes = vst3OutputEventPayloadBytes(
+    header.vst3OutputEventCount ?? 0,
+  );
 
-  if (header.payloadBytes !== audioBytes + eventBytes + parameterEventBytes) {
+  if (
+    header.payloadBytes !==
+    audioBytes + eventBytes + parameterEventBytes + vst3OutputEventBytes
+  ) {
     throw new Error(
-      `WVST payload section mismatch: expected ${audioBytes + eventBytes + parameterEventBytes}, got ${header.payloadBytes}`,
+      `WVST payload section mismatch: expected ${audioBytes + eventBytes + parameterEventBytes + vst3OutputEventBytes}, got ${header.payloadBytes}`,
     );
   }
+  const parameterOffset = audioBytes + eventBytes;
+  const vst3OutputOffset = parameterOffset + parameterEventBytes;
 
   return {
     header,
     payload,
     audioPayload: payload.slice(0, audioBytes),
     eventPayload: payload.slice(audioBytes, audioBytes + eventBytes),
-    parameterEventPayload: payload.slice(audioBytes + eventBytes),
+    parameterEventPayload: payload.slice(parameterOffset, vst3OutputOffset),
+    vst3OutputEventPayload: payload.slice(vst3OutputOffset),
     events: decodeMidiEvents(
       payload.slice(audioBytes, audioBytes + eventBytes),
       header.eventCount,
     ),
     parameterEvents: decodeParameterAutomationEvents(
-      payload.slice(audioBytes + eventBytes),
+      payload.slice(parameterOffset, vst3OutputOffset),
       header.parameterEventCount ?? 0,
+    ),
+    vst3OutputEvents: decodeVst3OutputEvents(
+      payload.slice(vst3OutputOffset),
+      header.vst3OutputEventCount ?? 0,
     ),
   };
 }

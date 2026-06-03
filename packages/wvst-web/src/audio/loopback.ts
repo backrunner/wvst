@@ -35,6 +35,13 @@ export interface LoopbackMetrics {
   outputFrames: number;
   underflows: number;
   overflows: number;
+  droppedInputQuanta: number;
+  droppedOutputQuanta: number;
+  droppedMidiEvents: number;
+  droppedParameterEvents: number;
+  lateMidiEvents: number;
+  lateParameterEvents: number;
+  transportFailures: number;
   inputSequence: number;
   inputConsumedSequence: number;
   outputSequence: number;
@@ -52,9 +59,16 @@ export enum LoopbackCounter {
   InputConsumedSequence = 5,
   OutputSequence = 6,
   OutputConsumedSequence = 7,
+  DroppedInputQuanta = 8,
+  DroppedOutputQuanta = 9,
+  DroppedMidiEvents = 10,
+  DroppedParameterEvents = 11,
+  LateMidiEvents = 12,
+  LateParameterEvents = 13,
+  TransportFailures = 14,
 }
 
-const COUNTER_COUNT = 8;
+const COUNTER_COUNT = 15;
 const F32_BYTES = 4;
 const I32_BYTES = 4;
 
@@ -119,7 +133,15 @@ export function writeLoopbackInput(
     LoopbackCounter.InputConsumedSequence,
   );
   if (nextSequence - consumedSequence > buffers.capacityQuanta) {
+    const droppedQuanta = nextSequence - buffers.capacityQuanta - consumedSequence;
     Atomics.add(buffers.counters, LoopbackCounter.Overflows, 1);
+    if (droppedQuanta > 0) {
+      Atomics.add(
+        buffers.counters,
+        LoopbackCounter.DroppedInputQuanta,
+        droppedQuanta,
+      );
+    }
     Atomics.store(
       buffers.counters,
       LoopbackCounter.InputConsumedSequence,
@@ -222,6 +244,31 @@ export function readLoopbackMetrics(buffers: LoopbackSharedBuffers): LoopbackMet
     outputFrames: Atomics.load(buffers.counters, LoopbackCounter.OutputFrames),
     underflows: Atomics.load(buffers.counters, LoopbackCounter.Underflows),
     overflows: Atomics.load(buffers.counters, LoopbackCounter.Overflows),
+    droppedInputQuanta: Atomics.load(
+      buffers.counters,
+      LoopbackCounter.DroppedInputQuanta,
+    ),
+    droppedOutputQuanta: Atomics.load(
+      buffers.counters,
+      LoopbackCounter.DroppedOutputQuanta,
+    ),
+    droppedMidiEvents: Atomics.load(
+      buffers.counters,
+      LoopbackCounter.DroppedMidiEvents,
+    ),
+    droppedParameterEvents: Atomics.load(
+      buffers.counters,
+      LoopbackCounter.DroppedParameterEvents,
+    ),
+    lateMidiEvents: Atomics.load(buffers.counters, LoopbackCounter.LateMidiEvents),
+    lateParameterEvents: Atomics.load(
+      buffers.counters,
+      LoopbackCounter.LateParameterEvents,
+    ),
+    transportFailures: Atomics.load(
+      buffers.counters,
+      LoopbackCounter.TransportFailures,
+    ),
     inputSequence,
     inputConsumedSequence,
     outputSequence,

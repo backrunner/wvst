@@ -8,7 +8,8 @@
     "outDir": "dist/esm",
     "rootDir": "src",
     "strict": true,
-    "target": "ES2022"
+    "target": "ES2022",
+    "types": []
   },
   "include": ["src/**/*.ts"]
 }

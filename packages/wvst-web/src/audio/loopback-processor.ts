@@ -32,6 +32,7 @@ const INPUT_SEQUENCE = 4;
 const INPUT_CONSUMED_SEQUENCE = 5;
 const OUTPUT_SEQUENCE = 6;
 const OUTPUT_CONSUMED_SEQUENCE = 7;
+const DROPPED_INPUT_QUANTA = 8;
 
 class WVSTLoopbackProcessor extends AudioWorkletProcessor {
   private frames = 0;
@@ -75,7 +76,11 @@ class WVSTLoopbackProcessor extends AudioWorkletProcessor {
     const nextInputSequence = Atomics.load(counters, INPUT_SEQUENCE) + 1;
     const inputConsumedSequence = Atomics.load(counters, INPUT_CONSUMED_SEQUENCE);
     if (nextInputSequence - inputConsumedSequence > this.capacityQuanta) {
+      const droppedQuanta = nextInputSequence - this.capacityQuanta - inputConsumedSequence;
       Atomics.add(counters, OVERFLOWS, 1);
+      if (droppedQuanta > 0) {
+        Atomics.add(counters, DROPPED_INPUT_QUANTA, droppedQuanta);
+      }
       Atomics.store(counters, INPUT_CONSUMED_SEQUENCE, nextInputSequence - this.capacityQuanta);
     }
 

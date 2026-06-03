@@ -1,5 +1,5 @@
-import type { LoopbackSharedBuffers } from "./loopback.js";
-import type { MidiEvent, ParameterAutomationEvent } from "./protocol.js";
+import type { LoopbackSharedBuffers } from "../audio/loopback.js";
+import type { MidiEvent, ParameterAutomationEvent } from "../protocol/index.js";
 import type { JsonValue } from "./transport.js";
 
 export interface BridgeWorkerClientOptions {
