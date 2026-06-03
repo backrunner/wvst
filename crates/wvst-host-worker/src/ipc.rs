@@ -1096,6 +1096,8 @@ mod tests {
         assert_eq!(value["error"]["data"]["kind"], "vst3-runtime-init");
         assert_eq!(value["error"]["data"]["stage"], "component.create");
         assert!(value["error"]["data"]["hostError"].is_string());
+        assert_eq!(value["error"]["data"]["compatibility"]["schemaVersion"], 1);
+        assert!(value["error"]["data"]["compatibility"]["category"].is_string());
         assert_eq!(state.instances.len(), 0);
 
         let _ = std::fs::remove_dir_all(bundle_path);

@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 use wvst_vst3_host::HostError;
 
+const COMPATIBILITY_DIAGNOSTIC_SCHEMA_VERSION: u16 = 1;
+
 #[derive(Debug)]
 pub(super) struct WorkerBackendError {
     message: String,
@@ -43,9 +45,107 @@ impl WorkerBackendError {
                 "kind": kind,
                 "stage": stage,
                 "hostError": host_error_kind(&error),
+                "compatibility": compatibility_diagnostic(&error),
                 "message": message,
             })),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompatibilityDiagnostic {
+    schema_version: u16,
+    category: &'static str,
+    hint: &'static str,
+}
+
+const fn compatibility_diagnostic(error: &HostError) -> CompatibilityDiagnostic {
+    let (category, hint) = compatibility_category_and_hint(error);
+    CompatibilityDiagnostic {
+        schema_version: COMPATIBILITY_DIAGNOSTIC_SCHEMA_VERSION,
+        category,
+        hint,
+    }
+}
+
+const fn compatibility_category_and_hint(error: &HostError) -> (&'static str, &'static str) {
+    match error {
+        HostError::BundleExecutableNotFound(_)
+        | HostError::FactoryCallFailed { .. }
+        | HostError::FactoryReturnedNull
+        | HostError::MissingSymbol(_)
+        | HostError::ModuleLoadFailed(_) => (
+            "plugin-loading",
+            "verify the VST3 bundle path, platform executable, module exports, and plugin installation",
+        ),
+        HostError::InvalidClassId(_)
+        | HostError::InstanceCreationFailed { .. }
+        | HostError::InstanceReturnedNull { .. } => (
+            "class-or-interface",
+            "refresh plugin metadata and verify the requested VST3 class id and interface",
+        ),
+        HostError::AudioProcessorReturnedNull
+        | HostError::AudioProcessorVTableMissing
+        | HostError::ComponentReturnedNull
+        | HostError::ComponentVTableMissing
+        | HostError::EditControllerReturnedNull
+        | HostError::EditControllerVTableMissing
+        | HostError::InterfaceQueryFailed { .. }
+        | HostError::InterfaceReturnedNull { .. }
+        | HostError::InvalidInterfaceId(_) => (
+            "required-interface",
+            "the plugin did not expose a required VST3 interface for this operation",
+        ),
+        HostError::AudioProcessorCallFailed { .. }
+        | HostError::ComponentCallFailed { .. }
+        | HostError::EditControllerCallFailed { .. } => (
+            "plugin-call",
+            "the plugin returned a failure from a VST3 runtime or controller call",
+        ),
+        HostError::ConnectionPointCallFailed { .. }
+        | HostError::ConnectionPointMessageNull
+        | HostError::ConnectionPointReturnedNull
+        | HostError::ConnectionPointVTableMissing => (
+            "connection-point",
+            "the plugin controller/component messaging path is unavailable or rejected the message",
+        ),
+        HostError::EditControllerParameterEditAlreadyActive { .. }
+        | HostError::EditControllerParameterEditNotActive { .. } => (
+            "parameter-edit-gesture",
+            "the parameter edit gesture order is invalid for this controller",
+        ),
+        HostError::InvalidChannelCount { .. }
+        | HostError::InvalidMaxBlockFrames(_)
+        | HostError::InvalidSampleRate(_)
+        | HostError::UnsupportedSpeakerArrangement(_) => (
+            "processing-configuration",
+            "adjust sample rate, block size, channel count, or bus arrangement for this plugin",
+        ),
+        HostError::InvalidBufferLength { .. } => (
+            "audio-buffer",
+            "the audio buffer shape does not match the negotiated processing configuration",
+        ),
+        HostError::InvalidStateStreamSeek { .. }
+        | HostError::StateStreamWriteLimitExceeded { .. } => (
+            "state-data",
+            "the plugin state, program data, or unit data payload is invalid or exceeds the configured limit",
+        ),
+        HostError::InvalidEventCount { .. }
+        | HostError::InvalidEventSampleOffset { .. }
+        | HostError::InvalidParameterChangeCount { .. }
+        | HostError::InvalidParameterChangeValue { .. } => (
+            "event-automation",
+            "MIDI, note, or parameter automation input is outside the supported block range or value range",
+        ),
+        HostError::InvalidLifecycleTransition { .. } => (
+            "lifecycle",
+            "the plugin instance received a lifecycle operation in an invalid state",
+        ),
+        HostError::UnsupportedPlatform(_) => (
+            "platform",
+            "this VST3 runtime path is not supported on the current platform",
+        ),
     }
 }
 
@@ -115,6 +215,33 @@ mod tests {
             data["hostError"],
             "edit-controller-parameter-edit-not-active"
         );
+        assert_eq!(data["compatibility"]["schemaVersion"], 1);
+        assert_eq!(data["compatibility"]["category"], "parameter-edit-gesture");
         assert!(error.message().contains("parameter=42"));
+    }
+
+    #[test]
+    fn classifies_host_errors_into_compatibility_categories() {
+        assert_eq!(
+            compatibility_diagnostic(&HostError::ModuleLoadFailed("bad bundle".to_string()))
+                .category,
+            "plugin-loading"
+        );
+        assert_eq!(
+            compatibility_diagnostic(&HostError::InvalidClassId("bad".to_string())).category,
+            "class-or-interface"
+        );
+        assert_eq!(
+            compatibility_diagnostic(&HostError::UnsupportedSpeakerArrangement(9)).category,
+            "processing-configuration"
+        );
+        assert_eq!(
+            compatibility_diagnostic(&HostError::InvalidEventSampleOffset {
+                frames: 128,
+                actual: 129
+            })
+            .category,
+            "event-automation"
+        );
     }
 }
