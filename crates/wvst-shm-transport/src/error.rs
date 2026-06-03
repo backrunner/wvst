@@ -3,19 +3,65 @@ use std::fmt::{self, Display};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SharedAudioLayoutError {
+    DescriptorTooShort {
+        min: usize,
+        actual: usize,
+    },
+    InvalidDescriptorMagic {
+        actual: u32,
+    },
+    UnsupportedDescriptorVersion {
+        actual: u16,
+    },
+    InvalidDescriptorField {
+        field: &'static str,
+        expected: u64,
+        actual: u64,
+    },
     ZeroSampleRate,
     ZeroBlockFrames,
     ZeroCapacityBlocks,
-    ChannelCountTooLarge { channels: u16, max: u16 },
-    CursorOrderInvalid { read_frame: u64, write_frame: u64 },
-    InsufficientReadableFrames { requested: u64, available: u64 },
-    InsufficientWritableFrames { requested: u64, available: u64 },
+    ChannelCountTooLarge {
+        channels: u16,
+        max: u16,
+    },
+    CursorOrderInvalid {
+        read_frame: u64,
+        write_frame: u64,
+    },
+    InsufficientReadableFrames {
+        requested: u64,
+        available: u64,
+    },
+    InsufficientWritableFrames {
+        requested: u64,
+        available: u64,
+    },
     LayoutOverflow,
 }
 
 impl Display for SharedAudioLayoutError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DescriptorTooShort { min, actual } => write!(
+                formatter,
+                "shared audio descriptor requires at least {min} bytes, got {actual}"
+            ),
+            Self::InvalidDescriptorMagic { actual } => {
+                write!(formatter, "invalid shared audio descriptor magic {actual}")
+            }
+            Self::UnsupportedDescriptorVersion { actual } => write!(
+                formatter,
+                "unsupported shared audio descriptor version {actual}"
+            ),
+            Self::InvalidDescriptorField {
+                field,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "invalid shared audio descriptor field {field}: expected {expected}, got {actual}"
+            ),
             Self::ZeroSampleRate => {
                 formatter.write_str("shared audio sample rate must be non-zero")
             }

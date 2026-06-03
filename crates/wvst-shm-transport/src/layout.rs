@@ -82,6 +82,76 @@ pub struct SharedAudioTransportLayout {
 }
 
 impl SharedAudioTransportLayout {
+    pub fn from_descriptor_bytes(input: &[u8]) -> Result<Self, SharedAudioLayoutError> {
+        if input.len() < usize::from(SHARED_AUDIO_DESCRIPTOR_BYTES) {
+            return Err(SharedAudioLayoutError::DescriptorTooShort {
+                min: usize::from(SHARED_AUDIO_DESCRIPTOR_BYTES),
+                actual: input.len(),
+            });
+        }
+
+        let magic = read_u32(input, 0);
+        if magic != SHARED_AUDIO_LAYOUT_MAGIC {
+            return Err(SharedAudioLayoutError::InvalidDescriptorMagic { actual: magic });
+        }
+
+        let version = read_u16(input, 4);
+        if version != SHARED_AUDIO_LAYOUT_VERSION {
+            return Err(SharedAudioLayoutError::UnsupportedDescriptorVersion { actual: version });
+        }
+
+        expect_descriptor_field(
+            "headerBytes",
+            u64::from(SHARED_AUDIO_HEADER_BYTES),
+            u64::from(read_u16(input, 6)),
+        )?;
+        expect_descriptor_field(
+            "descriptorBytes",
+            u64::from(SHARED_AUDIO_DESCRIPTOR_BYTES),
+            u64::from(read_u16(input, 8)),
+        )?;
+        expect_descriptor_field(
+            "ringCount",
+            u64::from(SHARED_AUDIO_RING_COUNT),
+            u64::from(read_u16(input, 10)),
+        )?;
+        expect_descriptor_field(
+            "inputRingDescriptorOffset",
+            u64::from(INPUT_RING_DESCRIPTOR_OFFSET),
+            u64::from(read_u32(input, 32)),
+        )?;
+        expect_descriptor_field(
+            "outputRingDescriptorOffset",
+            u64::from(OUTPUT_RING_DESCRIPTOR_OFFSET),
+            u64::from(read_u32(input, 36)),
+        )?;
+
+        let input_ring = SharedAudioRingLayout::decode_descriptor(
+            input,
+            INPUT_RING_DESCRIPTOR_OFFSET as usize,
+            SharedAudioRingRole::Input,
+        )?;
+        let output_ring = SharedAudioRingLayout::decode_descriptor(
+            input,
+            OUTPUT_RING_DESCRIPTOR_OFFSET as usize,
+            SharedAudioRingRole::Output,
+        )?;
+        let config = SharedAudioTransportConfig::new(
+            read_u32(input, 12),
+            read_u16(input, 16),
+            read_u32(input, 20),
+            input_ring.channels,
+            output_ring.channels,
+        );
+        let expected = config.layout()?;
+
+        validate_ring("input", input_ring, expected.input)?;
+        validate_ring("output", output_ring, expected.output)?;
+        expect_descriptor_field("totalBytes", expected.total_bytes, read_u64(input, 24))?;
+
+        Ok(expected)
+    }
+
     pub fn descriptor_bytes(&self) -> [u8; SHARED_AUDIO_DESCRIPTOR_BYTES as usize] {
         let mut output = [0_u8; SHARED_AUDIO_DESCRIPTOR_BYTES as usize];
         put_u32(&mut output, 0, SHARED_AUDIO_LAYOUT_MAGIC);
@@ -248,6 +318,31 @@ impl SharedAudioRingLayout {
         put_u64(output, offset + 48, self.capacity_samples);
         put_u32(output, offset + 56, self.cursor_bytes);
     }
+
+    fn decode_descriptor(
+        input: &[u8],
+        offset: usize,
+        expected_role: SharedAudioRingRole,
+    ) -> Result<Self, SharedAudioLayoutError> {
+        expect_descriptor_field(
+            "ring.role",
+            expected_role as u64,
+            u64::from(read_u16(input, offset)),
+        )?;
+
+        Ok(Self {
+            role: expected_role,
+            channels: read_u16(input, offset + 2),
+            block_frames: read_u16(input, offset + 4),
+            capacity_blocks: read_u32(input, offset + 8),
+            cursor_offset: read_u64(input, offset + 16),
+            audio_offset: read_u64(input, offset + 24),
+            audio_bytes: read_u64(input, offset + 32),
+            capacity_frames: read_u64(input, offset + 40),
+            capacity_samples: read_u64(input, offset + 48),
+            cursor_bytes: read_u32(input, offset + 56),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -341,6 +436,110 @@ fn checked_mul(left: u64, right: u64) -> Result<u64, SharedAudioLayoutError> {
         .ok_or(SharedAudioLayoutError::LayoutOverflow)
 }
 
+fn validate_ring(
+    label: &'static str,
+    actual: SharedAudioRingLayout,
+    expected: SharedAudioRingLayout,
+) -> Result<(), SharedAudioLayoutError> {
+    expect_descriptor_field(
+        ring_field(label, "blockFrames"),
+        u64::from(expected.block_frames),
+        u64::from(actual.block_frames),
+    )?;
+    expect_descriptor_field(
+        ring_field(label, "capacityBlocks"),
+        u64::from(expected.capacity_blocks),
+        u64::from(actual.capacity_blocks),
+    )?;
+    expect_descriptor_field(
+        ring_field(label, "channels"),
+        u64::from(expected.channels),
+        u64::from(actual.channels),
+    )?;
+    expect_descriptor_field(
+        ring_field(label, "capacityFrames"),
+        expected.capacity_frames,
+        actual.capacity_frames,
+    )?;
+    expect_descriptor_field(
+        ring_field(label, "capacitySamples"),
+        expected.capacity_samples,
+        actual.capacity_samples,
+    )?;
+    expect_descriptor_field(
+        ring_field(label, "cursorOffset"),
+        expected.cursor_offset,
+        actual.cursor_offset,
+    )?;
+    expect_descriptor_field(
+        ring_field(label, "cursorBytes"),
+        u64::from(expected.cursor_bytes),
+        u64::from(actual.cursor_bytes),
+    )?;
+    expect_descriptor_field(
+        ring_field(label, "audioOffset"),
+        expected.audio_offset,
+        actual.audio_offset,
+    )?;
+    expect_descriptor_field(
+        ring_field(label, "audioBytes"),
+        expected.audio_bytes,
+        actual.audio_bytes,
+    )?;
+    Ok(())
+}
+
+fn ring_field(label: &'static str, field: &'static str) -> &'static str {
+    match (label, field) {
+        ("input", "blockFrames") => "input.blockFrames",
+        ("input", "capacityBlocks") => "input.capacityBlocks",
+        ("input", "channels") => "input.channels",
+        ("input", "capacityFrames") => "input.capacityFrames",
+        ("input", "capacitySamples") => "input.capacitySamples",
+        ("input", "cursorOffset") => "input.cursorOffset",
+        ("input", "cursorBytes") => "input.cursorBytes",
+        ("input", "audioOffset") => "input.audioOffset",
+        ("input", "audioBytes") => "input.audioBytes",
+        ("output", "blockFrames") => "output.blockFrames",
+        ("output", "capacityBlocks") => "output.capacityBlocks",
+        ("output", "channels") => "output.channels",
+        ("output", "capacityFrames") => "output.capacityFrames",
+        ("output", "capacitySamples") => "output.capacitySamples",
+        ("output", "cursorOffset") => "output.cursorOffset",
+        ("output", "cursorBytes") => "output.cursorBytes",
+        ("output", "audioOffset") => "output.audioOffset",
+        ("output", "audioBytes") => "output.audioBytes",
+        _ => "ring.unknown",
+    }
+}
+
+fn expect_descriptor_field(
+    field: &'static str,
+    expected: u64,
+    actual: u64,
+) -> Result<(), SharedAudioLayoutError> {
+    if expected == actual {
+        return Ok(());
+    }
+    Err(SharedAudioLayoutError::InvalidDescriptorField {
+        field,
+        expected,
+        actual,
+    })
+}
+
+fn read_u16(input: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes(input[offset..offset + 2].try_into().expect("u16 bytes"))
+}
+
+fn read_u32(input: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(input[offset..offset + 4].try_into().expect("u32 bytes"))
+}
+
+fn read_u64(input: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(input[offset..offset + 8].try_into().expect("u64 bytes"))
+}
+
 fn put_u16(output: &mut [u8], offset: usize, value: u16) {
     output[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
@@ -354,196 +553,5 @@ fn put_u64(output: &mut [u8], offset: usize, value: u64) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn computes_aligned_stereo_layout() {
-        let layout = SharedAudioTransportConfig::new(48_000, 128, 4, 2, 2)
-            .layout()
-            .expect("layout");
-
-        assert_eq!(layout.input.cursor_offset, 192);
-        assert_eq!(layout.input.audio_offset, 256);
-        assert_eq!(layout.input.capacity_frames, 512);
-        assert_eq!(layout.input.audio_bytes, 4_096);
-        assert_eq!(layout.output.cursor_offset, 4_352);
-        assert_eq!(layout.output.audio_offset, 4_416);
-        assert_eq!(layout.output.audio_bytes, 4_096);
-        assert_eq!(layout.total_bytes, 8_512);
-        assert_eq!(layout.input.cursor_offset % CACHE_LINE_BYTES, 0);
-        assert_eq!(layout.output.audio_offset % CACHE_LINE_BYTES, 0);
-    }
-
-    #[test]
-    fn supports_zero_input_instrument_layout() {
-        let layout = SharedAudioTransportConfig::new(48_000, 128, 2, 0, 2)
-            .layout()
-            .expect("layout");
-
-        assert_eq!(layout.input.capacity_samples, 0);
-        assert_eq!(layout.input.audio_bytes, 0);
-        assert_eq!(layout.output.cursor_offset, layout.input.audio_offset);
-        assert!(layout.total_bytes > layout.output.audio_offset);
-    }
-
-    #[test]
-    fn descriptor_encodes_header_and_ring_offsets() {
-        let layout = SharedAudioTransportConfig::new(44_100, 64, 3, 1, 2)
-            .layout()
-            .expect("layout");
-        let descriptor = layout.descriptor_bytes();
-
-        assert_eq!(read_u32(&descriptor, 0), SHARED_AUDIO_LAYOUT_MAGIC);
-        assert_eq!(read_u16(&descriptor, 4), SHARED_AUDIO_LAYOUT_VERSION);
-        assert_eq!(read_u16(&descriptor, 8), SHARED_AUDIO_DESCRIPTOR_BYTES);
-        assert_eq!(read_u16(&descriptor, 10), SHARED_AUDIO_RING_COUNT);
-        assert_eq!(read_u32(&descriptor, 12), 44_100);
-        assert_eq!(read_u16(&descriptor, 16), 64);
-        assert_eq!(read_u32(&descriptor, 20), 3);
-        assert_eq!(read_u64(&descriptor, 24), layout.total_bytes);
-        assert_eq!(read_u16(&descriptor, 64), SharedAudioRingRole::Input as u16);
-        assert_eq!(read_u16(&descriptor, 66), 1);
-        assert_eq!(read_u64(&descriptor, 80), layout.input.cursor_offset);
-        assert_eq!(
-            read_u16(&descriptor, 128),
-            SharedAudioRingRole::Output as u16
-        );
-        assert_eq!(read_u16(&descriptor, 130), 2);
-        assert_eq!(read_u64(&descriptor, 152), layout.output.audio_offset);
-    }
-
-    #[test]
-    fn rejects_invalid_config() {
-        assert_eq!(
-            SharedAudioTransportConfig::new(0, 128, 2, 2, 2).layout(),
-            Err(SharedAudioLayoutError::ZeroSampleRate)
-        );
-        assert_eq!(
-            SharedAudioTransportConfig::new(48_000, 0, 2, 2, 2).layout(),
-            Err(SharedAudioLayoutError::ZeroBlockFrames)
-        );
-        assert_eq!(
-            SharedAudioTransportConfig::new(48_000, 128, 0, 2, 2).layout(),
-            Err(SharedAudioLayoutError::ZeroCapacityBlocks)
-        );
-        assert_eq!(
-            SharedAudioTransportConfig::new(48_000, 128, 2, MAX_SHARED_AUDIO_CHANNELS + 1, 2,)
-                .layout(),
-            Err(SharedAudioLayoutError::ChannelCountTooLarge {
-                channels: MAX_SHARED_AUDIO_CHANNELS + 1,
-                max: MAX_SHARED_AUDIO_CHANNELS,
-            })
-        );
-    }
-
-    #[test]
-    fn plans_contiguous_read_and_write_spans() {
-        let layout = SharedAudioTransportConfig::new(48_000, 128, 4, 2, 2)
-            .layout()
-            .expect("layout");
-        let cursor = SharedAudioRingCursor::new(0, 128);
-
-        assert_eq!(layout.input.readable_frames(cursor), Ok(128));
-        assert_eq!(layout.input.writable_frames(cursor), Ok(384));
-
-        let read = layout.input.read_plan(cursor, 128).expect("read");
-        assert_eq!(read.first_byte_offset, layout.input.audio_offset);
-        assert_eq!(read.first_bytes, 128 * 2 * F32_SAMPLE_BYTES);
-        assert_eq!(read.second_bytes, 0);
-
-        let write = layout.input.write_plan(cursor, 128).expect("write");
-        assert_eq!(
-            write.first_byte_offset,
-            layout.input.audio_offset + 128 * 2 * F32_SAMPLE_BYTES
-        );
-        assert_eq!(write.first_frames, 128);
-        assert_eq!(write.second_frames, 0);
-    }
-
-    #[test]
-    fn plans_wrapped_write_spans() {
-        let layout = SharedAudioTransportConfig::new(48_000, 128, 4, 2, 2)
-            .layout()
-            .expect("layout");
-        let cursor = SharedAudioRingCursor::new(64, 448);
-
-        let plan = layout.input.write_plan(cursor, 128).expect("write");
-
-        assert_eq!(plan.frame_offset, 448);
-        assert_eq!(plan.first_frames, 64);
-        assert_eq!(plan.second_frames, 64);
-        assert_eq!(
-            plan.first_byte_offset,
-            layout.input.audio_offset + 448 * 2 * F32_SAMPLE_BYTES
-        );
-        assert_eq!(plan.first_bytes, 64 * 2 * F32_SAMPLE_BYTES);
-        assert_eq!(plan.second_byte_offset, layout.input.audio_offset);
-        assert_eq!(plan.second_bytes, 64 * 2 * F32_SAMPLE_BYTES);
-    }
-
-    #[test]
-    fn rejects_invalid_cursor_and_backpressure() {
-        let layout = SharedAudioTransportConfig::new(48_000, 128, 2, 2, 2)
-            .layout()
-            .expect("layout");
-
-        assert_eq!(
-            layout
-                .input
-                .readable_frames(SharedAudioRingCursor::new(10, 4)),
-            Err(SharedAudioLayoutError::CursorOrderInvalid {
-                read_frame: 10,
-                write_frame: 4,
-            })
-        );
-        assert_eq!(
-            layout
-                .input
-                .write_plan(SharedAudioRingCursor::new(0, 256), 128),
-            Err(SharedAudioLayoutError::InsufficientWritableFrames {
-                requested: 128,
-                available: 0,
-            })
-        );
-        assert_eq!(
-            layout
-                .input
-                .read_plan(SharedAudioRingCursor::new(0, 64), 128),
-            Err(SharedAudioLayoutError::InsufficientReadableFrames {
-                requested: 128,
-                available: 64,
-            })
-        );
-    }
-
-    #[test]
-    fn zero_channel_plan_keeps_frame_span_without_sample_bytes() {
-        let layout = SharedAudioTransportConfig::new(48_000, 128, 2, 0, 2)
-            .layout()
-            .expect("layout");
-        let cursor = SharedAudioRingCursor::new(0, 0);
-
-        let plan = layout.input.write_plan(cursor, 128).expect("write");
-
-        assert_eq!(plan.frames, 128);
-        assert_eq!(plan.channels, 0);
-        assert_eq!(plan.first_frames, 128);
-        assert_eq!(plan.second_frames, 0);
-        assert_eq!(plan.first_bytes, 0);
-        assert_eq!(plan.second_bytes, 0);
-        assert_eq!(plan.first_byte_offset, layout.input.audio_offset);
-    }
-
-    fn read_u16(input: &[u8], offset: usize) -> u16 {
-        u16::from_le_bytes(input[offset..offset + 2].try_into().expect("u16 bytes"))
-    }
-
-    fn read_u32(input: &[u8], offset: usize) -> u32 {
-        u32::from_le_bytes(input[offset..offset + 4].try_into().expect("u32 bytes"))
-    }
-
-    fn read_u64(input: &[u8], offset: usize) -> u64 {
-        u64::from_le_bytes(input[offset..offset + 8].try_into().expect("u64 bytes"))
-    }
-}
+#[path = "layout_tests.rs"]
+mod tests;
