@@ -13,6 +13,7 @@ members = [
     "crates/wvst-shm-transport",
     "crates/wvst-testkit",
     "crates/wvst-vst3-host",
+    "crates/wvst-web-wasm",
 ]
 resolver = "3"
 

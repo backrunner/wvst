@@ -1,0 +1,20 @@
+[package]
+name = "wvst-web-wasm"
+description = "WASM protocol helpers for the WVST Web SDK."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+wasm-bindgen = "0.2"
+wvst-core = { path = "../wvst-core" }
+wvst-protocol = { path = "../wvst-protocol" }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

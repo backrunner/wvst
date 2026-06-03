@@ -230,6 +230,13 @@ export {
   type WVSTWebAudioMetricsSnapshotOptions,
 } from "./session/metrics.js";
 export {
+  createWVSTProtocolWasm,
+  validateWVSTProtocolWasm,
+  type WVSTAudioFrameHeaderWasmView,
+  type WVSTProtocolWasm,
+  type WVSTProtocolWasmModule,
+} from "./wasm/protocol.js";
+export {
   AUDIO_FRAME_HEADER_BYTES,
   AUDIO_FRAME_MAGIC,
   AUDIO_FRAME_VERSION,

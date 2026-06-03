@@ -18,6 +18,9 @@ jobs:
       - name: Install Rust components
         run: rustup component add rustfmt clippy
 
+      - name: Install Rust WASM target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
@@ -26,6 +29,9 @@ jobs:
 
       - name: Run Rust tests
         run: cargo test --workspace
+
+      - name: Check Web WASM crate
+        run: RUSTC="$(rustup which rustc)" cargo check -p wvst-web-wasm --target wasm32-unknown-unknown
 
   web:
     name: Web SDK
