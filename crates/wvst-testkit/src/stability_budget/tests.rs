@@ -121,6 +121,77 @@ fn serializes_budget_report_for_ci_artifacts() {
     assert_eq!(value["violations"][0]["metric"], "routeLatencyUs.p95");
 }
 
+#[test]
+fn evaluates_webaudio_loopback_metrics_with_native_budget() {
+    let report = passing_report();
+    let webaudio = WebAudioLoopbackMetrics {
+        input_frames: 384,
+        output_frames: 256,
+        underflows: 2,
+        overflows: 1,
+        input_sequence: 3,
+        input_consumed_sequence: 1,
+        output_sequence: 2,
+        output_consumed_sequence: 2,
+        pending_input_quanta: 2,
+        pending_output_quanta: 0,
+    };
+    let budget = StabilityBudget::default()
+        .min_observations(3)
+        .min_webaudio_input_frames(384)
+        .min_webaudio_output_frames(384)
+        .max_webaudio_underflows(0)
+        .max_webaudio_overflows(0)
+        .max_pending_input_quanta(1)
+        .max_pending_output_quanta(0);
+
+    let budget_report = report.evaluate_budget_with_webaudio(budget, webaudio);
+
+    assert!(!budget_report.passed);
+    assert!(
+        budget_report
+            .violations
+            .contains(&StabilityBudgetViolation::MinimumNotMet {
+                metric: "webAudio.outputFrames",
+                min: 384,
+                actual: 256,
+            })
+    );
+    assert!(
+        budget_report
+            .violations
+            .contains(&StabilityBudgetViolation::MaximumExceeded {
+                metric: "webAudio.underflows",
+                max: 0,
+                actual: 2,
+            })
+    );
+    assert!(
+        budget_report
+            .violations
+            .contains(&StabilityBudgetViolation::MaximumExceeded {
+                metric: "webAudio.pendingInputQuanta",
+                max: 1,
+                actual: 2,
+            })
+    );
+}
+
+#[test]
+fn reports_missing_webaudio_metrics_when_budget_requires_them() {
+    let report = passing_report();
+    let budget = StabilityBudget::default().max_webaudio_underflows(0);
+
+    let budget_report = report.evaluate_budget(budget);
+
+    assert_eq!(
+        budget_report.violations,
+        vec![StabilityBudgetViolation::MetricMissing {
+            metric: "webAudioLoopbackMetrics",
+        }]
+    );
+}
+
 fn passing_report() -> StabilityRunReport {
     let config = StabilityRunConfig::new(LatencyHarnessConfig::new(48_000, 128))
         .with_duration(Duration::from_secs(1))

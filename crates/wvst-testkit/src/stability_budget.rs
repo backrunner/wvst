@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use crate::latency::{LatencyPercentiles, LatencySnapshot};
 use crate::stability::StabilityRunReport;
 
+mod webaudio;
+
+pub use webaudio::WebAudioLoopbackMetrics;
+
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StabilityBudget {
@@ -20,6 +24,12 @@ pub struct StabilityBudget {
     pub max_route_latency_p99_us: Option<u64>,
     pub max_round_trip_p95_us: Option<u64>,
     pub max_round_trip_p99_us: Option<u64>,
+    pub min_webaudio_input_frames: Option<u64>,
+    pub min_webaudio_output_frames: Option<u64>,
+    pub max_webaudio_underflows: Option<u64>,
+    pub max_webaudio_overflows: Option<u64>,
+    pub max_pending_input_quanta: Option<u64>,
+    pub max_pending_output_quanta: Option<u64>,
 }
 
 impl StabilityBudget {
@@ -92,6 +102,36 @@ impl StabilityBudget {
         self.max_round_trip_p99_us = Some(micros);
         self
     }
+
+    pub const fn min_webaudio_input_frames(mut self, frames: u64) -> Self {
+        self.min_webaudio_input_frames = Some(frames);
+        self
+    }
+
+    pub const fn min_webaudio_output_frames(mut self, frames: u64) -> Self {
+        self.min_webaudio_output_frames = Some(frames);
+        self
+    }
+
+    pub const fn max_webaudio_underflows(mut self, underflows: u64) -> Self {
+        self.max_webaudio_underflows = Some(underflows);
+        self
+    }
+
+    pub const fn max_webaudio_overflows(mut self, overflows: u64) -> Self {
+        self.max_webaudio_overflows = Some(overflows);
+        self
+    }
+
+    pub const fn max_pending_input_quanta(mut self, quanta: u64) -> Self {
+        self.max_pending_input_quanta = Some(quanta);
+        self
+    }
+
+    pub const fn max_pending_output_quanta(mut self, quanta: u64) -> Self {
+        self.max_pending_output_quanta = Some(quanta);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -103,6 +143,14 @@ pub struct StabilityBudgetReport {
 
 impl StabilityBudgetReport {
     pub fn from_snapshot(snapshot: &LatencySnapshot, budget: StabilityBudget) -> Self {
+        Self::from_snapshot_and_webaudio(snapshot, budget, None)
+    }
+
+    pub fn from_snapshot_and_webaudio(
+        snapshot: &LatencySnapshot,
+        budget: StabilityBudget,
+        webaudio: Option<WebAudioLoopbackMetrics>,
+    ) -> Self {
         let mut violations = Vec::new();
 
         if let Some(min) = budget.min_observations
@@ -197,6 +245,7 @@ impl StabilityBudgetReport {
             PercentileKind::P99,
             budget.max_round_trip_p99_us,
         );
+        webaudio::push_webaudio_violations(&mut violations, budget, webaudio);
 
         Self {
             passed: violations.is_empty(),
@@ -225,11 +274,22 @@ pub enum StabilityBudgetViolation {
     PercentileMissing {
         metric: &'static str,
     },
+    MetricMissing {
+        metric: &'static str,
+    },
 }
 
 impl StabilityRunReport {
     pub fn evaluate_budget(&self, budget: StabilityBudget) -> StabilityBudgetReport {
         StabilityBudgetReport::from_snapshot(&self.snapshot, budget)
+    }
+
+    pub fn evaluate_budget_with_webaudio(
+        &self,
+        budget: StabilityBudget,
+        webaudio: WebAudioLoopbackMetrics,
+    ) -> StabilityBudgetReport {
+        StabilityBudgetReport::from_snapshot_and_webaudio(&self.snapshot, budget, Some(webaudio))
     }
 }
 
