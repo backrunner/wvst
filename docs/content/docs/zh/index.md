@@ -1,20 +1,94 @@
 ---
 title: 概览
-description: WVST 通过隔离 bridge，把本地 VST3 效果器变成 WebAudio 处理节点。
+description: WVST 通过 Rust bridge，把 WebAudio 应用连接到隔离的本地 VST3 processing。
 order: 1
 ---
 
 # 概览
 
-WVST 是一个 Rust-first 的实验性桥接项目，用来连接 WebAudio 和本地 VST3 插件。Web 应用通过 localhost Bridge Server 扫描插件、创建隔离实例，并用 AudioWorklet + SharedArrayBuffer 路由音频。
+WVST 是一个 Rust-first 的 WebAudio/VST3 桥接项目。Web 应用连接本机 loopback Bridge Server；Bridge Server 负责插件发现、worker supervision 和音频路由；浏览器侧用 AudioWorklet 与有界共享缓冲保持实时音频不阻塞。
 
-浏览器实时音频回调不会阻塞等待本地原生处理。音频会经过有界缓冲、DedicatedWorker transport，以及持有第三方 VST 实例的 host worker 进程。
+当前仓库已经不只是骨架，主要能力包括：
 
-## 当前形态
+- `@wvst/web`：Bridge 连接、插件 scan/list/factory metadata、实例生命周期、参数编辑、unit/program/state helper、MIDI adapter、设备 session、loopback AudioWorklet helper、shared-memory transport helper、协议编解码和 metrics。
+- `wvst-bridge-server`：localhost WebSocket 控制面、二进制音频 routing、事件流、Bridge metrics、origin/token 授权、stream 生命周期、shared-memory stream/pump 控制、worker supervision、quarantine 和 diagnostics。
+- `wvst-host-worker`：VST3 runtime probe、实例生命周期、控制 IPC、shared-memory attach/process、MIDI/parameter event 转发和 runtime capability 上报。
+- `wvst-vst3-host`：VST3 加载、component/controller lifecycle、参数 metadata、unit/program list、state、bus selection、process output、component handler event、connection point、MIDI mapping 和 process context 的 safe facade。
+- `wvst-testkit` 与打包工具：runtime matrix、latency/stability budget、WebAudio loopback metrics、Bridge metrics ingestion 和 package evidence 检查。
 
-- Web SDK：`WVSTClient`、插件扫描/列表 API、实例生命周期 API、loopback AudioWorklet helper 和 bridge worker audio pump。
-- Bridge Server：localhost WebSocket 控制面与二进制音频路由、origin/token 校验、metrics、stream 生命周期和 worker supervision。
-- Host Worker：隔离进程，用于插件探测、实例生命周期和首版 VST3 processing path。
+## 当前范围
+
+代码里已经有 effect、instrument 和 MIDI 相关 primitive，但文档 live demo 第一版聚焦浏览器侧 effect rack：
+
+1. 在浏览器中加载本地音频文件。
+2. 连接 `ws://127.0.0.1:35876` 上的 `wvst-bridge-server`。
+3. 扫描或列出本机 VST3 metadata。
+4. 每个 rack slot 创建一个 WVST instance。
+5. 启动每个 instance，并连接对应的 AudioWorklet node。
+6. 通过 DedicatedWorker 和 Bridge binary audio frame 路由 AudioWorklet 输入/输出。
+7. 展示 pending quanta、underflow、overflow、dropped event 和 transport failure 等指标。
+
+demo 不做 mock 音频 fallback。缺少 `SharedArrayBuffer`、cross-origin isolation、Bridge、VST3 插件或 worker/audio stream 失败时，界面会显示明确错误。
+
+## 运行时模型
+
+```mermaid
+flowchart LR
+  App["Web app / UI thread"] --> SDK["@wvst/web"]
+  SDK --> Worklet["AudioWorkletProcessor"]
+  SDK --> Worker["DedicatedWorker transport"]
+  Worklet <-->|SharedArrayBuffer ring buffers| Worker
+  Worker <-->|JSON-RPC + binary audio frames| Bridge["wvst-bridge-server"]
+  Bridge <-->|worker IPC + shared memory control| Host["wvst-host-worker"]
+  Host --> Plugin["VST3 component/controller"]
+```
+
+Bridge Server 不直接加载第三方 VST。它创建或管理 host worker 进程，跟踪 stream state，执行恢复策略，并输出结构化控制响应。
+
+AudioWorklet 不等待 native plugin processing。它只读写有界音频缓冲、更新 counters，并在数据未就绪时产生 silence/drop 状态。
+
+## Web SDK 主要入口
+
+多数应用会从这些导出开始：
+
+```ts
+import {
+  WVSTClient,
+  WVSTBridgeWorkerClient,
+  configureLoopbackAudioWorkletNode,
+  createLoopbackSharedBuffers,
+  readLoopbackMetrics
+} from "@wvst/web";
+```
+
+SDK 还导出：
+
+- `createWVSTAudioDeviceSession()`：把麦克风/设备输入接入 WVST，并路由到输出设备。
+- `createWVSTSharedMemoryPumpSession()`：Bridge 管理的 file-backed shared memory processing。
+- `createWVSTVirtualKeyboard()` 与 `createWVSTWebMidiAdapter()`：note、CC、pitch bend、aftertouch 和 raw MIDI 输入。
+- `createWVSTInstanceStateSnapshot()` 与 `instanceStateSnapshotToSetStateOptions()`：VST3 opaque state 的持久化和恢复。
+- 协议 helper：`encodeAudioFrame()`、`decodeAudioFrame()`、`encodeVst3OutputEvent()`、`decodeVst3OutputEventPayloadText()`。
+
+## 控制面概览
+
+Bridge 使用 WebSocket 上的 JSON-RPC 风格消息。`WVSTClient` 会把 TypeScript 方法映射到 Bridge methods：
+
+- Bridge：`bridge.hello`、`bridge.metrics`、`bridge.events`。
+- 插件：`plugin.scan`、`plugin.list`、`plugin.factoryInfo`。
+- 实例：`instance.create`、`instance.list`、`instance.status`、`instance.start`、`instance.stop`、`instance.restart`、`instance.destroy`。
+- 运行时 metadata：`instance.parameters`、`instance.parameter.get`、`instance.parameter.info`、`instance.units`、`instance.metadata.refresh`、`instance.runtime.snapshot`。
+- 编辑和 state：`instance.parameter.beginEdit`、`instance.parameter.performEdit`、`instance.parameter.endEdit`、`instance.parameter.edit`、`instance.getState`、`instance.setState`、`instance.state.setAndRefresh`。
+- VST3 units/programs：`instance.selectUnit`、`instance.unitByBus`、`instance.setUnitProgramData`、`instance.programData.get`、`instance.programData.set`、`instance.unitData.get`、`instance.unitData.set`。
+- Streams：`stream.open`、`stream.close`、`stream.sharedMemory.create`、`stream.sharedMemory.process`、`stream.sharedMemory.pump.start`、`stream.sharedMemory.pump.enqueueEvents`、`stream.sharedMemory.pump.status`。
+
+## 安全默认值
+
+- Bridge 默认监听 loopback：`127.0.0.1:35876`。
+- 开发环境默认允许 loopback browser origins。
+- `WVST_TOKEN` 可以要求 `bridge.hello` 提供 token。
+- `WVST_ALLOWED_ORIGINS` 可以限制允许的浏览器 origin。
+- worker auto-restart 与 quarantine 默认开启。
+- 低延迟浏览器模式要求 `SharedArrayBuffer` 和 `crossOriginIsolated`。
 
 ## 继续阅读
 
