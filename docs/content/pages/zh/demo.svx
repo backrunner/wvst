@@ -1,0 +1,14 @@
+---
+title: Live Demo
+description: 通过真实的浏览器 WVST rack 和本地 VST3 bridge 处理本地音频文件。
+---
+
+# Live Demo
+
+<BridgeSetup locale="zh" />
+
+<WVSTRackDemo locale="zh" />
+
+这个 rack 是真实的集成入口，不会模拟插件处理。页面会自动尝试连接本地 Bridge；修改地址或 Token 后，可以使用连接按钮重试。
+
+浏览 [Demo Guide](/docs/zh/demo-guide) 了解浏览器前置条件和生命周期细节。

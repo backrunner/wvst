@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
 description: Diagnose browser isolation, Bridge authorization, plugin discovery, worker lifecycle, shared-memory transport, and realtime metrics.
-order: 5
+order: 6
 ---
 
 # Troubleshooting

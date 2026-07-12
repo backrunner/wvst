@@ -4,4 +4,6 @@
 /packages/*/node_modules/
 /packages/*/dist/
 /packages/*/.rollup.cache/
+/docs/static/og/
+/.playwright-cli/
 /.DS_Store

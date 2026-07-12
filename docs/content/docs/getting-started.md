@@ -41,8 +41,18 @@ Use your bundler's worker and URL import syntax. The docs site uses Vite, so the
 
 ## Start the Bridge
 
+### Download a release
+
+Download the Bridge package from the [WVST GitHub Releases](https://github.com/backrunner/wvst/releases) page. The package contains both `wvst-bridge-server` and `wvst-host-worker`, plus the platform service installer. Install it, start the service, and keep it running while the browser demo is open.
+
+The repository does not publish a release binary yet. Until the first release is available, use the source build below.
+
+### Build from source
+
 ```sh
-cargo run -p wvst-bridge-server
+cargo build --release -p wvst-bridge-server -p wvst-host-worker
+WVST_HOST_WORKER=target/release/wvst-host-worker \
+  target/release/wvst-bridge-server serve
 ```
 
 Default endpoint:
@@ -54,7 +64,9 @@ ws://127.0.0.1:35876
 Useful Bridge commands:
 
 ```sh
-cargo run -p wvst-bridge-server -- serve
+cargo build -p wvst-bridge-server -p wvst-host-worker
+WVST_HOST_WORKER=target/debug/wvst-host-worker \
+  cargo run -p wvst-bridge-server -- serve
 cargo run -p wvst-bridge-server -- diagnose
 ```
 

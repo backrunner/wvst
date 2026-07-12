@@ -1,22 +1,15 @@
-import { error } from '@sveltejs/kit';
-import pages from 'virtual:svedocs/pages';
-import search from 'virtual:svedocs/search';
-import tree from 'virtual:svedocs/tree';
+import { loadSvedocsRoute } from '$lib/loadPage';
 import config from 'virtual:svedocs/config';
+import pages from 'virtual:svedocs/page-index';
 import { svedocsPagePrerender } from 'svedocs/cloudflare';
+import { createSvedocsRouteEntries } from 'svedocs/routes';
 import type { PageLoad } from './$types';
 
 export const prerender = svedocsPagePrerender();
 
 export function entries() {
-  return pages
-    .filter((page) => page.routePath !== '/')
-    .map((page) => ({ path: page.routePath.replace(/^\//, '') }));
+  return createSvedocsRouteEntries(pages, config)
+    .map((path) => ({ path: path.replace(/^\//, '') }));
 }
 
-export const load: PageLoad = ({ params }) => {
-  const routePath = `/${params.path ?? ''}`.replace(/\/$/, '') || '/';
-  const page = pages.find((item) => item.routePath === routePath);
-  if (!page) error(404, `No page found for ${routePath}`);
-  return { page, pages, search, tree, config };
-};
+export const load: PageLoad = ({ params }) => loadSvedocsRoute(params.path);

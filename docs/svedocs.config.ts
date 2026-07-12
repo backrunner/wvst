@@ -4,7 +4,7 @@ export default defineConfig({
   site: {
     name: 'WVST',
     title: 'WVST Docs',
-    description: 'A Rust and WebAudio bridge for running local VST effects from the browser.'
+    description: 'Run isolated local VST3 plugins inside real WebAudio graphs through a Rust bridge.'
   },
   content: {
     root: 'content',
@@ -14,13 +14,13 @@ export default defineConfig({
   theme: {
     defaultMode: 'system',
     palette: {
-      accent: '#9b5a2e',
+      accent: '#9a4f3d',
       neutral: 'zinc'
     },
     fonts: {
       sans: '"Avenir Next", "IBM Plex Sans", "Helvetica Neue", sans-serif',
-      mono: '"JetBrains Mono", "SFMono-Regular", monospace',
-      display: '"Iowan Old Style", "Georgia", serif'
+      mono: '"SFMono-Regular", "IBM Plex Mono", "Courier New", monospace',
+      display: '"Iowan Old Style", "Baskerville", "Georgia", serif'
     },
     radius: '3px',
     codeTheme: {
@@ -34,18 +34,20 @@ export default defineConfig({
     },
     nav: [
       { label: 'Docs', href: '/docs' },
-      { label: 'Live Demo', href: '/docs/live-demo' },
-      { label: '中文', href: '/docs/zh' }
+      { label: 'Demo', href: '/demo' },
+      { label: 'GitHub', href: 'https://github.com/backrunner/wvst', external: true }
     ],
     social: [],
     footer: {
-      text: 'WVST is an experimental local VST bridge for the web.',
-      links: []
+      text: 'WVST is an open source Rust and WebAudio bridge for local VST3 processing.',
+      links: [
+        { label: 'GitHub', href: 'https://github.com/backrunner/wvst', external: true }
+      ]
     },
     home: {
-      kicker: 'Local VST effects in WebAudio',
+      kicker: 'WebAudio meets native VST3',
       primaryAction: { label: 'Read docs', href: '/docs' },
-      secondaryAction: { label: 'Open demo', href: '/docs/live-demo' },
+      secondaryAction: { label: 'Open demo', href: '/demo' },
       visual: { type: 'pixel', alt: '' }
     }
   },
@@ -58,8 +60,8 @@ export default defineConfig({
   i18n: {
     defaultLocale: 'en',
     locales: [
-      { code: 'en', label: 'English' },
-      { code: 'zh', label: '中文' }
+      { code: 'en', label: 'English', hreflang: 'en', dir: 'ltr' },
+      { code: 'zh', label: '中文', hreflang: 'zh-CN', dir: 'ltr' }
     ]
   },
   seo: {

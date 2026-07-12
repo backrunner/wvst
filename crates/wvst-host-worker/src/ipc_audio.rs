@@ -388,7 +388,10 @@ impl AudioProcessError {
         Self {
             status_code: AUDIO_ERROR_INVALID_REQUEST,
             message: message.into(),
-            data: None,
+            data: Some(json!({
+                "schemaVersion": 1,
+                "kind": "audio-request-invalid",
+            })),
         }
     }
 
@@ -396,7 +399,10 @@ impl AudioProcessError {
         Self {
             status_code: AUDIO_ERROR_NOT_FOUND,
             message: message.into(),
-            data: None,
+            data: Some(json!({
+                "schemaVersion": 1,
+                "kind": "audio-stream-not-found",
+            })),
         }
     }
 
@@ -409,14 +415,11 @@ impl AudioProcessError {
     }
 
     fn body(&self) -> String {
-        match self.data.as_ref() {
-            Some(data) => json!({
-                "message": self.message,
-                "data": data,
-            })
-            .to_string(),
-            None => self.message.clone(),
-        }
+        json!({
+            "message": self.message,
+            "data": self.data,
+        })
+        .to_string()
     }
 }
 

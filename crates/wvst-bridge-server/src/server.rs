@@ -417,11 +417,18 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteRes
 
     let processed = match state
         .workers
-        .process_audio_frame(instance.instance_id, payload)
+        .process_audio_frame(instance.instance_id, payload, instance.output_channels)
         .await
     {
         Ok(processed) => processed,
         Err(error) => {
+            if error.is_audio_request_rejection() {
+                return diagnostic_silence_frame(
+                    header,
+                    &instance,
+                    AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
+                );
+            }
             state.metrics.increment_worker_failures();
             let _ = state.instances.mark_worker_failed(instance.instance_id);
             state.events.emit(BridgeEventKind::WorkerFailed {
@@ -455,7 +462,14 @@ async fn route_audio_frame(payload: &[u8], state: &BridgeState) -> AudioRouteRes
             AudioFrameFlags::SILENCE | AudioFrameFlags::PROCESS_ERROR,
         );
     };
-    if processed.len() != processed_len || processed_header.stream_id != header.stream_id {
+    if processed.len() != processed_len
+        || processed_header.stream_id != header.stream_id
+        || processed_header.sequence != header.sequence
+        || processed_header.sent_frame_time != header.sent_frame_time
+        || processed_header.sample_rate != header.sample_rate
+        || processed_header.frames != header.frames
+        || processed_header.channels.get() != instance.output_channels
+    {
         return diagnostic_silence_frame(
             header,
             &instance,

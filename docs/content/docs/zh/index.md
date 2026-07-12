@@ -94,5 +94,6 @@ Bridge 使用 WebSocket 上的 JSON-RPC 风格消息。`WVSTClient` 会把 TypeS
 
 - [快速开始](/docs/zh/getting-started)
 - [架构](/docs/zh/architecture)
-- [Live Demo](/docs/zh/live-demo)
+- [Demo Guide](/docs/zh/demo-guide)
+- [API Reference](/docs/zh/api-reference)
 - [故障排查](/docs/zh/troubleshooting)

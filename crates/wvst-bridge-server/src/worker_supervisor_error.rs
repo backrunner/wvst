@@ -4,6 +4,17 @@ use super::WorkerSupervisorError;
 use crate::error_classification::{ErrorClassification, attach_error_classification};
 
 impl WorkerSupervisorError {
+    pub(crate) fn is_audio_request_rejection(&self) -> bool {
+        matches!(
+            self,
+            Self::WorkerRejected { data: Some(data), .. }
+                if matches!(
+                    data.get("kind").and_then(Value::as_str),
+                    Some("audio-request-invalid" | "audio-stream-not-found")
+                )
+        )
+    }
+
     pub fn rpc_code(&self) -> i64 {
         match self {
             Self::WorkerRejected { code, .. } => *code,

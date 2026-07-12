@@ -376,7 +376,7 @@ fn select_audio_bus_index(
     }
 
     let requested_channels = i32::from(requested_channels);
-    Ok(buses
+    buses
         .iter()
         .find(|bus| bus.bus_type == Vst3BusType::Main && bus.channel_count == requested_channels)
         .or_else(|| {
@@ -385,7 +385,11 @@ fn select_audio_bus_index(
             })
         })
         .or_else(|| buses.iter().find(|bus| bus.channel_count > 0))
-        .map_or(0, |bus| bus.index))
+        .map(|bus| bus.index)
+        .ok_or(HostError::InvalidAudioBusIndex {
+            direction: direction.as_str(),
+            index: requested_index.unwrap_or(0),
+        })
 }
 
 #[cfg(test)]

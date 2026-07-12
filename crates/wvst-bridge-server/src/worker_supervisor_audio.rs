@@ -30,6 +30,7 @@ impl WorkerSupervisor {
         &self,
         instance_id: u64,
         frame: &[u8],
+        expected_output_channels: u16,
     ) -> Result<Vec<u8>, WorkerSupervisorError> {
         let Some(process) = self.processes.lock().await.get(&instance_id).cloned() else {
             return Err(WorkerSupervisorError::WorkerMissing { instance_id });
@@ -40,18 +41,23 @@ impl WorkerSupervisor {
             return Err(WorkerSupervisorError::AudioIpcUnavailable { instance_id });
         }
 
-        let sequence = AudioFrameHeader::decode(frame)
-            .map_err(|error| process_guard.protocol_error(error.to_string()))?
-            .sequence;
+        let request_header = AudioFrameHeader::decode(frame)
+            .map_err(|error| process_guard.protocol_error(error.to_string()))?;
         let response = process_guard
             .audio
             .as_mut()
             .expect("checked audio connection")
-            .process_frame(sequence, frame, self.timeout)
+            .process_frame(
+                request_header,
+                frame,
+                expected_output_channels,
+                self.timeout,
+            )
             .await;
 
         match response {
             Ok(frame) => Ok(frame),
+            Err(error) if error.is_audio_request_rejection() => Err(error),
             Err(error) => {
                 let audit = process_guard.shutdown().await;
                 self.record_shutdown(audit);
@@ -66,10 +72,12 @@ impl WorkerSupervisor {
 impl WorkerAudioConnection {
     async fn process_frame(
         &mut self,
-        sequence: u64,
+        request_header: AudioFrameHeader,
         frame: &[u8],
+        expected_output_channels: u16,
         timeout_duration: std::time::Duration,
     ) -> Result<Vec<u8>, WorkerSupervisorError> {
+        let sequence = request_header.sequence;
         encode_audio_process_request(&mut self.request_buffer, sequence, frame)?;
 
         timeout(
@@ -104,7 +112,14 @@ impl WorkerAudioConnection {
         }
 
         match response.header.kind {
-            WorkerAudioMessageKind::ProcessResponse => Ok(response.body),
+            WorkerAudioMessageKind::ProcessResponse => {
+                validate_audio_response_frame(
+                    &response.body,
+                    request_header,
+                    expected_output_channels,
+                )?;
+                Ok(response.body)
+            }
             WorkerAudioMessageKind::ProcessError => {
                 let error = decode_process_error_body(&response.body)?;
                 Err(WorkerSupervisorError::WorkerRejected {
@@ -167,6 +182,39 @@ fn validate_audio_response_body_len(body_len: u32) -> Result<(), WorkerSuperviso
         });
     }
 
+    Ok(())
+}
+
+fn validate_audio_response_frame(
+    frame: &[u8],
+    request: AudioFrameHeader,
+    expected_output_channels: u16,
+) -> Result<(), WorkerSupervisorError> {
+    let response =
+        AudioFrameHeader::decode(frame).map_err(|error| WorkerSupervisorError::Protocol {
+            message: format!("invalid audio response frame: {error}"),
+            stderr: String::new(),
+        })?;
+    let expected_len = wvst_protocol::AUDIO_FRAME_HEADER_LEN
+        .checked_add(response.payload_len as usize)
+        .ok_or_else(|| WorkerSupervisorError::Protocol {
+            message: "audio response frame length overflow".to_string(),
+            stderr: String::new(),
+        })?;
+    if frame.len() != expected_len
+        || response.stream_id != request.stream_id
+        || response.sequence != request.sequence
+        || response.sent_frame_time != request.sent_frame_time
+        || response.sample_rate != request.sample_rate
+        || response.frames != request.frames
+        || response.channels.get() != expected_output_channels
+    {
+        return Err(WorkerSupervisorError::Protocol {
+            message: "audio response frame does not match request or instance configuration"
+                .to_string(),
+            stderr: String::new(),
+        });
+    }
     Ok(())
 }
 
@@ -254,6 +302,21 @@ mod tests {
             error.data.expect("worker data")["kind"],
             "vst3-runtime-process"
         );
+    }
+
+    #[test]
+    fn classifies_invalid_audio_requests_as_nonfatal_rejections() {
+        let error = WorkerSupervisorError::WorkerRejected {
+            code: 4220,
+            message: "sample rate mismatch".to_string(),
+            data: Some(serde_json::json!({
+                "schemaVersion": 1,
+                "kind": "audio-request-invalid"
+            })),
+            stderr: String::new(),
+        };
+
+        assert!(error.is_audio_request_rejection());
     }
 
     #[test]

@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "svedocs dev",
+    "prebuild": "node -e \"require('node:fs').rmSync('static/og', { recursive: true, force: true })\"",
     "build": "svedocs build",
     "build:edge": "svedocs build --mode edge",
     "build:static": "svedocs build --mode static",
     "build:ssg": "svedocs ssg",
     "build:spa": "svedocs build --mode spa",
     "preview": "svedocs preview",
-    "check": "svedocs check"
+    "check": "svedocs check && svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
     "@sveltejs/adapter-cloudflare": "^7.2.8",
@@ -20,14 +21,16 @@
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tailwindcss/vite": "^4.3.0",
     "@wvst/web": "file:../packages/wvst-web",
-    "svelte": "^5.55.7",
+    "phosphor-svelte": "^3.1.0",
     "svedocs": "file:../../svedocs/packages/svedocs",
+    "svelte": "^5.55.7",
     "tailwindcss": "^4.3.0",
     "vite": "^8.0.13"
   },
   "devDependencies": {
-    "svedocs-cli": "file:../../svedocs/packages/cli",
     "@types/node": "^25.8.0",
+    "svedocs-cli": "file:../../svedocs/packages/cli",
+    "svelte-check": "^4.7.2",
     "typescript": "^6.0.3"
   },
   "packageManager": "npm@11.6.4"

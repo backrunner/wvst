@@ -1,7 +1,7 @@
 ---
 title: 故障排查
 description: 诊断浏览器隔离、Bridge 授权、插件发现、worker lifecycle、shared-memory transport 和实时 metrics。
-order: 5
+order: 6
 ---
 
 # 故障排查

@@ -531,6 +531,91 @@ async fn drops_overlapping_audio_frame_for_same_stream() {
     let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn keeps_worker_running_after_invalid_audio_request() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let worker_path = audio_echo_worker_script();
+    let (plugins, root, plugin_id) = scanned_plugin_registry();
+    let state = BridgeState {
+        config: Arc::new(config),
+        host_worker: Arc::new(HostWorkerClient::new_for_test(
+            PathBuf::from("missing-wvst-host-worker"),
+            Duration::from_secs(5),
+        )),
+        instances: Arc::new(InstanceRegistry::new()),
+        component_handler_events: Arc::new(
+            crate::component_handler_events::ComponentHandlerEventPublisher::new(),
+        ),
+        events: BridgeEventBus::new(),
+        metrics: Arc::new(BridgeMetrics::new()),
+        plugins: Arc::new(plugins),
+        stream_tracker: Arc::new(AudioStreamTracker::new()),
+        audio_in_flight: Arc::new(AudioInFlightLimiter::new()),
+        shared_memory: Arc::new(SharedMemoryStreamRegistry::new()),
+        shared_memory_pumps: Arc::new(SharedMemoryPumpRegistry::default()),
+        workers: Arc::new(WorkerSupervisor::new_for_test_with_audio(
+            worker_path.clone(),
+            Duration::from_secs(5),
+        )),
+    };
+    let (instance_id, stream_id) = create_started_instance(&state, &plugin_id).await;
+
+    let rejected = process_binary_payload(audio_frame_at_rate(stream_id, 44_100), &state).await;
+    let rejected_header = AudioFrameHeader::decode(&rejected).expect("diagnostic header");
+    assert!(rejected_header.flags.contains(AudioFrameFlags::SILENCE));
+    assert!(
+        rejected_header
+            .flags
+            .contains(AudioFrameFlags::PROCESS_ERROR)
+    );
+    assert_eq!(
+        state.instances.get(instance_id).expect("instance").state,
+        crate::instance_registry::InstanceState::Processing
+    );
+    assert!(
+        state
+            .events
+            .recent_since(None)
+            .into_iter()
+            .all(|event| { !matches!(event.kind, BridgeEventKind::WorkerFailed { .. }) })
+    );
+
+    let processed = process_binary_payload(audio_frame(stream_id), &state).await;
+    assert_eq!(
+        read_f32_payload(&processed[AUDIO_FRAME_HEADER_LEN..]).expect("payload"),
+        vec![0.25, 0.5, -0.25, -0.5]
+    );
+
+    let mismatched = process_binary_payload(audio_frame_with_sequence(stream_id, 99), &state).await;
+    let mismatched_header = AudioFrameHeader::decode(&mismatched).expect("diagnostic header");
+    assert_eq!(mismatched_header.sequence, 99);
+    assert!(mismatched_header.flags.contains(AudioFrameFlags::SILENCE));
+    assert!(
+        mismatched_header
+            .flags
+            .contains(AudioFrameFlags::PROCESS_ERROR)
+    );
+    assert_eq!(
+        state.instances.get(instance_id).expect("instance").state,
+        crate::instance_registry::InstanceState::Failed
+    );
+    assert!(
+        state
+            .events
+            .recent_since(None)
+            .into_iter()
+            .any(|event| { matches!(event.kind, BridgeEventKind::WorkerFailed { .. }) })
+    );
+
+    let _ = state
+        .instances
+        .close_stream(StreamLifecycleParams { instance_id });
+    let _ = state.workers.destroy_instance(instance_id).await;
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(worker_path.parent().expect("worker parent"));
+}
+
 async fn create_started_instance(state: &BridgeState, plugin_id: &str) -> (u64, u64) {
     let create_request = serde_json::json!({
         "id": 1,
@@ -622,6 +707,31 @@ fn read_f32_payload(payload: &[u8]) -> Option<Vec<f32>> {
 
 fn audio_frame(stream_id: u64) -> Vec<u8> {
     audio_frame_with_sequence(stream_id, 10)
+}
+
+fn audio_frame_at_rate(stream_id: u64, sample_rate: u32) -> Vec<u8> {
+    let samples = [0.25_f32, 0.5, -0.25, -0.5];
+    let header = AudioFrameHeader::new_f32(
+        StreamId::new(stream_id),
+        10,
+        512,
+        SampleRate::new(sample_rate).expect("sample rate"),
+        FrameCount::new(2).expect("frames"),
+        ChannelCount::new(2).expect("channels"),
+        AudioFrameFlags::empty(),
+    )
+    .expect("header");
+    let mut frame = vec![0; AUDIO_FRAME_HEADER_LEN + header.payload_len as usize];
+    header
+        .encode(&mut frame[..AUDIO_FRAME_HEADER_LEN])
+        .expect("encode header");
+    for (destination, sample) in frame[AUDIO_FRAME_HEADER_LEN..]
+        .chunks_exact_mut(4)
+        .zip(samples)
+    {
+        destination.copy_from_slice(&sample.to_le_bytes());
+    }
+    frame
 }
 
 fn hello_request(id: u64) -> String {
@@ -731,6 +841,15 @@ def audio_loop(address):
         body = read_exact(sock, body_len)
         if body is None:
             return
+        sample_rate = struct.unpack_from("<I", body, 32)[0]
+        if sample_rate != 48000:
+            error = json.dumps({"message": "sample rate mismatch", "data": {"schemaVersion": 1, "kind": "audio-request-invalid"}}, separators=(",", ":")).encode()
+            sock.sendall(struct.pack("<IHHHHIQ", magic, version, header_len, 3, 4220, len(error), sequence) + error)
+            continue
+        frame_sequence = struct.unpack_from("<Q", body, 16)[0]
+        if frame_sequence == 99:
+            body = bytearray(body)
+            struct.pack_into("<Q", body, 16, 100)
         sock.sendall(struct.pack("<IHHHHIQ", magic, version, header_len, 2, 0, len(body), sequence) + body)
 
 def ok(request, result):

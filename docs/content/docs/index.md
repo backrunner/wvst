@@ -94,5 +94,6 @@ The Bridge uses JSON-RPC style messages over WebSocket. `WVSTClient` maps TypeSc
 
 - [Getting Started](/docs/getting-started)
 - [Architecture](/docs/architecture)
-- [Live Demo](/docs/live-demo)
+- [Demo Guide](/docs/demo-guide)
+- [API Reference](/docs/api-reference)
 - [Troubleshooting](/docs/troubleshooting)

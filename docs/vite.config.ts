@@ -15,7 +15,13 @@ export default defineConfig({
     svedocs({
       config: svedocsConfig,
       components: {
-        WVSTRackDemo: '$lib/components/WVSTRackDemo.svelte'
+        WVSTRackDemo: '$lib/components/WVSTRackDemo.svelte',
+        BridgeSetup: '$lib/components/BridgeSetup.svelte'
+      },
+      theme: {
+        components: {
+          Home: '$lib/theme/WVSTHome.svelte'
+        }
       }
     }),
     tailwindcss(),

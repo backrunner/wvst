@@ -8,9 +8,9 @@ export const prerender = false;
 
 const rateLimiter = createMemoryRateLimiter({ windowMs: 60_000, max: 30 });
 
-export const POST: RequestHandler = ({ request }) => {
+export const POST: RequestHandler = ({ platform, request }) => {
   return createConfiguredAskResponse(config, records, request, {
-    env: getRuntimeEnv(),
+    env: getRuntimeEnv(platform?.env),
     rateLimiter
   });
 };

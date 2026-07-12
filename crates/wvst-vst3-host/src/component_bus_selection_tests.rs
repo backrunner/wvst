@@ -42,6 +42,20 @@ fn rejects_missing_explicit_bus_index() {
     );
 }
 
+#[test]
+fn rejects_missing_implicit_audio_bus() {
+    let error = select_audio_bus_index(&[], 2, None, Vst3BusDirection::Output)
+        .expect_err("missing output bus");
+
+    assert_eq!(
+        error,
+        HostError::InvalidAudioBusIndex {
+            direction: "output",
+            index: 0,
+        }
+    );
+}
+
 fn test_bus(
     index: i32,
     channel_count: i32,

@@ -65,6 +65,9 @@ fn rejects_audio_frame_before_processing_starts() {
 
     assert_eq!(error.status_code, AUDIO_ERROR_INVALID_REQUEST);
     assert!(error.message.contains("not processing"));
+    let body: serde_json::Value = serde_json::from_str(&error.body()).expect("json body");
+    assert_eq!(body["data"]["schemaVersion"], 1);
+    assert_eq!(body["data"]["kind"], "audio-request-invalid");
 }
 
 #[test]
