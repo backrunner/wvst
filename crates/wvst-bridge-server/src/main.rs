@@ -38,7 +38,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
-    let config = BridgeConfig::from_env()?;
+    let config = BridgeConfig::from_env_allow_missing_token()?;
     let host_worker = HostWorkerClient::from_env();
     let diagnostics = diagnostics::collect_bridge_diagnostics(&config, &host_worker);
 

@@ -34,12 +34,23 @@ impl PluginRegistry {
         self.scan_paths(default_vst3_paths())
     }
 
-    pub fn scan_paths(&self, paths: Vec<PathBuf>) -> ScanReport {
-        let report = scan_paths(&paths);
+    pub fn default_paths() -> Vec<PathBuf> {
+        default_vst3_paths()
+    }
 
+    pub fn scan_paths_report(paths: Vec<PathBuf>) -> ScanReport {
+        scan_paths(&paths)
+    }
+
+    pub fn replace_report(&self, report: ScanReport) {
         if let Ok(mut current) = self.report.lock() {
-            *current = report.clone();
+            *current = report;
         }
+    }
+
+    pub fn scan_paths(&self, paths: Vec<PathBuf>) -> ScanReport {
+        let report = Self::scan_paths_report(paths);
+        self.replace_report(report.clone());
 
         report
     }

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_void};
 use std::ptr;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::vst3_abi::{
@@ -10,7 +11,7 @@ use crate::vst3_abi::{
 
 #[derive(Debug)]
 pub struct Vst3HostAttributeList {
-    object: Box<AttributeListObject>,
+    object: NonNull<AttributeListObject>,
 }
 
 #[derive(Debug, Clone)]
@@ -31,28 +32,34 @@ struct AttributeListObject {
 
 impl Vst3HostAttributeList {
     pub fn new() -> Self {
+        let object = Box::new(AttributeListObject {
+            iface: IAttributeList {
+                vtable: &ATTRIBUTE_LIST_VTABLE,
+            },
+            ref_count: AtomicU32::new(1),
+            values: BTreeMap::new(),
+        });
         Self {
-            object: Box::new(AttributeListObject {
-                iface: IAttributeList {
-                    vtable: &ATTRIBUTE_LIST_VTABLE,
-                },
-                ref_count: AtomicU32::new(1),
-                values: BTreeMap::new(),
-            }),
+            object: unsafe {
+                // SAFETY: `Box::into_raw` never returns null for a live Box.
+                NonNull::new_unchecked(Box::into_raw(object))
+            },
         }
     }
 
     pub fn as_mut_ptr(&mut self) -> *mut IAttributeList {
-        &mut self.object.iface
+        unsafe { &mut self.object.as_mut().iface }
     }
 
     pub fn into_raw(self) -> *mut IAttributeList {
-        Box::into_raw(self.object).cast::<IAttributeList>()
+        let pointer = self.object.as_ptr().cast::<IAttributeList>();
+        std::mem::forget(self);
+        pointer
     }
 
     pub fn set_int(&mut self, id: &str, value: i64) -> Result<(), std::ffi::NulError> {
         validate_attribute_id(id)?;
-        self.object
+        self.object_mut()
             .values
             .insert(id.to_string(), AttributeValue::Int(value));
         Ok(())
@@ -60,7 +67,7 @@ impl Vst3HostAttributeList {
 
     pub fn set_float(&mut self, id: &str, value: f64) -> Result<(), std::ffi::NulError> {
         validate_attribute_id(id)?;
-        self.object
+        self.object_mut()
             .values
             .insert(id.to_string(), AttributeValue::Float(value));
         Ok(())
@@ -68,7 +75,7 @@ impl Vst3HostAttributeList {
 
     pub fn set_string(&mut self, id: &str, value: &str) -> Result<(), std::ffi::NulError> {
         validate_attribute_id(id)?;
-        self.object.values.insert(
+        self.object_mut().values.insert(
             id.to_string(),
             AttributeValue::String(value.encode_utf16().collect()),
         );
@@ -77,16 +84,30 @@ impl Vst3HostAttributeList {
 
     pub fn set_binary(&mut self, id: &str, value: &[u8]) -> Result<(), std::ffi::NulError> {
         validate_attribute_id(id)?;
-        self.object
+        self.object_mut()
             .values
             .insert(id.to_string(), AttributeValue::Binary(value.to_vec()));
         Ok(())
+    }
+
+    fn object_mut(&mut self) -> &mut AttributeListObject {
+        // SAFETY: `self.object` is the live owner reference held by this
+        // wrapper. The wrapper is the only Rust mutable owner of this view.
+        unsafe { self.object.as_mut() }
     }
 }
 
 impl Default for Vst3HostAttributeList {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Vst3HostAttributeList {
+    fn drop(&mut self) {
+        let pointer = self.as_mut_ptr();
+        // SAFETY: the wrapper owns one FUnknown reference and releases it once.
+        unsafe { attribute_release(pointer) };
     }
 }
 

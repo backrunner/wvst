@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
+use std::fs::{self, DirBuilder};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -20,6 +23,7 @@ static REGISTRY_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct SharedMemoryStreamRegistry {
     root_dir: PathBuf,
     records: Mutex<BTreeMap<u64, SharedMemoryStreamRecord>>,
+    operation_locks: Mutex<BTreeMap<u64, Arc<AsyncMutex<()>>>>,
 }
 
 #[derive(Debug)]
@@ -98,6 +102,9 @@ pub enum SharedMemoryStreamError {
         instance_id: u64,
     },
     RegistryUnavailable,
+    InsecureRootDirectory {
+        path: PathBuf,
+    },
     Io {
         path: PathBuf,
         source: std::io::Error,
@@ -109,16 +116,30 @@ pub enum SharedMemoryStreamError {
 impl SharedMemoryStreamRegistry {
     pub fn new() -> Self {
         let counter = REGISTRY_COUNTER.fetch_add(1, Ordering::Relaxed);
-        Self::new_in(
-            std::env::temp_dir().join(format!("wvst-shm-{}-{counter}", std::process::id())),
-        )
+        let suffix = secure_suffix().unwrap_or_else(|| format!("{}-{counter}", std::process::id()));
+        Self::new_in(std::env::temp_dir().join(format!("wvst-shm-{}-{suffix}", std::process::id())))
     }
 
     pub fn new_in(root_dir: impl Into<PathBuf>) -> Self {
         Self {
             root_dir: root_dir.into(),
             records: Mutex::new(BTreeMap::new()),
+            operation_locks: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    pub async fn lock_instance(
+        &self,
+        instance_id: u64,
+    ) -> Result<OwnedMutexGuard<()>, SharedMemoryStreamError> {
+        let lock = self
+            .operation_locks
+            .lock()
+            .map_err(|_| SharedMemoryStreamError::RegistryUnavailable)?
+            .entry(instance_id)
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone();
+        Ok(lock.lock_owned().await)
     }
 
     pub fn create_for_instance(
@@ -136,11 +157,8 @@ impl SharedMemoryStreamRegistry {
             return Err(SharedMemoryStreamError::InvalidCapacityBlocks);
         }
 
+        ensure_secure_root(&self.root_dir)?;
         self.destroy_by_stream_id(record.stream_id)?;
-        std::fs::create_dir_all(&self.root_dir).map_err(|source| SharedMemoryStreamError::Io {
-            path: self.root_dir.clone(),
-            source,
-        })?;
 
         let layout = SharedAudioTransportConfig::new(
             record.sample_rate,
@@ -151,7 +169,7 @@ impl SharedMemoryStreamRegistry {
         )
         .layout()?;
         let path = self.path_for(record.instance_id, record.stream_id);
-        let mmap = SharedAudioMmap::create(&path, &layout)?;
+        let mmap = SharedAudioMmap::create_exclusive(&path, &layout)?;
         let descriptor = SharedMemoryStreamDescriptor {
             schema_version: 1,
             transport: "file-backed-mmap".to_string(),
@@ -265,6 +283,7 @@ impl SharedMemoryStreamError {
         match self {
             Self::StreamClosed { .. } => 4094,
             Self::RegistryUnavailable => 5035,
+            Self::InsecureRootDirectory { .. } => 5036,
             Self::Io { .. } | Self::Mmap(_) => 5036,
             Self::InvalidCapacityBlocks | Self::Layout(_) => 4221,
         }
@@ -277,6 +296,12 @@ impl SharedMemoryStreamError {
                 format!("stream is closed for instance {instance_id}")
             }
             Self::RegistryUnavailable => "shared memory stream registry unavailable".to_string(),
+            Self::InsecureRootDirectory { path } => {
+                format!(
+                    "shared memory root directory is not private: {}",
+                    path.display()
+                )
+            }
             Self::Io { path, source } => format!("{}: {source}", path.display()),
             Self::Layout(source) => source.to_string(),
             Self::Mmap(source) => source.to_string(),
@@ -293,6 +318,9 @@ impl SharedMemoryStreamError {
             }
             Self::RegistryUnavailable => {
                 json!({ "kind": "shared-memory-registry-unavailable" })
+            }
+            Self::InsecureRootDirectory { path } => {
+                json!({ "kind": "shared-memory-insecure-root", "path": path })
             }
             Self::Io { path, source } => {
                 json!({ "kind": "shared-memory-io", "path": path, "message": source.to_string() })
@@ -319,6 +347,58 @@ impl From<SharedAudioMmapError> for SharedMemoryStreamError {
     }
 }
 
+fn secure_suffix() -> Option<String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).ok()?;
+    Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn ensure_secure_root(path: &Path) -> Result<(), SharedMemoryStreamError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(SharedMemoryStreamError::InsecureRootDirectory {
+                    path: path.to_path_buf(),
+                });
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+
+                if metadata.permissions().mode() & 0o077 != 0 {
+                    return Err(SharedMemoryStreamError::InsecureRootDirectory {
+                        path: path.to_path_buf(),
+                    });
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+
+                builder.mode(0o700);
+            }
+            match builder.create(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    ensure_secure_root(path)
+                }
+                Err(source) => Err(SharedMemoryStreamError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                }),
+            }
+        }
+        Err(source) => Err(SharedMemoryStreamError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
 fn cleanup_record(
     record: SharedMemoryStreamRecord,
 ) -> Result<SharedMemoryStreamDescriptor, SharedMemoryStreamError> {
@@ -338,16 +418,23 @@ fn status_from_record(
     Ok(SharedMemoryStreamStatus {
         descriptor: record.descriptor.clone(),
         path_exists: record.path.exists(),
-        input: ring_status(record.descriptor.layout.input, record.mmap.memory())?,
-        output: ring_status(record.descriptor.layout.output, record.mmap.memory())?,
+        input: ring_status(&record.mmap, record.descriptor.layout.input)?,
+        output: ring_status(&record.mmap, record.descriptor.layout.output)?,
     })
 }
 
 fn ring_status(
+    mmap: &SharedAudioMmap,
     ring: SharedAudioRingLayout,
-    memory: &[u8],
 ) -> Result<SharedMemoryRingStatus, SharedMemoryStreamError> {
-    let cursor = ring.cursor_state(memory)?;
+    let cursor = match ring.role {
+        wvst_shm_transport::SharedAudioRingRole::Input => mmap
+            .input_atomic_cursor()?
+            .load(std::sync::atomic::Ordering::Acquire)?,
+        wvst_shm_transport::SharedAudioRingRole::Output => mmap
+            .output_atomic_cursor()?
+            .load(std::sync::atomic::Ordering::Acquire)?,
+    };
     Ok(SharedMemoryRingStatus {
         cursor,
         readable_frames: ring.readable_frames(cursor.cursor())?,

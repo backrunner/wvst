@@ -46,6 +46,18 @@ fn scan_path(path: &Path, report: &mut ScanReport) {
         return;
     }
 
+    if path
+        .symlink_metadata()
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        report.failures.push(ScanFailure {
+            path: path_to_string(path),
+            reason: "symlink paths are not scanned".to_string(),
+        });
+        return;
+    }
+
     if is_vst3_bundle(path) {
         parse_bundle(path, report);
         return;
@@ -71,9 +83,15 @@ fn scan_directory(path: &Path, report: &mut ScanReport) {
 
         for entry in entries.flatten() {
             let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
             if is_vst3_bundle(&path) {
                 parse_bundle(&path, report);
-            } else if path.is_dir() {
+            } else if file_type.is_dir() {
                 stack.push(path);
             }
         }
@@ -122,6 +140,28 @@ mod tests {
         assert_eq!(report.plugins[0].name, "Echo");
         assert!(report.failures.is_empty());
 
+        remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_directory_symlink_cycles() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root("symlink-cycle");
+        let bundle = root.join("Echo.vst3");
+        create_dir_all(bundle.join("Contents")).expect("bundle directory");
+        write(
+            bundle.join("Contents/moduleinfo.json"),
+            r#"{"Name":"Echo","Classes":[{"Name":"Echo","Category":"Fx"}]}"#,
+        )
+        .expect("moduleinfo");
+        symlink(&root, root.join("cycle")).expect("cycle symlink");
+
+        let report = scan_paths(std::slice::from_ref(&root));
+
+        assert_eq!(report.plugins.len(), 1);
+        assert!(report.failures.is_empty());
         remove_dir_all(root).expect("cleanup");
     }
 

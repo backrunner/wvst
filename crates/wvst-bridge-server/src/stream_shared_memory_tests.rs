@@ -21,6 +21,24 @@ fn creates_and_destroys_shared_memory_for_stream() {
     assert!(Path::new(&descriptor.path).exists());
     assert!(registry.get_by_stream_id(record.stream_id).is_some());
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root_mode = std::fs::metadata(&root)
+            .expect("root metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        let file_mode = std::fs::metadata(&descriptor.path)
+            .expect("file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(root_mode, 0o700);
+        assert_eq!(file_mode, 0o600);
+    }
+
     let status = registry
         .status_by_instance(record.instance_id)
         .expect("status")
@@ -56,6 +74,31 @@ fn rejects_closed_streams_and_zero_capacity() {
     ));
 }
 
+#[tokio::test]
+async fn serializes_shared_memory_lifecycle_per_instance() {
+    let registry = std::sync::Arc::new(SharedMemoryStreamRegistry::new_in(unique_root()));
+    let first = registry.lock_instance(7).await.expect("first lock");
+    let second_registry = std::sync::Arc::clone(&registry);
+    let second =
+        tokio::spawn(async move { second_registry.lock_instance(7).await.expect("second lock") });
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), async {
+            while !second.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_err()
+    );
+
+    drop(first);
+    tokio::time::timeout(std::time::Duration::from_secs(1), second)
+        .await
+        .expect("second lock completes")
+        .expect("second task");
+}
+
 #[test]
 fn drop_removes_remaining_shared_memory_files() {
     let root = unique_root();
@@ -71,6 +114,33 @@ fn drop_removes_remaining_shared_memory_files() {
 
     assert!(!path.exists());
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_preexisting_stream_symlink_without_truncating_target() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let root = unique_root();
+    std::fs::create_dir(&root).expect("root");
+    let mut permissions = std::fs::metadata(&root).expect("metadata").permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&root, permissions).expect("permissions");
+    let target = root.with_extension("target");
+    std::fs::write(&target, b"keep-me").expect("target");
+    symlink(&target, root.join("stream-9-instance-7.wvst-shm")).expect("symlink");
+    let registry = SharedMemoryStreamRegistry::new_in(&root);
+
+    assert!(matches!(
+        registry.create_for_instance(&test_record(StreamState::Open), Some(2)),
+        Err(SharedMemoryStreamError::Mmap(
+            SharedAudioMmapError::Io { .. }
+        ))
+    ));
+    assert_eq!(std::fs::read(&target).expect("target bytes"), b"keep-me");
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_file(target);
 }
 
 fn test_record(stream_state: StreamState) -> InstanceRecord {

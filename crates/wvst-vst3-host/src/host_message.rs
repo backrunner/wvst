@@ -1,5 +1,6 @@
 use std::ffi::{CStr, CString, c_void};
 use std::ptr;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::host_attributes::Vst3HostAttributeList;
@@ -10,7 +11,7 @@ use crate::vst3_abi::{
 
 #[derive(Debug)]
 pub struct Vst3HostMessage {
-    object: Box<MessageObject>,
+    object: NonNull<MessageObject>,
 }
 
 #[repr(C)]
@@ -24,39 +25,59 @@ struct MessageObject {
 
 impl Vst3HostMessage {
     pub fn new() -> Self {
+        let object = Box::new(MessageObject {
+            iface: IMessage {
+                vtable: &MESSAGE_VTABLE,
+            },
+            ref_count: AtomicU32::new(1),
+            message_id: None,
+            attributes: Vst3HostAttributeList::new(),
+        });
         Self {
-            object: Box::new(MessageObject {
-                iface: IMessage {
-                    vtable: &MESSAGE_VTABLE,
-                },
-                ref_count: AtomicU32::new(1),
-                message_id: None,
-                attributes: Vst3HostAttributeList::new(),
-            }),
+            object: unsafe {
+                // SAFETY: `Box::into_raw` never returns null for a live Box.
+                NonNull::new_unchecked(Box::into_raw(object))
+            },
         }
     }
 
     pub fn into_raw(self) -> *mut IMessage {
-        Box::into_raw(self.object).cast::<IMessage>()
+        let pointer = self.object.as_ptr().cast::<IMessage>();
+        std::mem::forget(self);
+        pointer
     }
 
     pub fn as_mut_ptr(&mut self) -> *mut IMessage {
-        &mut self.object.iface
+        unsafe { &mut self.object.as_mut().iface }
     }
 
     pub fn set_id(&mut self, id: &str) -> Result<(), std::ffi::NulError> {
-        self.object.message_id = Some(CString::new(id)?);
+        self.object_mut().message_id = Some(CString::new(id)?);
         Ok(())
     }
 
     pub fn attributes_mut(&mut self) -> &mut Vst3HostAttributeList {
-        &mut self.object.attributes
+        &mut self.object_mut().attributes
+    }
+
+    fn object_mut(&mut self) -> &mut MessageObject {
+        // SAFETY: `self.object` is the live owner reference held by this
+        // wrapper. The wrapper is the only Rust mutable owner of this view.
+        unsafe { self.object.as_mut() }
     }
 }
 
 impl Default for Vst3HostMessage {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Vst3HostMessage {
+    fn drop(&mut self) {
+        let pointer = self.as_mut_ptr();
+        // SAFETY: the wrapper owns one FUnknown reference and releases it once.
+        unsafe { message_release(pointer) };
     }
 }
 
@@ -209,5 +230,26 @@ mod tests {
             ((*(*attributes).vtable).release)(attributes);
             ((*(*raw).vtable).release)(raw);
         }
+    }
+
+    #[test]
+    fn retained_attributes_survive_message_owner_drop() {
+        let mut message = Vst3HostMessage::new();
+        let raw = message.as_mut_ptr();
+        let attributes = unsafe { ((*(*raw).vtable).get_attributes)(raw) };
+
+        drop(message);
+
+        let key = CString::new("answer").expect("key");
+        let mut value = 0;
+        let result = unsafe { ((*(*attributes).vtable).set_int)(attributes, key.as_ptr(), 42) };
+        let get_result =
+            unsafe { ((*(*attributes).vtable).get_int)(attributes, key.as_ptr(), &mut value) };
+
+        assert_eq!(result, K_RESULT_OK);
+        assert_eq!(get_result, K_RESULT_OK);
+        assert_eq!(value, 42);
+
+        unsafe { ((*(*attributes).vtable).release)(attributes) };
     }
 }

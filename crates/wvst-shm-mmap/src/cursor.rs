@@ -56,16 +56,38 @@ impl<'a> SharedAudioAtomicCursor<'a> {
         &self,
         ordering: Ordering,
     ) -> Result<SharedAudioRingCursorState, SharedAudioLayoutError> {
-        SharedAudioRingCursorState {
-            read_frame: self.read_frame.load(ordering),
-            write_frame: self.write_frame.load(ordering),
-            dropped_frames: self.dropped_frames.load(ordering),
-            underrun_frames: self.underrun_frames.load(ordering),
-            overrun_frames: self.overrun_frames.load(ordering),
-            generation: self.generation.load(ordering),
-            flags: self.flags.load(ordering),
+        let mut last = SharedAudioRingCursorState::default();
+        for _ in 0..8 {
+            last = SharedAudioRingCursorState {
+                read_frame: self.read_frame.load(ordering),
+                write_frame: self.write_frame.load(ordering),
+                dropped_frames: self.dropped_frames.load(ordering),
+                underrun_frames: self.underrun_frames.load(ordering),
+                overrun_frames: self.overrun_frames.load(ordering),
+                generation: self.generation.load(ordering),
+                flags: self.flags.load(ordering),
+            };
+            if last.read_frame <= last.write_frame {
+                return Ok(last);
+            }
         }
-        .validate_order()
+        last.validate_order()
+    }
+
+    pub fn read_frame(&self, ordering: Ordering) -> u64 {
+        self.read_frame.load(ordering)
+    }
+
+    pub fn write_frame(&self, ordering: Ordering) -> u64 {
+        self.write_frame.load(ordering)
+    }
+
+    pub fn store_read_frame(&self, value: u64, ordering: Ordering) {
+        self.read_frame.store(value, ordering);
+    }
+
+    pub fn store_write_frame(&self, value: u64, ordering: Ordering) {
+        self.write_frame.store(value, ordering);
     }
 
     pub fn store(
@@ -119,8 +141,18 @@ fn fetch_add_checked(
     ordering: Ordering,
 ) -> Result<u64, SharedAudioLayoutError> {
     value
-        .fetch_update(ordering, ordering, |current| current.checked_add(delta))
+        .fetch_update(ordering, failure_ordering(ordering), |current| {
+            current.checked_add(delta)
+        })
         .map_err(|_| SharedAudioLayoutError::LayoutOverflow)
+}
+
+const fn failure_ordering(ordering: Ordering) -> Ordering {
+    match ordering {
+        Ordering::Release => Ordering::Relaxed,
+        Ordering::AcqRel => Ordering::Acquire,
+        other => other,
+    }
 }
 
 fn atomic_u64(

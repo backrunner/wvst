@@ -32,6 +32,14 @@ pub struct BridgeConfig {
 
 impl BridgeConfig {
     pub fn from_env() -> BridgeResult<Self> {
+        Self::from_env_with_token_requirement(true)
+    }
+
+    pub fn from_env_allow_missing_token() -> BridgeResult<Self> {
+        Self::from_env_with_token_requirement(false)
+    }
+
+    fn from_env_with_token_requirement(require_token: bool) -> BridgeResult<Self> {
         let bind_addr = std::env::var("WVST_BIND_ADDR")
             .unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_string())
             .parse()
@@ -40,6 +48,9 @@ impl BridgeConfig {
         let token = std::env::var("WVST_TOKEN")
             .ok()
             .filter(|value| !value.is_empty());
+        if require_token && token.is_none() {
+            return Err(BridgeError::MissingToken);
+        }
 
         let allowed_origins = std::env::var("WVST_ALLOWED_ORIGINS")
             .unwrap_or_default()

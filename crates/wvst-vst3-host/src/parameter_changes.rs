@@ -31,16 +31,20 @@ impl Vst3ParameterChanges {
             queues: Vec::with_capacity(max_changes),
             queue_count: 0,
             scratch: Vec::with_capacity(max_changes),
+            points: Vec::with_capacity(max_changes),
             max_changes,
         });
 
+        let owner = (&mut *object) as *mut ParameterChangesObject;
         for _ in 0..max_changes {
             object.queues.push(ParamValueQueueObject {
                 iface: IParamValueQueue {
                     vtable: &PARAM_VALUE_QUEUE_VTABLE,
                 },
                 parameter_id: 0,
-                points: Vec::new(),
+                point_start: 0,
+                point_count: 0,
+                owner,
             });
         }
 
@@ -64,7 +68,7 @@ impl Vst3ParameterChanges {
     pub fn changes_into(&self, destination: &mut Vec<Vst3ParameterChange>) {
         destination.clear();
         for queue in self.object.active_queues() {
-            for point in &queue.points {
+            for point in self.object.queue_points(queue) {
                 destination.push(Vst3ParameterChange {
                     sample_offset: point.sample_offset.clamp(0, i32::from(u16::MAX)) as u16,
                     parameter_id: queue.parameter_id,
@@ -112,14 +116,16 @@ impl Vst3ParameterChanges {
                 self.object.queue_count += 1;
                 let queue = &mut self.object.queues[queue_index];
                 queue.parameter_id = change.parameter_id;
-                queue.points.clear();
+                queue.point_start = self.object.points.len();
+                queue.point_count = 0;
                 current_parameter_id = Some(change.parameter_id);
             }
 
-            self.object.queues[queue_index].points.push(ParameterPoint {
+            self.object.points.push(ParameterPoint {
                 sample_offset: i32::from(change.sample_offset),
                 value: change.value_normalized,
             });
+            self.object.queues[queue_index].point_count += 1;
         }
 
         Ok(())
@@ -133,20 +139,27 @@ struct ParameterChangesObject {
     queues: Vec<ParamValueQueueObject>,
     queue_count: usize,
     scratch: Vec<Vst3ParameterChange>,
+    points: Vec<ParameterPoint>,
     max_changes: usize,
 }
 
 impl ParameterChangesObject {
     fn clear_active(&mut self) {
         for index in 0..self.queue_count {
-            self.queues[index].points.clear();
+            self.queues[index].point_start = 0;
+            self.queues[index].point_count = 0;
         }
         self.queue_count = 0;
         self.scratch.clear();
+        self.points.clear();
     }
 
     fn active_queues(&self) -> &[ParamValueQueueObject] {
         &self.queues[..self.queue_count]
+    }
+
+    fn queue_points(&self, queue: &ParamValueQueueObject) -> &[ParameterPoint] {
+        &self.points[queue.point_start..queue.point_start + queue.point_count]
     }
 }
 
@@ -155,7 +168,9 @@ impl ParameterChangesObject {
 struct ParamValueQueueObject {
     iface: IParamValueQueue,
     parameter_id: ParamId,
-    points: Vec<ParameterPoint>,
+    point_start: usize,
+    point_count: usize,
+    owner: *mut ParameterChangesObject,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -250,7 +265,8 @@ unsafe extern "system" fn parameter_changes_add_parameter_data(
     let queue = &mut object.queues[queue_index];
     // SAFETY: `id` was checked for null and points to caller-owned ParamId storage.
     queue.parameter_id = unsafe { *id };
-    queue.points.clear();
+    queue.point_start = object.points.len();
+    queue.point_count = 0;
     if !index.is_null() {
         // SAFETY: `index` is an optional out pointer provided by the caller.
         unsafe { *index = queue_index as i32 };
@@ -288,7 +304,7 @@ unsafe extern "system" fn param_value_queue_get_parameter_id(
 }
 
 unsafe extern "system" fn param_value_queue_get_point_count(this: *mut IParamValueQueue) -> i32 {
-    param_value_queue_object(this).map_or(0, |queue| queue.points.len() as i32)
+    param_value_queue_object(this).map_or(0, |queue| queue.point_count as i32)
 }
 
 unsafe extern "system" fn param_value_queue_get_point(
@@ -304,7 +320,13 @@ unsafe extern "system" fn param_value_queue_get_point(
     let Some(queue) = param_value_queue_object(this) else {
         return K_RESULT_FALSE;
     };
-    let Some(point) = queue.points.get(index as usize) else {
+    let Some(owner) = (unsafe { queue.owner.as_ref() }) else {
+        return K_RESULT_FALSE;
+    };
+    let Some(point) = owner
+        .points
+        .get(queue.point_start.saturating_add(index as usize))
+    else {
         return K_RESULT_FALSE;
     };
 
@@ -330,11 +352,19 @@ unsafe extern "system" fn param_value_queue_add_point(
         return K_RESULT_FALSE;
     };
 
-    let point_index = queue.points.len();
-    queue.points.push(ParameterPoint {
+    let Some(owner) = (unsafe { queue.owner.as_mut() }) else {
+        return K_RESULT_FALSE;
+    };
+    if owner.points.len() >= owner.max_changes {
+        return K_RESULT_FALSE;
+    }
+
+    let point_index = queue.point_count;
+    owner.points.push(ParameterPoint {
         sample_offset,
         value,
     });
+    queue.point_count += 1;
     if !index.is_null() {
         // SAFETY: `index` is an optional out pointer provided by the caller.
         unsafe { *index = point_index as i32 };
@@ -537,5 +567,24 @@ mod tests {
                 actual: 8
             }
         );
+    }
+
+    #[test]
+    fn bounds_plugin_output_parameter_points_without_growing() {
+        let mut changes = Vst3ParameterChanges::new(1);
+        let raw = changes.as_raw_ptr();
+        let parameter_id = 7;
+        let queue =
+            unsafe { ((*(*raw).vtable).add_parameter_data)(raw, &parameter_id, ptr::null_mut()) };
+
+        assert_eq!(
+            unsafe { ((*(*queue).vtable).add_point)(queue, 0, 0.5, ptr::null_mut()) },
+            K_RESULT_OK
+        );
+        assert_eq!(
+            unsafe { ((*(*queue).vtable).add_point)(queue, 1, 0.75, ptr::null_mut()) },
+            K_RESULT_FALSE
+        );
+        assert_eq!(unsafe { ((*(*queue).vtable).get_point_count)(queue) }, 1);
     }
 }

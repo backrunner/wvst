@@ -6,6 +6,7 @@ use wvst_protocol::{AUDIO_FRAME_VERSION, negotiate_protocol};
 use super::{
     ControlContext, ControlResponse, response_error, response_host_worker_error, response_result,
 };
+use crate::plugin_registry::PluginRegistry;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,15 +72,21 @@ impl From<ProtocolVersion> for WireProtocolVersion {
     }
 }
 
-pub(super) fn handle_plugin_scan(id: Value, params: Value, context: ControlContext<'_>) -> String {
+pub(super) async fn handle_plugin_scan(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
     let params = parse_params::<PluginScanParams>(params).unwrap_or_default();
-    let report = if params.paths.is_empty() {
-        context.plugins.scan_default_paths()
+    let paths = if params.paths.is_empty() {
+        PluginRegistry::default_paths()
     } else {
-        context.plugins.scan_paths(paths_from_strings(params.paths))
+        paths_from_strings(params.paths)
     };
-
-    response_result(id, json!(report))
+    match scan_paths_blocking(context.plugins, paths).await {
+        Ok(report) => response_result(id, json!(report)),
+        Err(error) => response_error(id, 5030, error),
+    }
 }
 
 pub(super) fn handle_bridge_events(
@@ -99,19 +106,38 @@ pub(super) fn handle_bridge_events(
     )
 }
 
-pub(super) fn handle_plugin_list(id: Value, params: Value, context: ControlContext<'_>) -> String {
+pub(super) async fn handle_plugin_list(
+    id: Value,
+    params: Value,
+    context: ControlContext<'_>,
+) -> String {
     let params = parse_params::<PluginListParams>(params).unwrap_or_default();
     let report = if params.rescan {
-        if params.paths.is_empty() {
-            context.plugins.scan_default_paths()
+        let paths = if params.paths.is_empty() {
+            PluginRegistry::default_paths()
         } else {
-            context.plugins.scan_paths(paths_from_strings(params.paths))
+            paths_from_strings(params.paths)
+        };
+        match scan_paths_blocking(context.plugins, paths).await {
+            Ok(report) => report,
+            Err(error) => return response_error(id, 5030, error),
         }
     } else {
         context.plugins.list()
     };
 
     response_result(id, json!(report))
+}
+
+async fn scan_paths_blocking(
+    plugins: &PluginRegistry,
+    paths: Vec<std::path::PathBuf>,
+) -> Result<wvst_scanner::ScanReport, String> {
+    let report = tokio::task::spawn_blocking(move || PluginRegistry::scan_paths_report(paths))
+        .await
+        .map_err(|error| format!("plugin scan task failed: {error}"))?;
+    plugins.replace_report(report.clone());
+    Ok(report)
 }
 
 pub(super) async fn handle_plugin_factory_info(

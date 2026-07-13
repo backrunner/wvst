@@ -330,6 +330,7 @@ impl WorkerRuntimeInfo {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum InstanceError {
     InvalidPluginId,
+    ClassIdRequired,
     PluginNotFound(String),
     ClassNotFound(String),
     InvalidSampleRate(u32),

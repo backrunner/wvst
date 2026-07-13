@@ -279,6 +279,9 @@ where
             Ok(Some(response.session_authorized))
         }
         Message::Binary(payload) => {
+            if !session_authorized {
+                return Ok(Some(false));
+            }
             let response = process_binary_payload(payload.to_vec(), state).await;
             sender
                 .send(Message::Binary(response.into()))

@@ -256,6 +256,13 @@ async fn run_pump(
         if wait_for_next_tick(next_delay, &mut stop).await {
             return;
         }
+        let _instance_lock = match shared_memory.lock_instance(config.instance_id).await {
+            Ok(lock) => lock,
+            Err(_) => return,
+        };
+        if *stop.borrow() {
+            return;
+        }
         let report = process_once(config, &workers, &metrics, &shared_memory, &runtime).await;
         let delay_micros = config
             .scheduling

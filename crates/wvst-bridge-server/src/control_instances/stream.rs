@@ -37,6 +37,17 @@ pub async fn handle_stream_close(id: Value, params: Value, context: ControlConte
             return response_error(id, -32602, format!("invalid stream close params: {error}"));
         }
     };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_error(id, error.rpc_code(), error.rpc_message()),
+    };
 
     match context.instances.close_stream(params) {
         Ok(record) => {

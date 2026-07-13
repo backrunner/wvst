@@ -5,6 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::oneshot;
+use tokio::time::timeout;
 use tokio_tungstenite::connect_async;
 use wvst_core::{ChannelCount, FrameCount, SampleRate, StreamId};
 
@@ -63,6 +64,51 @@ async fn responds_to_hello_and_rejects_invalid_binary_frames() {
         .expect("binary response")
         .expect("valid websocket message");
     assert!(response.into_data().is_empty());
+
+    let _ = shutdown_sender.send(());
+}
+
+#[tokio::test]
+async fn ignores_binary_audio_before_session_authorization() {
+    let config = BridgeConfig::development("127.0.0.1:0".parse().expect("valid bind addr"));
+    let server = BridgeServer::bind(config).await.expect("server binds");
+    let addr = server.local_addr().expect("local addr");
+    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+
+    tokio::spawn(async move {
+        let _ = server
+            .serve_until(async {
+                let _ = shutdown_receiver.await;
+            })
+            .await;
+    });
+
+    let (mut websocket, _) = connect_async(format!("ws://{addr}"))
+        .await
+        .expect("client connects");
+    websocket
+        .send(Message::Binary(vec![1, 2, 3].into()))
+        .await
+        .expect("binary sends");
+    assert!(
+        timeout(Duration::from_millis(50), websocket.next())
+            .await
+            .is_err()
+    );
+
+    websocket
+        .send(Message::Text(
+            r#"{"id":1,"method":"bridge.hello","params":{"clientName":"test","clientVersion":"0.1.0","protocolMin":{"major":1,"minor":0},"protocolMax":{"major":1,"minor":0},"audioFrameVersion":1}}"#
+                .into(),
+        ))
+        .await
+        .expect("hello sends");
+    let response = websocket
+        .next()
+        .await
+        .expect("hello response")
+        .expect("valid websocket message");
+    assert!(response.to_text().expect("text").contains("wvst-bridge"));
 
     let _ = shutdown_sender.send(());
 }

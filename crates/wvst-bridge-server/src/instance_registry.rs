@@ -41,6 +41,9 @@ impl InstanceRegistry {
         }
 
         let class = select_class(plugin, params.class_id.as_deref())?;
+        if params.class_id.is_none() && class.and_then(|item| item.class_id.as_deref()).is_none() {
+            return Err(InstanceError::ClassIdRequired);
+        }
         let instance_id = InstanceId::new(self.next_instance_id.fetch_add(1, Ordering::Relaxed));
         let stream_id = StreamId::new(self.next_stream_id.fetch_add(1, Ordering::Relaxed));
         let record = InstanceRecord {
@@ -330,6 +333,7 @@ impl Default for InstanceRegistry {
 impl InstanceError {
     pub fn rpc_code(&self) -> i64 {
         match self {
+            Self::ClassIdRequired => 4220,
             Self::PluginNotFound(_) | Self::ClassNotFound(_) | Self::InstanceNotFound(_) => 4040,
             Self::RegistryUnavailable => 5034,
             _ => 4220,
@@ -339,6 +343,10 @@ impl InstanceError {
     pub fn rpc_message(&self) -> String {
         match self {
             Self::InvalidPluginId => "pluginId is required".to_string(),
+            Self::ClassIdRequired => {
+                "classId is required when scanner metadata does not include a VST3 class ID"
+                    .to_string()
+            }
             Self::PluginNotFound(plugin_id) => {
                 format!("plugin not found in registry: {plugin_id}")
             }
@@ -361,6 +369,11 @@ impl InstanceError {
     pub fn rpc_data(&self) -> Value {
         match self {
             Self::InvalidPluginId => json!({ "kind": "invalid-plugin-id" }),
+            Self::ClassIdRequired => json!({
+                "kind": "class-id-required",
+                "reason": "scanner metadata did not include a VST3 class ID",
+                "hint": "call plugin.factoryInfo and retry with classId"
+            }),
             Self::PluginNotFound(plugin_id) => {
                 json!({ "kind": "plugin-not-found", "pluginId": plugin_id })
             }

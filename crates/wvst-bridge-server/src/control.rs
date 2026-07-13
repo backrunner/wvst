@@ -92,11 +92,11 @@ pub(crate) async fn handle_control_text(
             session_authorized,
         ),
         "plugin.scan" => ControlResponse::new(
-            control_handlers::handle_plugin_scan(request.id, request.params, context),
+            control_handlers::handle_plugin_scan(request.id, request.params, context).await,
             session_authorized,
         ),
         "plugin.list" => ControlResponse::new(
-            control_handlers::handle_plugin_list(request.id, request.params, context),
+            control_handlers::handle_plugin_list(request.id, request.params, context).await,
             session_authorized,
         ),
         "plugin.factoryInfo" => ControlResponse::new(

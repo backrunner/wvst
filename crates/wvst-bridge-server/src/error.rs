@@ -6,6 +6,7 @@ pub type BridgeResult<T> = Result<T, BridgeError>;
 #[derive(Debug)]
 pub enum BridgeError {
     InvalidBindAddress(String),
+    MissingToken,
     Io(std::io::Error),
     WebSocket(tokio_tungstenite::tungstenite::Error),
 }
@@ -14,6 +15,10 @@ impl Display for BridgeError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidBindAddress(value) => write!(formatter, "invalid bind address: {value}"),
+            Self::MissingToken => write!(
+                formatter,
+                "WVST_TOKEN is required for the production bridge"
+            ),
             Self::Io(error) => write!(formatter, "io error: {error}"),
             Self::WebSocket(error) => write!(formatter, "websocket error: {error}"),
         }

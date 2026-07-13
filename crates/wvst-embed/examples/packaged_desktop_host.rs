@@ -17,7 +17,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_string())
         .parse()?;
 
-    let mut builder = BridgeRuntime::builder(BridgeConfig::development(bind_addr))
+    let token = env::var("WVST_EMBED_TOKEN")
+        .map_err(|_| "WVST_EMBED_TOKEN is required for the packaged desktop bridge")?;
+    if token.is_empty() {
+        return Err("WVST_EMBED_TOKEN must not be empty".into());
+    }
+
+    let builder = BridgeRuntime::builder(BridgeConfig::development(bind_addr))
+        .token(token)
         .worker_executable(layout.host_worker)
         .worker_timeout(Duration::from_secs(5))
         .allowed_origins([
@@ -29,10 +36,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .worker_quarantine_failure_threshold(3)
         .worker_memory_limit_bytes(768 * 1024 * 1024)
         .worker_cpu_time_limit_seconds(60);
-
-    if let Ok(token) = env::var("WVST_EMBED_TOKEN") {
-        builder = builder.token(token);
-    }
 
     let runtime = builder.build();
     let handle = runtime.start().await?;

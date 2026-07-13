@@ -1,3 +1,4 @@
+use std::env;
 use std::error::Error;
 use std::io::Write;
 
@@ -6,7 +7,12 @@ use wvst_embed::{BridgeRuntime, BridgeRuntimeLogRecord};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let config = BridgeConfig::development("127.0.0.1:0".parse()?);
+    let token = env::var("WVST_EMBED_TOKEN")
+        .map_err(|_| "WVST_EMBED_TOKEN is required for the embedded bridge")?;
+    if token.is_empty() {
+        return Err("WVST_EMBED_TOKEN must not be empty".into());
+    }
+    let config = BridgeConfig::development("127.0.0.1:0".parse()?).with_token(token);
     let runtime = BridgeRuntime::builder(config)
         .max_worker_instances(8)
         .worker_quarantine_failure_threshold(3)

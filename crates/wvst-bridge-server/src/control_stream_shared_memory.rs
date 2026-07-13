@@ -31,6 +31,17 @@ pub async fn handle_stream_shared_memory_create(
             );
         }
     };
+    if let Err(error) = context.instances.get(params.instance_id) {
+        return response_instance_error(id, error);
+    }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
     let record = match context.instances.get(params.instance_id) {
         Ok(record) => record,
         Err(error) => return response_instance_error(id, error),
@@ -82,6 +93,14 @@ pub async fn handle_stream_shared_memory_destroy(
     if let Err(error) = context.instances.get(params.instance_id) {
         return response_instance_error(id, error);
     }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
 
     let worker = context
         .workers
@@ -131,6 +150,14 @@ pub async fn handle_stream_shared_memory_status(
     if let Err(error) = context.instances.get(params.instance_id) {
         return response_instance_error(id, error);
     }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
 
     match context.shared_memory.status_by_instance(params.instance_id) {
         Ok(status) => response_result(
@@ -162,6 +189,14 @@ pub async fn handle_stream_shared_memory_pump_start(
     let record = match context.instances.get(params.instance_id) {
         Ok(record) => record,
         Err(error) => return response_instance_error(id, error),
+    };
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(record.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
     };
     if record.stream_state != StreamState::Open {
         return response_pump_error(
@@ -226,6 +261,14 @@ pub async fn handle_stream_shared_memory_pump_stop(
     if let Err(error) = context.instances.get(params.instance_id) {
         return response_instance_error(id, error);
     }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
 
     match context
         .shared_memory_pumps
@@ -260,6 +303,14 @@ pub async fn handle_stream_shared_memory_pump_status(
     if let Err(error) = context.instances.get(params.instance_id) {
         return response_instance_error(id, error);
     }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
 
     match context
         .shared_memory_pumps
@@ -294,6 +345,14 @@ pub async fn handle_stream_shared_memory_pump_enqueue_events(
     if let Err(error) = context.instances.get(params.instance_id) {
         return response_instance_error(id, error);
     }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
 
     match context.shared_memory_pumps.enqueue_events(params) {
         Ok(result) => response_result(id, json!(result)),
@@ -319,6 +378,14 @@ pub async fn handle_stream_shared_memory_pump_clear_events(
     if let Err(error) = context.instances.get(params.instance_id) {
         return response_instance_error(id, error);
     }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
 
     match context.shared_memory_pumps.clear_events(params) {
         Ok(result) => response_result(id, json!(result)),
@@ -344,6 +411,14 @@ pub async fn handle_stream_shared_memory_process(
     if let Err(error) = context.instances.get(params.instance_id) {
         return response_instance_error(id, error);
     }
+    let _instance_lock = match context
+        .shared_memory
+        .lock_instance(params.instance_id)
+        .await
+    {
+        Ok(lock) => lock,
+        Err(error) => return response_shared_memory_error(id, error),
+    };
 
     let started_at = Instant::now();
     match context

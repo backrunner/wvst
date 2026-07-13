@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    F32_SAMPLE_BYTES, SHARED_AUDIO_DESCRIPTOR_BYTES, SharedAudioLayoutError,
+    F32_SAMPLE_BYTES, SHARED_AUDIO_DESCRIPTOR_BYTES, SharedAudioLayoutError, SharedAudioRingCursor,
     SharedAudioRingCursorState, SharedAudioRingLayout, SharedAudioRingSpanPlan,
     SharedAudioTransportLayout,
 };
@@ -72,8 +72,7 @@ impl SharedAudioRingLayout {
             });
         }
 
-        let plan = self.write_plan(cursor.cursor(), frames)?;
-        write_samples(memory, plan, samples)?;
+        self.write_interleaved_f32_at(memory, cursor.cursor(), samples, frames)?;
         cursor.write_frame = checked_add_u64(cursor.write_frame, frames)?;
         cursor.generation = checked_add_u64(cursor.generation, 1)?;
         self.set_cursor_state(memory, cursor)?;
@@ -103,8 +102,7 @@ impl SharedAudioRingLayout {
             });
         }
 
-        let plan = self.read_plan(cursor.cursor(), frames)?;
-        read_samples(memory, plan, samples)?;
+        self.read_interleaved_f32_at(memory, cursor.cursor(), samples, frames)?;
         cursor.read_frame = checked_add_u64(cursor.read_frame, frames)?;
         cursor.generation = checked_add_u64(cursor.generation, 1)?;
         self.set_cursor_state(memory, cursor)?;
@@ -113,6 +111,32 @@ impl SharedAudioRingLayout {
             samples: sample_count,
             cursor,
         })
+    }
+
+    pub fn write_interleaved_f32_at(
+        self,
+        memory: &mut [u8],
+        cursor: SharedAudioRingCursor,
+        samples: &[f32],
+        frames: u64,
+    ) -> Result<usize, SharedAudioLayoutError> {
+        let sample_count = self.validate_sample_len(samples.len(), frames)?;
+        let plan = self.write_plan(cursor, frames)?;
+        write_samples(memory, plan, samples)?;
+        Ok(sample_count)
+    }
+
+    pub fn read_interleaved_f32_at(
+        self,
+        memory: &[u8],
+        cursor: SharedAudioRingCursor,
+        samples: &mut [f32],
+        frames: u64,
+    ) -> Result<usize, SharedAudioLayoutError> {
+        let sample_count = self.validate_sample_len(samples.len(), frames)?;
+        let plan = self.read_plan(cursor, frames)?;
+        read_samples(memory, plan, samples)?;
+        Ok(sample_count)
     }
 
     fn validate_sample_len(

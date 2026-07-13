@@ -9,6 +9,11 @@ pub(super) async fn destroy_instance_record(
     record: &InstanceRecord,
     context: &ControlContext<'_>,
 ) -> Result<crate::instance_registry::InstanceDestroyResult, InstanceError> {
+    let _instance_lock = context
+        .shared_memory
+        .lock_instance(record.instance_id)
+        .await
+        .map_err(|_| InstanceError::RegistryUnavailable)?;
     context
         .component_handler_events
         .reset_instance(record.instance_id);

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wvst_shm_mmap::SharedAudioMmap;
+use wvst_shm_mmap::{SharedAudioMmap, SharedAudioMmapError};
 use wvst_shm_transport::SharedAudioRingIoReport;
 
 use super::{WorkerInstance, WorkerIpcState, response_error, response_result};
@@ -250,7 +250,7 @@ fn process_shared_memory_once(
         ));
     };
     let layout = shared_memory.mmap.layout().clone();
-    ensure_output_writable(&layout, shared_memory.mmap.memory(), u64::from(frames))?;
+    ensure_output_writable(&layout, &shared_memory.mmap, u64::from(frames))?;
 
     let input_len = usize::from(frames)
         .checked_mul(instance.input_channels)
@@ -263,7 +263,7 @@ fn process_shared_memory_once(
     let input_samples = &mut shared_memory.input_samples[..input_len];
     let input_report = read_input_samples(
         &layout,
-        shared_memory.mmap.memory_mut(),
+        &mut shared_memory.mmap,
         input_samples,
         instance.input_channels,
         u64::from(frames),
@@ -297,10 +297,10 @@ fn process_shared_memory_once(
             &mut instance.process_output,
         )
         .map_err(SharedMemoryProcessError::backend)?;
-    let output_report = layout
-        .output
-        .write_interleaved_f32(shared_memory.mmap.memory_mut(), output, u64::from(frames))
-        .map_err(|error| SharedMemoryProcessError::layout("output-ring-write", error))?;
+    let output_report = shared_memory
+        .mmap
+        .write_interleaved_f32_atomic(layout.output, output, u64::from(frames))
+        .map_err(mmap_process_error)?;
 
     Ok(SharedMemoryProcessReport {
         instance_id,
@@ -318,31 +318,38 @@ fn process_shared_memory_once(
 
 fn read_input_samples(
     layout: &wvst_shm_transport::SharedAudioTransportLayout,
-    memory: &mut [u8],
+    mmap: &mut SharedAudioMmap,
     input_samples: &mut [f32],
     input_channels: usize,
     frames: u64,
 ) -> Result<SharedAudioRingIoReport, SharedMemoryProcessError> {
     if input_channels == 0 {
+        let cursor = mmap
+            .input_atomic_cursor()
+            .map_err(mmap_process_error)?
+            .load(std::sync::atomic::Ordering::Acquire)
+            .map_err(layout_process_error)?;
         return Ok(SharedAudioRingIoReport {
             frames,
             samples: 0,
-            cursor: layout.input.cursor_state(memory)?,
+            cursor,
         });
     }
 
-    layout
-        .input
-        .read_interleaved_f32(memory, input_samples, frames)
-        .map_err(|error| SharedMemoryProcessError::layout("input-ring-read", error))
+    mmap.read_interleaved_f32_atomic(layout.input, input_samples, frames)
+        .map_err(mmap_process_error)
 }
 
 fn ensure_output_writable(
     layout: &wvst_shm_transport::SharedAudioTransportLayout,
-    memory: &[u8],
+    mmap: &SharedAudioMmap,
     frames: u64,
 ) -> Result<(), SharedMemoryProcessError> {
-    let cursor = layout.output.cursor_state(memory)?;
+    let cursor = mmap
+        .output_atomic_cursor()
+        .map_err(mmap_process_error)?
+        .load(std::sync::atomic::Ordering::Acquire)
+        .map_err(layout_process_error)?;
     let available = layout.output.writable_frames(cursor.cursor())?;
     if frames > available {
         return Err(SharedMemoryProcessError::ring_unavailable(
@@ -352,6 +359,19 @@ fn ensure_output_writable(
         ));
     }
     Ok(())
+}
+
+fn mmap_process_error(error: SharedAudioMmapError) -> SharedMemoryProcessError {
+    match error {
+        SharedAudioMmapError::Layout(error) => layout_process_error(error),
+        other => SharedMemoryProcessError::invalid("mmap", other.to_string()),
+    }
+}
+
+fn layout_process_error(
+    error: wvst_shm_transport::SharedAudioLayoutError,
+) -> SharedMemoryProcessError {
+    SharedMemoryProcessError::layout("mmap", error)
 }
 
 fn validate_layout(

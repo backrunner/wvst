@@ -41,6 +41,20 @@ fn accepts_explicit_class_id_missing_from_scanner_metadata() {
 }
 
 #[test]
+fn rejects_missing_class_id_when_scanner_metadata_has_no_id() {
+    let registry = InstanceRegistry::new();
+    let mut plugin = plugin();
+    plugin.classes[0].class_id = None;
+    let mut params = create_params();
+    params.class_id = None;
+
+    assert_eq!(
+        registry.create(params, &plugin),
+        Err(InstanceError::ClassIdRequired)
+    );
+}
+
+#[test]
 fn records_explicit_audio_bus_selection() {
     let registry = InstanceRegistry::new();
     let plugin = plugin();
