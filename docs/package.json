@@ -22,14 +22,14 @@
     "@tailwindcss/vite": "^4.3.0",
     "@wvst/web": "file:../packages/wvst-web",
     "phosphor-svelte": "^3.1.0",
-    "svedocs": "file:../../svedocs/packages/svedocs",
+    "svedocs": "0.1.0-beta.9",
     "svelte": "^5.55.7",
     "tailwindcss": "^4.3.0",
     "vite": "^8.0.13"
   },
   "devDependencies": {
     "@types/node": "^25.8.0",
-    "svedocs-cli": "file:../../svedocs/packages/cli",
+    "svedocs-cli": "0.1.0-beta.9",
     "svelte-check": "^4.7.2",
     "typescript": "^6.0.3"
   },

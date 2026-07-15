@@ -55,7 +55,7 @@ jobs:
         run: cargo test --workspace
 
   web:
-    name: Web SDK
+    name: Web SDK and Docs
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -84,3 +84,9 @@ jobs:
 
       - name: Build Web examples
         run: npm --workspace @wvst/web-examples run build
+
+      - name: Check documentation
+        run: npm --workspace @wvst/docs run check
+
+      - name: Build documentation
+        run: npm --workspace @wvst/docs run build -- --no-og
