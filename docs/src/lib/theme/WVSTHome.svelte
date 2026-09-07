@@ -8,6 +8,7 @@
   import ShieldCheck from 'phosphor-svelte/lib/ShieldCheck';
   import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow';
   import Waveform from 'phosphor-svelte/lib/Waveform';
+  import SignalConsole from './SignalConsole.svelte';
   import { RootLayout } from 'svedocs/theme';
   import type { SvedocsHomeLayoutProps } from 'svedocs/theme';
 
@@ -27,7 +28,12 @@
 
   const en = {
     label: 'WebAudio meets native VST3',
-    title: 'VSTs in WebAudio.',
+    title: 'Your browser. Your plugins.',
+    titleAccent: 'One audio graph.',
+    note: 'Open source · Rust + TypeScript · macOS first',
+    setup: 'From source to sound.',
+    setupBody: 'Build the bridge, start the local runtime, then open the rack. Bring a VST3 effect and an audio file.',
+    setupLink: 'Follow the setup guide',
     intro: 'A Rust bridge brings isolated local VST3 processing into real WebAudio graphs.',
     docs: 'Read docs',
     demo: 'Open demo',
@@ -39,7 +45,7 @@
     bridgeBody: 'Pairing, discovery, routing and metrics stay on loopback.',
     worker: 'VST3 worker',
     workerBody: 'Native processing is isolated so one plugin cannot take down the bridge.',
-    builtTitle: 'Built for the parts audio demos usually hide.',
+    builtTitle: 'Designed for the whole signal chain.',
     latency: 'Observable latency',
     latencyBody: 'Track jitter, underflows, overflows and worker restarts instead of guessing.',
     recovery: 'Failure isolation',
@@ -54,7 +60,12 @@
 
   const zh = {
     label: 'WebAudio 连接原生 VST3',
-    title: 'WebAudio 中的原生 VST。',
+    title: '你的浏览器。你的插件。',
+    titleAccent: '同一张音频图。',
+    note: '开源 · Rust + TypeScript · macOS 优先',
+    setup: '从源码，到声音。',
+    setupBody: '构建 Bridge，启动本地 runtime，再打开机架。准备一个 VST3 效果器和一段音频即可开始。',
+    setupLink: '查看安装指南',
     intro: '通过 Rust bridge，把隔离的本机 VST3 处理接入真实 WebAudio graph。',
     docs: '阅读文档',
     demo: '打开 Demo',
@@ -66,7 +77,7 @@
     bridgeBody: '配对、发现、路由与指标都限制在 loopback。',
     worker: 'VST3 Worker',
     workerBody: '原生处理独立隔离，单个插件崩溃不会拖垮 Bridge。',
-    builtTitle: '正面处理音频 Demo 经常隐藏的问题。',
+    builtTitle: '为完整的音频链路而设计。',
     latency: '延迟可观测',
     latencyBody: '直接查看 jitter、underflow、overflow 和 worker restart。',
     recovery: '故障隔离',
@@ -79,7 +90,7 @@
     ctaBody: '运行本地 Bridge，选择音频文件，在浏览器机架中挂载真实效果器。'
   };
 
-  const waveformBars = [18, 28, 42, 64, 36, 76, 52, 88, 60, 34, 70, 94, 58, 44, 82, 66, 32, 74, 48, 86, 56, 40, 68, 26];
+  const setupCommand = 'cargo build -p wvst-bridge-server -p wvst-host-worker\nWVST_HOST_WORKER=target/debug/wvst-host-worker \\\n  target/debug/wvst-bridge-server serve';
 </script>
 
 <svelte:component this={Root} {config} {page} {pages} {tree} {search} {loadSearch} {themeComponents}>
@@ -87,32 +98,22 @@
     <section class="wvst-hero">
       <div class="wvst-hero-copy">
         <p class="wvst-eyebrow"><Waveform size={18} weight="bold" />{copy.label}</p>
-        <h1>{copy.title}</h1>
+        <h1>{copy.title}<em>{copy.titleAccent}</em></h1>
         <p class="wvst-hero-intro">{copy.intro}</p>
         <div class="wvst-actions">
           <a class="wvst-action wvst-action-primary" href={docsHref}>{copy.docs}<ArrowRight size={18} weight="bold" /></a>
           <a class="wvst-action" href={demoHref}><PlayCircle size={18} weight="bold" />{copy.demo}</a>
         </div>
+        <p class="wvst-hero-note">{copy.note}</p>
       </div>
 
-      <div class="wvst-scope" aria-label={isZh ? 'WVST 实时音频信号示意' : 'WVST realtime audio signal illustration'}>
-        <div class="wvst-scope-head">
-          <span>WVST SIGNAL</span>
-          <span>48 kHz / 128</span>
-        </div>
-        <div class="wvst-waveform" aria-hidden="true">
-          {#each waveformBars as height, index}
-            <i style={`--bar:${height}%;--delay:${index * -54}ms`}></i>
-          {/each}
-        </div>
-        <div class="wvst-scope-foot">
-          <span>WEB AUDIO</span>
-          <span class="wvst-scope-route"><i></i>RUST BRIDGE<i></i>VST3</span>
-        </div>
-      </div>
+      <SignalConsole {isZh} />
     </section>
 
+    <div class="wvst-spec-strip"><span>01 / WEB AUDIO ↔ NATIVE AUDIO</span><span>VST3 EFFECTS + INSTRUMENTS</span><span>ASYNC BY DESIGN</span></div>
+
     <section class="wvst-route-section">
+      <p class="wvst-section-index">01 / {isZh ? '架构' : 'THE ARCHITECTURE'}</p>
       <div class="wvst-section-copy">
         <h2>{copy.routeTitle}</h2>
         <p>{copy.routeBody}</p>
@@ -139,17 +140,14 @@
     </section>
 
     <section class="wvst-capabilities">
+      <p class="wvst-section-index">02 / {isZh ? '运行时' : 'THE RUNTIME'}</p>
       <h2>{copy.builtTitle}</h2>
       <div class="wvst-capability-grid">
         <article class="wvst-capability-featured">
           <Gauge size={34} weight="duotone" />
           <strong>{copy.latency}</strong>
           <p>{copy.latencyBody}</p>
-          <div class="wvst-metric-spark" aria-hidden="true">
-            {#each [22, 38, 31, 54, 44, 66, 48, 72, 57, 76, 63, 84] as point}
-              <i style={`height:${point}%`}></i>
-            {/each}
-          </div>
+          <div class="wvst-metric-labels"><span>LATENCY / p50 · p95 · p99</span><span>JITTER / UNDERFLOW / OVERFLOW</span></div>
         </article>
         <article>
           <ShieldCheck size={30} weight="duotone" />
@@ -167,6 +165,15 @@
           <p>{copy.openBody}</p>
         </article>
       </div>
+    </section>
+
+    <section class="wvst-setup">
+      <div>
+        <p class="wvst-section-index">03 / {isZh ? '开始使用' : 'GET CONNECTED'}</p>
+        <h2>{copy.setup}</h2><p>{copy.setupBody}</p>
+        <a class="wvst-text-link" href={`${docsHref}/getting-started`}>{copy.setupLink}<ArrowRight size={18} /></a>
+      </div>
+      <div class="wvst-terminal"><div><span>LOCAL BRIDGE</span><span>TERMINAL</span></div><pre><code>{setupCommand}</code></pre><p>{isZh ? '另开终端运行' : 'In a second terminal'} <code>npm run docs:dev</code></p></div>
     </section>
 
     <section class="wvst-final-cta">

@@ -1,0 +1,55 @@
+.wvst-rack { min-width: 0; padding: 1.4rem; border: 1px solid var(--sd-line); border-radius: 6px; background: var(--sd-panel); scroll-margin-top: 90px; }
+.rack-count { padding: .4rem .55rem; border: 1px solid var(--sd-line); border-radius: 3px; color: var(--sd-muted); font: .62rem var(--font-mono); }
+.rack-intro { color: var(--sd-muted); font-size: .72rem; line-height: 1.7; margin-top: .6rem !important; }
+.wvst-rack-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: .5rem; margin: 1.4rem 0; }
+.wvst-rack-toolbar label { min-width: 0; }
+.wvst-rack-toolbar label > span { display: flex; justify-content: space-between; gap: .3rem; margin-bottom: .5rem; font-size: .65rem; color: var(--sd-muted); }
+.wvst-rack-toolbar label small { font-size: .6rem; }
+.wvst-rack-toolbar .wvst-icon-button { width: 42px; height: 42px; }
+.wvst-rack-toolbar > .studio-button { padding-inline: .75rem; }
+.wvst-rack-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 335px; padding: 2rem 1.5rem; border: 1px dashed var(--sd-line); border-radius: 4px; background: linear-gradient(var(--sd-panel), color-mix(in srgb, var(--studio-wash) 30%, var(--sd-panel))); text-align: center; }
+.empty-chain { display: flex; align-items: center; width: min(100%, 270px); gap: .8rem; margin-bottom: 1.8rem; color: var(--sd-muted); font: .6rem var(--font-mono); }
+.empty-chain i { height: 1px; flex: 1; background: var(--sd-line); }
+.empty-chain b { display: grid; place-items: center; width: 65px; height: 65px; border: 1px solid var(--sd-line); border-radius: 12px; background: var(--sd-panel); color: var(--rack-accent-strong); box-shadow: 0 5px 10px #00000004; }
+.wvst-rack-empty h3 { font: 500 1.35rem/1.3 var(--sd-font-display); max-width: 24ch; letter-spacing: -.02em; }
+.wvst-rack-empty p { max-width: 41ch; margin: .8rem 0 1rem; color: var(--sd-muted); font-size: .74rem; line-height: 1.85; }
+.wvst-slot-list { display: grid; gap: .9rem; padding: 0; margin: 0; list-style: none; }
+.wvst-slot-list > li { min-width: 0; padding: 1.1rem; border: 1px solid var(--sd-line); border-left: 3px solid var(--studio-green); border-radius: 4px; background: color-mix(in srgb, var(--studio-wash) 22%, var(--sd-panel)); }
+.wvst-slot-list > li.bypassed { border-left-color: var(--sd-muted); background: var(--sd-bg); }
+.wvst-slot-list > li.removing { opacity: .55; }
+.wvst-slot-topline { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: .6rem; align-items: start; }
+.wvst-slot-index { font: .65rem/1.7 var(--font-mono); color: var(--sd-muted); }
+.wvst-slot-title { min-width: 0; }
+.wvst-slot-title > strong { display: block; color: var(--sd-ink); font-size: .88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.wvst-slot-title > span { display: block; margin-top: .25rem; font-size: .62rem; color: var(--sd-muted); overflow-wrap: anywhere; }
+.slot-state { display: inline-flex; align-items: center; gap: .3rem; color: var(--studio-green); font-size: .56rem; margin-top: .5rem; }
+.slot-state::before { content: ''; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.bypassed .slot-state { color: var(--sd-muted); }
+.wvst-slot-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .25rem; }
+.wvst-slot-actions button { width: 30px; height: 30px; background: transparent; border-color: transparent; }
+.wvst-slot-actions button.active { color: var(--studio-green); background: var(--studio-wash); }
+.wvst-slot-actions .danger:hover:not(:disabled) { color: var(--rack-accent-strong); }
+.wvst-parameters { border-top: 1px solid var(--sd-line); margin-top: .9rem; padding-top: .75rem; }
+.wvst-parameters summary { display: flex; align-items: center; gap: .45rem; cursor: pointer; font-size: .69rem; color: var(--sd-muted); }
+.wvst-parameters summary > span { margin-left: auto; font: .6rem var(--font-mono); }
+.wvst-parameter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem 1.2rem; margin-top: 1rem; }
+.wvst-parameter-grid label { min-width: 0; }
+.wvst-parameter-grid label > span { display: flex; justify-content: space-between; align-items: baseline; gap: .4rem; }
+.wvst-parameter-grid strong { font-size: .64rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wvst-parameter-grid output { flex-shrink: 0; color: var(--rack-accent-strong); font: .6rem var(--font-mono); }
+.wvst-parameter-grid .pending { opacity: .6; }
+.wvst-parameter-empty { font-size: .68rem; color: var(--sd-muted); padding-top: .65rem; }
+.slot-diagnostics { margin-top: .75rem; border-top: 1px solid var(--sd-line); padding-top: .7rem; }
+.slot-diagnostics summary, .wvst-failures summary { font-size: .63rem; color: var(--sd-muted); cursor: pointer; }
+.wvst-slot-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .4rem; padding-top: .8rem; }
+.wvst-slot-metrics span { display: grid; gap: .4rem; }
+.wvst-slot-metrics small { font-size: .54rem; color: var(--sd-muted); overflow-wrap: anywhere; }
+.wvst-slot-metrics strong { font: .67rem var(--font-mono); }
+.wvst-failures { border-top: 1px solid var(--sd-line); margin-top: 1rem; padding-top: 1rem; }
+.wvst-failures summary { display: flex; align-items: center; gap: .4rem; }
+.wvst-failures p { display: grid; gap: .3rem; font-size: .67rem; margin-top: .8rem; overflow-wrap: anywhere; }
+.wvst-failures p span { color: var(--sd-muted); }
+@media (prefers-reduced-motion: no-preference) { .spinning { animation: studio-spin 1s linear infinite; } @keyframes studio-spin { to { transform: rotate(360deg); } } }
+@media (max-width: 1100px) { .wvst-rack-toolbar { grid-template-columns: minmax(0, 1fr) auto; } .wvst-rack-toolbar > .studio-button { grid-column: 1 / -1; } .wvst-slot-actions { grid-column: 2 / -1; justify-content: start; } }
+@media (max-width: 760px) { .wvst-rack { padding: 1.2rem; } .wvst-rack-empty { min-height: 300px; padding: 1.5rem 1rem; } .wvst-slot-actions button { width: 42px; height: 42px; } .wvst-slot-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; } }
+@media (max-width: 390px) { .wvst-parameter-grid { grid-template-columns: 1fr; } }

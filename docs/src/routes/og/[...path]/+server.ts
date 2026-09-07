@@ -4,7 +4,9 @@ import config from 'virtual:svedocs/config';
 import pages from 'virtual:svedocs/pages';
 import type { RequestHandler } from './$types';
 
-export const prerender = isOgImageEnabled(config);
+// The CLI may already have emitted these URLs into static/og. Allow those
+// assets to satisfy the route while still prerendering entries with --no-og.
+export const prerender = isOgImageEnabled(config) ? 'auto' : false;
 
 const format = createConfiguredOgImageFormat(config);
 const template = createConfiguredOgImageTemplate(config);

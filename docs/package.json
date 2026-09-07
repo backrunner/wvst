@@ -12,7 +12,8 @@
     "build:ssg": "svedocs ssg",
     "build:spa": "svedocs build --mode spa",
     "preview": "svedocs preview",
-    "check": "svedocs check && svelte-check --tsconfig ./tsconfig.json"
+    "check": "svedocs check && svelte-check --tsconfig ./tsconfig.json",
+    "smoke:studio": "node scripts/studio-smoke.mjs"
   },
   "dependencies": {
     "@sveltejs/adapter-cloudflare": "^7.2.8",
@@ -22,16 +23,18 @@
     "@tailwindcss/vite": "^4.3.0",
     "@wvst/web": "file:../packages/wvst-web",
     "phosphor-svelte": "^3.1.0",
-    "svedocs": "0.1.0-beta.9",
+    "svedocs": "0.2.1",
     "svelte": "^5.55.7",
     "tailwindcss": "^4.3.0",
     "vite": "^8.0.13"
   },
   "devDependencies": {
     "@types/node": "^25.8.0",
-    "svedocs-cli": "0.1.0-beta.9",
+    "playwright": "^1.63.0",
+    "svedocs-cli": "0.2.1",
     "svelte-check": "^4.7.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "ws": "^8.21.0"
   },
   "packageManager": "npm@11.6.4"
 }

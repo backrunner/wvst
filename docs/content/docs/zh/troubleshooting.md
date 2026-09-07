@@ -1,10 +1,23 @@
 ---
 title: 故障排查
 description: 诊断浏览器隔离、Bridge 授权、插件发现、worker lifecycle、shared-memory transport 和实时 metrics。
-order: 6
+order: 8
 ---
 
 # 故障排查
+
+先定位故障发生在哪一层，再修改设置。以下 SDK 片段假设已导入对应 helper，且 `client`、`instanceId`、`buffers` 等来自当前应用会话。
+
+| 现象 | 优先检查 |
+| --- | --- |
+| 启动报缺少 token | 独立 CLI 必须设置非空 `WVST_TOKEN`。 |
+| socket 连接不到 | Bridge 是否运行、端口是否匹配、浏览器是否拦截本地访问。 |
+| 可以扫描，但音频持续失败 | 音频 Worker 是否独立完成带 token 的握手。 |
+| 找得到插件，却挂载不了 | worker 可执行文件、插件 CPU 架构、class ID、VST3 总线。 |
+| 原音正常，启用效果器后静音 | 实例状态、流配置、音频错误计数和插件能力。 |
+| 本地正常，部署后失效 | 最终页面 COOP/COEP、资源 URL、实际网页 origin。 |
+
+回到[快速开始](/docs/zh/getting-started)的双终端配置，能排除不少环境差异。
 
 ## SharedArrayBuffer 不可用
 
@@ -33,7 +46,10 @@ Cross-Origin-Embedder-Policy: require-corp
 启动 Bridge：
 
 ```sh
-cargo run -p wvst-bridge-server
+cargo build -p wvst-bridge-server -p wvst-host-worker
+WVST_TOKEN=local-dev-token \
+WVST_HOST_WORKER=target/debug/wvst-host-worker \
+  target/debug/wvst-bridge-server serve
 ```
 
 默认 endpoint：
@@ -52,7 +68,7 @@ cargo run -p wvst-bridge-server -- diagnose
 
 ## Session 未授权
 
-除 `bridge.hello` 外，所有方法都要求已授权 session。如果设置了 `WVST_TOKEN`，需要把同一个 token 传给 `WVSTClient.connect({ token })`。
+独立 CLI 启动时要求非空 `WVST_TOKEN`。除 `bridge.hello` 外，控制方法和二进制音频都需要已授权的连接；把同一个 token 传给 `WVSTClient.connect({ token })`。音频 Worker 是另一个 socket，必须再次执行 `bridge.hello`。
 
 如果 origin 检查失败：
 
@@ -184,13 +200,15 @@ const unsubscribe = client.onEvent((event) => {
 有些 VST3 插件会发出 component handler restart 或 metadata invalidation events。使用：
 
 ```ts
-client.onEvent(async (event) => {
-  if (event.kind.type === "vst3-metadata-invalidated") {
-    await client.refreshMetadataForInvalidation(event.kind, {
-      includeParameterValues: true
-    });
+const unsubscribeMetadata = client.onMetadataInvalidated(
+  (result) => { console.log(result.refreshed); },
+  {
+    includeParameterValues: true,
+    onError: (_event, error) => { console.error(error); }
   }
-});
+);
+// On teardown:
+unsubscribeMetadata();
 ```
 
 如果 refresh policy 是 `rebuild-audio-graph` 或 `reload-component`，应用应 rebuild 受影响 graph 或重新创建 instance。
@@ -265,3 +283,45 @@ cargo run -p wvst-testkit --bin wvst-package-evidence -- \
 ```
 
 `.agents/*.example.json` 提供了这些报告的起始 fixtures。
+
+
+## 控制连接成功但音频未授权
+
+`WVSTBridgeWorkerClient.connect()` 只打开 WebSocket。随后在传输 Worker 上执行：
+
+```ts
+await bridgeWorker.request('bridge.hello', {
+  ...client.createHelloRequest().params,
+  token: tokenFromUser
+});
+```
+
+`createHelloRequest()` 不保存原连接 token，需显式补上。完整流程见 [Web 接入](/docs/zh/web-integration)。
+
+## 文件、播放与重连问题
+
+浏览器拒绝自动播放时，在用户点击播放的处理函数内调用 `audioContext.resume()`，再调用媒体元素的 `play()`。先用内置循环或 WAV 排除格式兼容问题。大于 50 MB 的文件不生成波形，是 Studio 的内存控制行为。
+
+同一个媒体元素不能重复创建 `MediaElementAudioSourceNode`。重连时复用已有 source；只在元素与整个图一起销毁时释放它。旧的 WebSocket 关闭后需要新建控制/Worker 连接、重新握手并挂载新实例。
+
+## 部署后资源或本地网络访问失败
+
+如果 Worker 或 worklet 请求返回 `text/html`，检查 SPA fallback 和静态资源路径。页面必须在最终响应中获得 COOP/COEP，静态站点不会运行 SvelteKit server hook。
+
+若隔离状态正常而 WebSocket 被拦截，查看浏览器控制台的混合内容、本地网络权限和 origin 错误。不要把 `ws://` 简单改成 `wss://`；Bridge CLI 没有自动启用 TLS。详见[配置与部署](/docs/zh/configuration)。
+
+## 保存一次有用的诊断
+
+```ts
+const diagnostics = {
+  hello: client.hello,
+  metrics: await client.metrics(),
+  events: await client.events(),
+  runtime: await client.instances.runtimeSnapshot({
+    instanceId, includeRecentEvents: true
+  })
+};
+console.log(JSON.stringify(diagnostics, null, 2));
+```
+
+保留故障前后的计数增量、复现步骤、浏览器/系统版本和插件版本。分享前移除 token 和不必要的个人路径。真实插件和长期稳定性验证方法见[开发与验证](/docs/zh/development)。

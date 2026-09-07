@@ -1,256 +1,136 @@
 ---
 title: Getting Started
-description: Build the Web SDK, start the local Bridge, serve cross-origin isolated docs, and create a real WVST audio path.
+description: Build the Bridge from source, process your first local VST3 effect in Live Studio, and verify each layer.
 order: 2
 ---
 
 # Getting Started
 
-WVST has two halves:
+Start with the repository's Live Studio. You need a browser, the Rust Bridge, a host worker and a VST3 effect on the same computer. Even when the webpage is hosted remotely, the Bridge runs on the user's machine.
 
-- A browser app using `@wvst/web`.
-- A local `wvst-bridge-server` process that owns plugin discovery, worker supervision, and audio routing.
+## Prepare your environment
 
-For the low-latency path, the browser page must be secure and cross-origin isolated. Localhost counts as a secure context, but the server still has to send the COOP/COEP headers needed for `SharedArrayBuffer`.
+| Component | Requirement and check |
+| --- | --- |
+| Node.js | Use 22; check with `node --version`. |
+| Rust | Use stable from `rust-toolchain.toml`; inspect it with `rustc --version`. |
+| macOS build tools | `xcode-select -p` should print the developer tools path. Install with `xcode-select --install` if needed. |
+| Browser | Start with current desktop Chromium, with AudioWorklet, secure context and cross-origin isolation. |
+| VST3 | Install a stereo input/output effect matching the host worker's CPU architecture. An AU-only installation is insufficient. |
 
-## Install Workspace Dependencies
+macOS is the first runtime target. Responsive mobile styling does not mean a phone can host desktop VST3 plugins. Windows/Linux plugin compatibility requires separate validation.
 
-From the repository root:
-
-```sh
-npm install
-```
-
-The docs app is part of the npm workspace and imports `@wvst/web` from `packages/wvst-web`.
-
-## Build the Web SDK
+## 1. Install workspace dependencies
 
 ```sh
-npm run build:web
+git clone https://github.com/backrunner/wvst.git
+cd wvst
+npm ci
 ```
 
-This runs the `@wvst/web` TypeScript build and Rollup bundle. The package exports the browser entry plus worker and AudioWorklet entrypoints:
+Run subsequent commands from the repository root. `@wvst/web` is a local workspace package; no separate npm installation or adjacent Svedocs checkout is required.
 
-```ts
-import { WVSTClient } from "@wvst/web";
-import BridgeWorker from "@wvst/web/bridge-worker?worker";
-import loopbackProcessorUrl from "@wvst/web/loopback-processor?url";
+## 2. Build and start the Bridge
+
+Build both executables:
+
+```sh
+cargo build -p wvst-bridge-server -p wvst-host-worker
 ```
 
-Use your bundler's worker and URL import syntax. The docs site uses Vite, so the `?worker` and `?url` imports are supported.
+In terminal A:
 
-## Start the Bridge
+```sh
+WVST_TOKEN=local-dev-token \
+WVST_HOST_WORKER=target/debug/wvst-host-worker \
+  target/debug/wvst-bridge-server serve
+```
 
-### Download a release
+Expect:
 
-Download the Bridge package from the [WVST GitHub Releases](https://github.com/backrunner/wvst/releases) page. The package contains both `wvst-bridge-server` and `wvst-host-worker`, plus the platform service installer. Install it, start the service, and keep it running while the browser demo is open.
+```text
+wvst-bridge-server listening on ws://127.0.0.1:35876
+```
 
-The repository does not publish a release binary yet. Until the first release is available, use the source build below.
+Keep terminal A running. The standalone CLI requires a nonempty `WVST_TOKEN`. This value is a local development example; keep real tokens out of frontend bundles and source control. `WVST_HOST_WORKER` points at the worker you built; building only the Bridge does not produce that executable.
 
-### Build from source
+For an optimized build, use a matching pair of release binaries:
 
 ```sh
 cargo build --release -p wvst-bridge-server -p wvst-host-worker
+WVST_TOKEN=local-dev-token \
 WVST_HOST_WORKER=target/release/wvst-host-worker \
   target/release/wvst-bridge-server serve
 ```
 
-Default endpoint:
+No release binaries are published yet. Check [Releases](https://github.com/backrunner/wvst/releases) for future availability; use source builds now.
 
-```txt
-ws://127.0.0.1:35876
-```
+## 3. Start the docs and Studio
 
-Useful Bridge commands:
-
-```sh
-cargo build -p wvst-bridge-server -p wvst-host-worker
-WVST_HOST_WORKER=target/debug/wvst-host-worker \
-  cargo run -p wvst-bridge-server -- serve
-cargo run -p wvst-bridge-server -- diagnose
-```
-
-`diagnose` prints JSON for config, platform, env, and host worker discovery.
-
-## Bridge Environment Variables
-
-Use these when testing authorization, limits, and worker behavior:
-
-| Variable | Purpose |
-| --- | --- |
-| `WVST_BIND_ADDR` | Override the default `127.0.0.1:35876` bind address. |
-| `WVST_TOKEN` | Require a token during `bridge.hello`. |
-| `WVST_ALLOWED_ORIGINS` | Comma-separated origin allowlist. |
-| `WVST_ALLOW_LOOPBACK_ORIGINS` | Set to `0` or `false` to stop auto-allowing loopback origins. |
-| `WVST_HOST_WORKER` | Override host worker executable discovery. |
-| `WVST_WORKER_AUTO_RESTART` | Set to `0` or `false` to disable automatic worker restart. |
-| `WVST_MAX_WORKER_INSTANCES` | Cap concurrent worker instances. Default is `64`. |
-| `WVST_WORKER_QUARANTINE_FAILURES` | Failures before a plugin enters quarantine. Default is `3`. |
-| `WVST_MAX_CONTROL_MESSAGE_BYTES` | Cap JSON control message size. |
-| `WVST_WORKER_MEMORY_LIMIT_BYTES` | Address-space limit for supervised workers where supported. |
-| `WVST_WORKER_CPU_TIME_LIMIT_SECONDS` | CPU time limit for supervised workers where supported. |
-| `WVST_WORKER_LINUX_CGROUP_PARENT` | Linux cgroup parent for worker supervision. |
-| `WVST_WORKER_LINUX_CGROUP_MEMORY_MAX_BYTES` | Linux cgroup memory max. |
-| `WVST_WORKER_LINUX_CGROUP_CPU_QUOTA_MICROS` | Linux cgroup CPU quota. |
-| `WVST_WORKER_LINUX_CGROUP_CPU_PERIOD_MICROS` | Linux cgroup CPU period. |
-
-Example:
-
-```sh
-WVST_TOKEN=dev-token \
-WVST_ALLOWED_ORIGINS=http://127.0.0.1:5173 \
-cargo run -p wvst-bridge-server
-```
-
-## Run the Docs Site
+In terminal B:
 
 ```sh
 npm run docs:dev
 ```
 
-The docs dev server first builds `@wvst/web`, then starts Svedocs. The project Vite config sends:
+This builds the Web SDK and starts Svedocs. Open the printed address (normally `http://localhost:5173`) and visit [Live Studio](/demo). If the port is occupied, use the actual URL printed by the server.
 
-```txt
+The dev server supplies:
+
+```text
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-Those headers are also applied from SvelteKit hooks so production-style local builds keep the same low-latency prerequisites.
+Run this in the page console; all three values should be `true`:
 
-## Minimal Web SDK Flow
-
-This is the smallest control-plane path for a real plugin instance:
-
-```ts
-const prerequisites = WVSTClient.lowLatencyPrerequisites();
-if (!prerequisites.sharedArrayBuffer || !prerequisites.crossOriginIsolated) {
-  throw new Error("WVST requires SharedArrayBuffer and cross-origin isolation");
-}
-
-const client = await WVSTClient.connect({
-  endpoint: "ws://127.0.0.1:35876",
-  clientName: "my-wvst-app",
-  clientVersion: "0.1.0",
-  requireLowLatency: true,
-  token: "dev-token"
-});
-
-const report = await client.plugins.list({ rescan: true });
-const choice = report.plugins[0];
-const pluginClass = choice.classes[0];
-
-const instance = await client.instances.create({
-  pluginId: choice.pluginId,
-  classId: pluginClass?.classId,
-  sampleRate: audioContext.sampleRate,
-  maxBlockFrames: 128,
-  inputChannels: 2,
-  outputChannels: 2
-});
-
-await client.instances.start({ instanceId: instance.instanceId });
+```js
+({
+  secureContext: window.isSecureContext,
+  crossOriginIsolated: window.crossOriginIsolated,
+  sharedArrayBuffer: typeof SharedArrayBuffer === 'function'
+})
 ```
 
-`client.hello` contains negotiated protocol and Bridge metrics. `client.metrics()` and `client.events()` can be called after connection.
+A secure localhost page is not automatically cross-origin isolated. Do not open the HTML as a file or replace the server with one that omits these headers. For hosting, see [Configuration and deployment](/docs/configuration).
 
-## Add the AudioWorklet Path
+## 4. Hear your first effect
 
-The browser live path uses an AudioWorklet node plus a DedicatedWorker audio pump:
+1. Expand advanced connection settings. Enter `ws://127.0.0.1:35876` and token `local-dev-token`, then connect. The initial automatic attempt has no token; fill it in if authorization fails.
+2. Choose **Try a synth loop** or drop a browser-supported audio file. Preview original audio first to verify your output device.
+3. Select and mount a VST3 effect. If the list is empty, rescan and inspect scan failures.
+4. Press Play, adjust parameters and compare with bypass. Confirm the effect is enabled in the signal path.
+5. Expand **Processing details** to inspect queues and error counters. Output meters respond to actual audio.
 
-```ts
-const worker = new BridgeWorker();
-const bridgeWorker = new WVSTBridgeWorkerClient({ worker });
-await bridgeWorker.connect("ws://127.0.0.1:35876");
+macOS scan paths include `/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/VST3`. Discovery does not establish channel-layout, licensing or processing compatibility.
 
-const buffers = createLoopbackSharedBuffers({
-  frames: 128,
-  inputChannels: 2,
-  outputChannels: 2,
-  capacityQuanta: 4
-});
+## 5. Stop and reconnect
 
-await audioContext.audioWorklet.addModule(loopbackProcessorUrl);
-const node = new AudioWorkletNode(audioContext, "wvst-loopback", {
-  numberOfInputs: 1,
-  numberOfOutputs: 1,
-  outputChannelCount: [2],
-  channelCount: 2,
-  channelCountMode: "explicit"
-});
+Pause playback, then remove effects or disconnect the Bridge. Studio releases its instances and audio streams. Remount effects after reconnecting. Finally, press Ctrl+C in terminal A to stop the Bridge and in terminal B to stop the docs server.
 
-configureLoopbackAudioWorkletNode(node, buffers);
-source.connect(node).connect(audioContext.destination);
+Refreshing the page does not preserve the rack or plugin state. Application persistence requires the SDK's state snapshot APIs.
 
-await bridgeWorker.startAudioStream({
-  streamId: instance.streamId,
-  sampleRate: instance.sampleRate,
-  frames: 128,
-  inputChannels: 2,
-  outputChannels: 2,
-  buffers
-});
-```
+## First diagnostic checkpoints
 
-Call `readLoopbackMetrics(buffers)` to display pending input/output quanta, underflows, overflows, dropped events, late events, and transport failures.
+| Symptom | Next check |
+| --- | --- |
+| Bridge does not start | Token, occupied port and executable paths. |
+| Browser cannot connect | Same computer, matching endpoint and browser local-network restrictions. |
+| Scan succeeds but mount fails | Worker path, plugin architecture, class ID and channel layout. |
+| Mounted effect is silent | Bypass to verify the source, then check instance state, audio-worker authorization and counters. |
 
-## Parameter and State Basics
-
-After an instance is ready:
-
-```ts
-const parameters = await client.instances.parameters({
-  instanceId: instance.instanceId
-});
-
-const cutoff = parameters.parameters.find((parameter) =>
-  parameter.title?.toLowerCase().includes("cutoff")
-);
-
-if (cutoff) {
-  await client.instances.parameterEdit({
-    instanceId: instance.instanceId,
-    parameterId: cutoff.id,
-    valueNormalized: 0.72
-  });
-}
-
-const state = await client.instances.getState({ instanceId: instance.instanceId });
-const snapshot = createWVSTInstanceStateSnapshot(state, instance);
-```
-
-Use `instanceStateSnapshotToSetStateOptions()` to restore a snapshot into a compatible instance.
-
-## MIDI Basics
-
-Instrument plugins and MIDI-capable effects can receive events through the bridge worker:
-
-```ts
-const keyboard = createWVSTVirtualKeyboard({
-  buffers,
-  sendMidiEvents: (events) =>
-    bridgeWorker.sendMidiEvents({
-      streamId: instance.streamId,
-      events
-    })
-});
-
-await keyboard.noteOn(60, 0.9);
-await keyboard.noteOff(60);
-```
-
-The helper validates channel, velocity, pitch bend, and sample offset. Web MIDI can be adapted with `createWVSTWebMidiAdapter()`.
-
-## Run Checks
+Inspect local diagnostics:
 
 ```sh
-npm run docs:check
-npm run docs:build -- --no-og
+WVST_HOST_WORKER=target/debug/wvst-host-worker \
+  target/debug/wvst-bridge-server diagnose
 ```
 
-For the whole repository:
+`diagnose` inspects configuration and worker discovery. It does not process real plugin audio and can run without a token. See [Troubleshooting](/docs/troubleshooting) for recovery steps.
 
-```sh
-npm run check
-```
+## Next steps
 
-`npm run check` runs Rust tests and the Web SDK type check.
+- [Demo guide](/docs/demo-guide): player, rack, parameters and metrics.
+- [Web integration](/docs/web-integration): control connection, full audio path and resource cleanup.
+- [Configuration and deployment](/docs/configuration): tokens, origins, headers and environment variables.
+- [Development](/docs/development): checks, browser regression and real-plugin evidence.

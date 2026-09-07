@@ -12,9 +12,10 @@ export default defineConfig({
     pages: 'content/pages'
   },
   theme: {
+    readingStyle: 'plain',
     defaultMode: 'system',
     palette: {
-      accent: '#9a4f3d',
+      accent: '#985936',
       neutral: 'zinc'
     },
     fonts: {
@@ -30,7 +31,7 @@ export default defineConfig({
     brand: {
       label: 'WVST',
       href: '/',
-      logo: '/favicon.svg'
+      logo: '/brand/wvst-mark.svg'
     },
     nav: [
       { label: 'Docs', href: '/docs' },

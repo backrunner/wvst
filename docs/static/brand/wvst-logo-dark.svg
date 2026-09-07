@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="252" height="70" viewBox="0 0 252 70" role="img" aria-labelledby="title">
+  <title id="title">WVST</title>
+  <path fill="#ecece1" d="M8 12H18L29 43L38 19L43 33L34 58H24Z"/>
+  <path fill="#d5a079" d="M36 12H46L57 43L68 12H78L62 58H52Z"/>
+  <g fill="none" stroke="#ecece1" stroke-width="5.2" stroke-linecap="square" stroke-linejoin="round">
+    <path d="M102 25L109 49L118 27L127 49L134 25"/>
+    <path d="M146 25L157 49L168 25"/>
+    <path d="M199 28C194 23 179 23 179 31C179 39 198 34 198 43C198 51 183 52 177 47"/>
+    <path d="M211 25H237M224 25V49"/>
+  </g>
+</svg>

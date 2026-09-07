@@ -1,23 +1,23 @@
 :root {
-  --sd-bg: #ebe8df;
-  --sd-ink: #2c2924;
-  --sd-muted: #69645a;
-  --sd-line: #c8c1b3;
+  --sd-bg: #f4f2ec;
+  --sd-ink: #282c26;
+  --sd-muted: #65695f;
+  --sd-line: #d5d7cc;
   --sd-grid-line: transparent;
-  --sd-panel: #f5f1e8;
-  --sd-accent: #9a4f3d;
-  --sd-accent-2: #9a4f3d;
+  --sd-panel: #faf9f5;
+  --sd-accent: #985936;
+  --sd-accent-2: #985936;
 }
 
 :root[data-theme="dark"] {
-  --sd-bg: #24221e;
-  --sd-ink: #eee9dc;
-  --sd-muted: #b8b0a1;
-  --sd-line: #4d4941;
+  --sd-bg: #1c201c;
+  --sd-ink: #ecece1;
+  --sd-muted: #adb4a5;
+  --sd-line: #3e453b;
   --sd-grid-line: transparent;
-  --sd-panel: #302d28;
-  --sd-accent: #d48670;
-  --sd-accent-2: #d48670;
+  --sd-panel: #252a24;
+  --sd-accent: #d5a079;
+  --sd-accent-2: #d5a079;
 }
 
 body {
@@ -34,7 +34,6 @@ body {
   display: none;
 }
 
-.sd-brand span:last-child,
 .sd-doc-header h1,
 .sd-page-header h1,
 .sd-home-hero h1,
@@ -42,7 +41,7 @@ body {
 .sd-prose h2,
 .sd-prose h3 {
   font-family: var(--sd-font-display);
-  letter-spacing: 0;
+  letter-spacing: -.02em;
 }
 
 .sd-topbar {
@@ -88,3 +87,37 @@ body {
 .sd-footer {
   border-top-color: var(--sd-line);
 }
+
+/* WVST reading surfaces share the console palette without decorative grids. */
+.sd-doc, .sd-page { box-shadow: none; border-radius: 4px; }
+.sd-prose { line-height: 1.85; }
+/* Space above a chapter belongs to the preceding section; padding separates
+   the heading itself from Svedocs' section divider. */
+.sd-prose h2 {
+  margin-block: 3.25rem 1rem;
+  padding-block-start: 1.5rem;
+  line-height: 1.3;
+}
+.sd-prose h3 { margin-block: 2.25rem .85rem; line-height: 1.35; }
+.sd-prose h4 { margin-block: 1.8rem .7rem; line-height: 1.4; }
+.sd-prose hr { margin-block: 2.75rem; }
+/* A Markdown rule already supplies the divider before this heading. */
+.sd-prose hr + h2 { border-block-start: 0; padding-block-start: 0; margin-block-start: 0; }
+.sd-prose :is(h2, h3, h4) + :is(p, ul, ol, .sd-code, pre, .sd-table-scroll) {
+  margin-block-start: 1rem;
+}
+@media (max-width: 680px) {
+  .sd-prose h2 { margin-block-start: 2.5rem; padding-block-start: 1.25rem; }
+  .sd-prose h3 { margin-block-start: 1.8rem; }
+  .sd-prose hr { margin-block: 2rem; }
+  .sd-prose hr + h2 { margin-block-start: 0; padding-block-start: 0; }
+}
+.sd-sidebar a[aria-current="page"] { background: color-mix(in srgb, var(--sd-accent) 9%, transparent); border-radius: 3px; }
+.sd-brand img { width: 27px; height: 27px; border-radius: 4px; }
+.sd-brand { font-family: var(--font-sans); font-weight: 750; letter-spacing: -.04em; }
+.sd-footer { font-size: .75rem; }
+:root[data-theme="dark"] .sd-root {
+  /* Svedocs sets the configured accent inline on its layout shell. */
+  --sd-accent: #d5a079 !important;
+}
+::selection { background: color-mix(in srgb, var(--sd-accent) 24%, var(--sd-bg)); color: var(--sd-ink); }

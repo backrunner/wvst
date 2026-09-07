@@ -250,3 +250,11 @@ Bridge metrics 包括：
 - route latency、interarrival jitter、shared-memory process latency 的 histogram。
 
 `instance.runtime.snapshot` 会合并 instance descriptor、metadata refresh result、shared-memory status、pump status 和可选 recent events。
+
+## 双连接授权与延迟边界
+
+Studio 的主线程 `WVSTClient` 负责控制，DedicatedWorker 持有独立音频 socket。二者都需要 `bridge.hello`；主线程授权不会隐式授权第二条连接。浏览器 SAB 和原生文件映射共享内存是不同的数据面，不能描述为浏览器直接共享插件内存。
+
+128 帧在 48 kHz 下约为 2.67 ms，这是一个 block 的时间；环形缓冲容量也不等于固定延迟。实际往返包含浏览器调度、传输、Bridge 路由、插件处理和输出排队。插件 `latencySamples` 只说明插件自身声明的延迟，端到端结论需要 loopback 测量。
+
+创建与清理顺序见 [Web 接入](/docs/zh/web-integration)，环境配置见[配置与部署](/docs/zh/configuration)，验证方法见[开发与验证](/docs/zh/development)。

@@ -1,244 +1,136 @@
 ---
 title: 快速开始
-description: 构建 Web SDK、启动本地 Bridge、提供 cross-origin isolated 文档站，并创建真实 WVST 音频链路。
+description: 从源码启动 Bridge，在 Live Studio 跑通第一个本地 VST3 效果器，并确认每一层工作正常。
 order: 2
 ---
 
 # 快速开始
 
-WVST 有两个部分：
+本指南先跑通仓库自带的 Live Studio。你需要同一台电脑上的浏览器、Rust Bridge、host worker 和 VST3 效果器。网页部署到远程服务器后，Bridge 仍运行在使用者电脑上。
 
-- 使用 `@wvst/web` 的浏览器应用。
-- 本机 `wvst-bridge-server` 进程，负责插件发现、worker supervision 和音频路由。
+## 准备环境
 
-低延迟路径要求浏览器页面处于 secure context 且 cross-origin isolated。localhost 属于 secure context，但服务器仍需要发送 COOP/COEP headers 才能使用 `SharedArrayBuffer`。
-
-## 安装 workspace 依赖
-
-在仓库根目录运行：
-
-```sh
-npm install
-```
-
-文档 app 属于 npm workspace，并从 `packages/wvst-web` 导入 `@wvst/web`。
-
-## 构建 Web SDK
-
-```sh
-npm run build:web
-```
-
-这会运行 `@wvst/web` 的 TypeScript build 和 Rollup bundle。包导出浏览器入口、worker 入口和 AudioWorklet 入口：
-
-```ts
-import { WVSTClient } from "@wvst/web";
-import BridgeWorker from "@wvst/web/bridge-worker?worker";
-import loopbackProcessorUrl from "@wvst/web/loopback-processor?url";
-```
-
-请使用当前 bundler 支持的 worker 和 URL import 语法。文档站使用 Vite，因此支持 `?worker` 和 `?url`。
-
-## 启动 Bridge
-
-```sh
-cargo run -p wvst-bridge-server
-```
-
-默认 endpoint：
-
-```txt
-ws://127.0.0.1:35876
-```
-
-常用命令：
-
-```sh
-cargo run -p wvst-bridge-server -- serve
-cargo run -p wvst-bridge-server -- diagnose
-```
-
-`diagnose` 会输出 config、platform、env 和 host worker discovery 的 JSON。
-
-## Bridge 环境变量
-
-测试授权、限制和 worker 行为时常用：
-
-| 变量 | 用途 |
+| 项目 | 要求与检查方法 |
 | --- | --- |
-| `WVST_BIND_ADDR` | 覆盖默认 `127.0.0.1:35876` bind address。 |
-| `WVST_TOKEN` | 要求 `bridge.hello` 提供 token。 |
-| `WVST_ALLOWED_ORIGINS` | 逗号分隔的 origin allowlist。 |
-| `WVST_ALLOW_LOOPBACK_ORIGINS` | 设为 `0` 或 `false` 后不再自动允许 loopback origins。 |
-| `WVST_HOST_WORKER` | 覆盖 host worker executable discovery。 |
-| `WVST_WORKER_AUTO_RESTART` | 设为 `0` 或 `false` 后关闭 worker 自动重启。 |
-| `WVST_MAX_WORKER_INSTANCES` | 限制并发 worker instances。默认 `64`。 |
-| `WVST_WORKER_QUARANTINE_FAILURES` | 插件进入 quarantine 前允许的失败次数。默认 `3`。 |
-| `WVST_MAX_CONTROL_MESSAGE_BYTES` | 限制 JSON 控制消息大小。 |
-| `WVST_WORKER_MEMORY_LIMIT_BYTES` | 支持的平台上限制 supervised worker address space。 |
-| `WVST_WORKER_CPU_TIME_LIMIT_SECONDS` | 支持的平台上限制 supervised worker CPU time。 |
-| `WVST_WORKER_LINUX_CGROUP_PARENT` | Linux cgroup parent。 |
-| `WVST_WORKER_LINUX_CGROUP_MEMORY_MAX_BYTES` | Linux cgroup memory max。 |
-| `WVST_WORKER_LINUX_CGROUP_CPU_QUOTA_MICROS` | Linux cgroup CPU quota。 |
-| `WVST_WORKER_LINUX_CGROUP_CPU_PERIOD_MICROS` | Linux cgroup CPU period。 |
+| Node.js | 使用 22，运行 `node --version` 检查。 |
+| Rust | 使用仓库 `rust-toolchain.toml` 的 stable 工具链；`rustc --version` 可查看当前版本。 |
+| macOS 编译工具 | `xcode-select -p` 应输出开发工具路径；未安装时运行 `xcode-select --install`。 |
+| 浏览器 | 优先当前桌面 Chromium；需要 AudioWorklet、安全上下文和跨源隔离。 |
+| VST3 | 安装双声道输入/输出的效果器，架构与 host worker 匹配。只有 AU 版本不够。 |
 
-示例：
+macOS 是当前首要运行目标。移动端样式适配不意味着手机可以运行桌面 VST3；Windows/Linux 的真实插件兼容性需要分别验证。
+
+## 1. 安装仓库依赖
 
 ```sh
-WVST_TOKEN=dev-token \
-WVST_ALLOWED_ORIGINS=http://127.0.0.1:5173 \
-cargo run -p wvst-bridge-server
+git clone https://github.com/backrunner/wvst.git
+cd wvst
+npm ci
 ```
 
-## 启动文档站
+后续命令都在仓库根目录执行。`@wvst/web` 是本地 workspace 包，不需要另行从 npm 安装；也不需要在旁边检出 Svedocs。
+
+## 2. 构建并启动本地 Bridge
+
+先构建两个可执行文件：
+
+```sh
+cargo build -p wvst-bridge-server -p wvst-host-worker
+```
+
+在终端 A 中启动：
+
+```sh
+WVST_TOKEN=local-dev-token \
+WVST_HOST_WORKER=target/debug/wvst-host-worker \
+  target/debug/wvst-bridge-server serve
+```
+
+成功时显示：
+
+```text
+wvst-bridge-server listening on ws://127.0.0.1:35876
+```
+
+保持终端 A 运行。独立 CLI 要求非空 `WVST_TOKEN`，这里的值只是本地开发示例；不要把真实 token 提交到前端代码或仓库。`WVST_HOST_WORKER` 指向刚构建的 worker，单独构建 Bridge 不会自动产生这个文件。
+
+需要优化构建时，使用匹配的一对 release 文件：
+
+```sh
+cargo build --release -p wvst-bridge-server -p wvst-host-worker
+WVST_TOKEN=local-dev-token \
+WVST_HOST_WORKER=target/release/wvst-host-worker \
+  target/release/wvst-bridge-server serve
+```
+
+目前没有已发布的二进制安装包。[Releases](https://github.com/backrunner/wvst/releases) 用于查看后续发布，当前请使用源码构建。
+
+## 3. 启动文档与 Studio
+
+终端 B：
 
 ```sh
 npm run docs:dev
 ```
 
-文档 dev server 会先构建 `@wvst/web`，再启动 Svedocs。项目 Vite 配置会发送：
+这会先构建 Web SDK，再启动 Svedocs。打开终端输出的地址（通常为 `http://localhost:5173`），进入 [Live Studio](/zh/demo)。如果端口被占用，以终端实际输出为准。
 
-```txt
+开发服务器已提供：
+
+```text
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-SvelteKit hooks 也会加同样 headers，因此 production-style 本地构建也满足低延迟前置条件。
+在页面控制台运行以下代码，三个值都应该为 `true`：
 
-## 最小 Web SDK 流程
-
-真实插件实例的最小控制面路径：
-
-```ts
-const prerequisites = WVSTClient.lowLatencyPrerequisites();
-if (!prerequisites.sharedArrayBuffer || !prerequisites.crossOriginIsolated) {
-  throw new Error("WVST requires SharedArrayBuffer and cross-origin isolation");
-}
-
-const client = await WVSTClient.connect({
-  endpoint: "ws://127.0.0.1:35876",
-  clientName: "my-wvst-app",
-  clientVersion: "0.1.0",
-  requireLowLatency: true,
-  token: "dev-token"
-});
-
-const report = await client.plugins.list({ rescan: true });
-const choice = report.plugins[0];
-const pluginClass = choice.classes[0];
-
-const instance = await client.instances.create({
-  pluginId: choice.pluginId,
-  classId: pluginClass?.classId,
-  sampleRate: audioContext.sampleRate,
-  maxBlockFrames: 128,
-  inputChannels: 2,
-  outputChannels: 2
-});
-
-await client.instances.start({ instanceId: instance.instanceId });
+```js
+({
+  secureContext: window.isSecureContext,
+  crossOriginIsolated: window.crossOriginIsolated,
+  sharedArrayBuffer: typeof SharedArrayBuffer === 'function'
+})
 ```
 
-`client.hello` 包含协议协商结果和 Bridge metrics。连接后可以调用 `client.metrics()` 和 `client.events()`。
+localhost 的安全上下文不自动带来跨源隔离。不要双击 HTML 文件或换成不发送这些响应头的静态服务器。正式托管见[配置与部署](/docs/zh/configuration)。
 
-## 接入 AudioWorklet 路径
+## 4. 听到第一个效果器
 
-浏览器 live path 使用 AudioWorklet node 加 DedicatedWorker audio pump：
+1. 在连接卡片展开高级设置，地址填写 `ws://127.0.0.1:35876`，token 填写 `local-dev-token`，点击连接。首次自动连接没有 token，出现授权提示时在这里补上即可。
+2. 选择内置合成器循环，或拖入浏览器支持的音频文件。可以先播放原音确认输出设备正常。
+3. 从插件列表选择 VST3 效果器并挂载。列表为空时重新扫描，检查扫描失败提示。
+4. 点击播放，调节参数并切换旁路比较声音。在信号路径中确认效果器已启用。
+5. 展开处理详情，观察队列及错误计数；输出电平随真实音频变化。
 
-```ts
-const worker = new BridgeWorker();
-const bridgeWorker = new WVSTBridgeWorkerClient({ worker });
-await bridgeWorker.connect("ws://127.0.0.1:35876");
+macOS 默认路径包括 `/Library/Audio/Plug-Ins/VST3` 和 `~/Library/Audio/Plug-Ins/VST3`。扫描结果只表示发现了插件，不保证其声道配置、授权或处理功能兼容。
 
-const buffers = createLoopbackSharedBuffers({
-  frames: 128,
-  inputChannels: 2,
-  outputChannels: 2,
-  capacityQuanta: 4
-});
+## 5. 结束与重连
 
-await audioContext.audioWorklet.addModule(loopbackProcessorUrl);
-const node = new AudioWorkletNode(audioContext, "wvst-loopback", {
-  numberOfInputs: 1,
-  numberOfOutputs: 1,
-  outputChannelCount: [2],
-  channelCount: 2,
-  channelCountMode: "explicit"
-});
+暂停播放后移除效果器或断开 Bridge，Studio 会释放所挂载的实例与音频流。重新连接后需要重新挂载效果器。最后在终端 A 按 Ctrl+C 停止服务，在终端 B 按 Ctrl+C 停止文档服务器。
 
-configureLoopbackAudioWorkletNode(node, buffers);
-source.connect(node).connect(audioContext.destination);
+网页刷新不会保存机架和插件状态。自己的应用需要使用 SDK 状态快照接口实现持久化。
 
-await bridgeWorker.startAudioStream({
-  streamId: instance.streamId,
-  sampleRate: instance.sampleRate,
-  frames: 128,
-  inputChannels: 2,
-  outputChannels: 2,
-  buffers
-});
-```
+## 有问题时从哪里看
 
-使用 `readLoopbackMetrics(buffers)` 读取 pending input/output quanta、underflow、overflow、dropped events、late events 和 transport failures。
+| 现象 | 下一步 |
+| --- | --- |
+| Bridge 无法启动 | 检查 token、端口占用和可执行文件路径。 |
+| 网页无法连接 | 确认同一电脑、相同 endpoint，以及浏览器是否拦截本地网络访问。 |
+| 可以扫描但挂载失败 | 检查 worker 路径、插件架构、class ID 和声道配置。 |
+| 挂载后没有声音 | 先旁路确认原音，再检查实例状态、音频 Worker 授权和错误计数。 |
 
-## 参数与 State 基础
-
-实例 ready 后：
-
-```ts
-const parameters = await client.instances.parameters({
-  instanceId: instance.instanceId
-});
-
-const cutoff = parameters.parameters.find((parameter) =>
-  parameter.title?.toLowerCase().includes("cutoff")
-);
-
-if (cutoff) {
-  await client.instances.parameterEdit({
-    instanceId: instance.instanceId,
-    parameterId: cutoff.id,
-    valueNormalized: 0.72
-  });
-}
-
-const state = await client.instances.getState({ instanceId: instance.instanceId });
-const snapshot = createWVSTInstanceStateSnapshot(state, instance);
-```
-
-使用 `instanceStateSnapshotToSetStateOptions()` 把 snapshot 恢复到兼容实例。
-
-## MIDI 基础
-
-Instrument 插件和支持 MIDI 的 effect 可以通过 bridge worker 接收事件：
-
-```ts
-const keyboard = createWVSTVirtualKeyboard({
-  buffers,
-  sendMidiEvents: (events) =>
-    bridgeWorker.sendMidiEvents({
-      streamId: instance.streamId,
-      events
-    })
-});
-
-await keyboard.noteOn(60, 0.9);
-await keyboard.noteOff(60);
-```
-
-helper 会校验 channel、velocity、pitch bend 和 sample offset。Web MIDI 可以用 `createWVSTWebMidiAdapter()` 转换。
-
-## 运行检查
+查看本机诊断：
 
 ```sh
-npm run docs:check
-npm run docs:build -- --no-og
+WVST_HOST_WORKER=target/debug/wvst-host-worker \
+  target/debug/wvst-bridge-server diagnose
 ```
 
-整个仓库：
+`diagnose` 检查配置与 worker 发现，不执行真实插件音频处理，也可以在未设置 token 时运行。详细恢复步骤见[故障排查](/docs/zh/troubleshooting)。
 
-```sh
-npm run check
-```
+## 接下来
 
-`npm run check` 会运行 Rust tests 和 Web SDK type check。
+- [Demo 指南](/docs/zh/demo-guide)：播放、机架、参数和指标。
+- [Web 接入](/docs/zh/web-integration)：从控制连接到完整音频路径及资源释放。
+- [配置与部署](/docs/zh/configuration)：token、origin、响应头及环境变量。
+- [开发与验证](/docs/zh/development)：检查命令、浏览器回归和真实插件证据。

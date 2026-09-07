@@ -1,48 +1,81 @@
 ---
-title: Demo Guide
-description: 使用本地 bridge 和真实 VST3 效果器运行 WVST 浏览器 rack。
+title: Live Studio 指南
+description: 从选择音频到挂载效果链，了解播放控制、参数、旁路、指标和重连行为。
 order: 4
 ---
 
-# Demo Guide
+# Live Studio 指南
 
-独立的 [Demo](/zh/demo) 是一条真实的 browser-to-native 音频链路。它加载本地音频文件，连接本地 Bridge Server，发现 VST3 metadata，并通过隔离 worker instance 路由音频。
+[打开 Studio](/zh/demo)，把浏览器音频送入本机 VST3 效果器。界面按「连接 Bridge → 选择音频 → 构建效果链」引导；也可以先试听原音，再接入插件。
 
-## 浏览器前置条件
+首次安装请按[快速开始](/docs/zh/getting-started)构建 Bridge 与 host worker。当前使用源码构建，没有已发布的二进制安装包。
 
-- 使用 localhost 或 HTTPS 提供站点。
-- 发送 `Cross-Origin-Opener-Policy: same-origin`。
-- 发送 `Cross-Origin-Embedder-Policy: require-corp`。
-- 确认 `crossOriginIsolated` 和 `SharedArrayBuffer` 可用。
+## 连接本地 Bridge
 
-缺少前置条件时，demo 会显示明确错误，不会退化为伪造的播放效果。
+使用 `WVST_TOKEN` 启动 Bridge 后，展开高级连接设置，填写同一个 token 和默认地址 `ws://127.0.0.1:35876`。保持 Bridge 进程运行，再点击连接。
 
-## 启动 Bridge
+页面首次加载会自动尝试一次默认连接，但没有预设 token。首次出现授权失败时，填写 token 后重试即可。改用自定义端口时，同时修改 Bridge 的 `WVST_BIND_ADDR` 和页面 endpoint。
 
-#### 下载 release
+成功连接表示控制连接和音频 Worker 都完成授权。插件列表来自本机扫描；为空时使用重新扫描，并查看失败路径与原因。一个 bundle 可能暴露多个 class；优先选择已知支持立体声输入/输出的效果器。
 
-从 [WVST GitHub Releases](https://github.com/backrunner/wvst/releases) 下载对应平台的 package。里面包含 Bridge Server、隔离的 host worker 和 service installer。
+## 选择和播放音频
 
-仓库目前还没有发布二进制。现在可以在仓库根目录构建两个 binary：
+| 操作 | 行为 |
+| --- | --- |
+| 试听合成片段 | 在本机生成八秒合成器循环，不需要下载示例音频。 |
+| 选择或拖入文件 | 使用浏览器支持的音频文件；扩展名被接受不保证浏览器具备对应解码器。 |
+| 播放 / 暂停 | 通过浏览器 WebAudio 输出；首次播放需要用户操作。 |
+| 进度条 / 跳转 | 调整当前播放位置，波形预览表示实际音频内容。 |
+| 循环 | 重复播放当前音频，适合比较效果器设置。 |
+| 音量 / 静音 | 控制效果链后的输出增益，不更改插件参数。 |
 
-```sh
-cargo build --release -p wvst-bridge-server -p wvst-host-worker
-WVST_HOST_WORKER=target/release/wvst-host-worker \
-  target/release/wvst-bridge-server serve
-```
+文件通过本地 object URL 播放，不上传至文档服务器。启用效果器后，音频样本会经本机 Bridge 送到插件处理。大于 50 MB 的文件跳过额外的波形解码以减少内存开销，仍尝试正常播放；空波形也可能是解码器不支持，不一定表示音频传输故障。
 
-保持进程或已安装的 service 运行，然后打开 [Demo](/zh/demo)。页面加载时会自动尝试一次默认 endpoint `ws://127.0.0.1:35876`。修改地址或 Token 后，可以使用连接按钮重试。
+用 WAV 或内置片段作为首次验证音源，确认原音能听到，再添加效果器。
 
-首次连接会协商 Bridge 版本、origin policy、可选 token 和插件能力。
+## 构建和比较效果链
 
-## Rack 生命周期
+1. 选择插件并挂载。每次挂载创建独立实例；同一插件可以加入多个 slot。
+2. 从上到下按顺序处理音频。使用排序按钮移动效果器，听取不同顺序的变化。
+3. 切换单个效果器的旁路，保留参数并暂时从音频路径移出。全部旁路或空机架时播放原音。
+4. 移除效果器会停止流、停止处理并销毁实例。再次挂载是新实例。
 
-每个 slot 拥有一个 WVST instance、一份 shared-buffer、一个 `AudioWorkletNode` 和一条 Bridge worker stream。浏览器实时线程不等待 native processing，worker 负责 transport。
+例如，先失真后混响与先混响后失真会产生不同声音。信号路径显示当前启用的顺序；旁路不等于插件停止运行，不应据此判断 CPU 已释放。
 
-移除 slot 时，rack 会依次断开 worklet、停止 stream、停止 processing、关闭 stream、销毁 instance，并重建剩余 graph。
+当前 Studio 固定 128 帧块、双声道输入/输出、四个 quantum 缓冲容量，并采用 AudioContext 的实际采样率。它不提供侧链、多总线编辑或 MIDI 键盘；音源与设备输入请使用 SDK 和仓库示例。
 
-## 观察指标
+## 参数面板
 
-rack 会展示 pending quanta、underflow、overflow、dropped events、worker restart 和 transport failure。通过这些 counters 可以区分插件故障、浏览器前置条件和 bridge 配置问题。
+面板最多显示前八个非隐藏、非只读参数。没有控件可能表示插件未暴露参数、查询失败，或没有符合筛选条件的参数；这不必然表示音频处理失败。
 
-公共方法与控制面接口请参考 [API Reference](/docs/zh/api-reference)。
+控件写入 normalized 值，并尝试显示插件提供的文本。完成编辑后会重新读取显示值。界面是通用参数面板，不是插件原生编辑器，也不提供全部 preset 或专有 UI 功能。
+
+## 理解处理详情
+
+| 显示内容 | 如何判断 |
+| --- | --- |
+| 输入/输出待处理 quantum | 当前缓冲队列深度，不是延迟毫秒数。 |
+| Underflow | Worklet 需要音频时输出尚未准备好；关注是否持续增长。 |
+| Overflow | 输入或队列容量不足；结合丢弃计数与 Bridge 指标分析。 |
+| 插件延迟 | 插件报告的采样数，不包含网络、调度和浏览器缓冲。 |
+| 立体声电平 | 实际最终输出的左右声道电平。 |
+
+启动或挂载瞬间出现计数变化，不代表长期不稳定。播放一段时间观察增量；持续静音、计数快速增长或明显爆音时，先减少到单个效果器，再按[故障排查](/docs/zh/troubleshooting)定位。
+
+## 断开、重连与会话边界
+
+主动断开会暂停播放、清空机架并清理实例；重连后重新选择和挂载效果器。当前页面中的文件可以再次播放，媒体 source 会复用。离开页面时释放音频图和文件 URL。
+
+刷新页面不保存机架、文件选择或插件状态。Studio 没有渲染导出、录音或工程保存功能；要持久化插件状态，请在自己的应用中使用[状态快照 API](/docs/zh/api-reference)。
+
+## 常见操作问题
+
+| 问题 | 建议 |
+| --- | --- |
+| 一直连接失败 | 确认 Bridge 在同一电脑运行、token 一致，并检查浏览器的本地网络限制。 |
+| 列表为空 | 安装 VST3 版本，重新扫描；macOS 的 AU 插件不会出现在 VST3 扫描结果中。 |
+| 挂载失败 | 换已知兼容的立体声效果器，检查 CPU 架构、class ID 和 worker 诊断。 |
+| 播放但无声音 | 取消静音、检查音量和输出设备，旁路所有效果器确认原音。 |
+| 手机能打开但没有插件 | 手机页面布局可用不等于手机具备桌面 Bridge/VST3 运行环境。 |
+
+接入自己的产品时，参考 [Web 接入](/docs/zh/web-integration)的连接、节点与资源所有权说明。

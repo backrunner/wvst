@@ -8,6 +8,21 @@ order: 1
 
 WVST is a Rust-first bridge between browser audio graphs and local VST3 plugins. A web app talks to a loopback Bridge Server, the Bridge Server supervises native host worker processes, and the browser keeps realtime audio moving through AudioWorklet and bounded shared buffers.
 
+
+## Start with your task
+
+| Goal | Reading path |
+| --- | --- |
+| Try a local effect for the first time | [Getting started](/docs/getting-started) and [Studio guide](/docs/demo-guide). |
+| Integrate a plugin into your app | [Web integration](/docs/web-integration) and [API reference](/docs/api-reference). |
+| Configure authorization or host the site | [Configuration and deployment](/docs/configuration). |
+| Diagnose silence, crashes or latency | [Troubleshooting](/docs/troubleshooting) and [Architecture](/docs/architecture). |
+| Contribute or validate plugin compatibility | [Development](/docs/development). |
+
+Current installation uses source builds, with macOS first. There are no published release binaries and the SDK is a private workspace package. Platform abstractions, protocol fixtures and real-plugin compatibility represent different capabilities and evidence.
+
+Studio can preview original audio or a locally generated eight-second loop. Effect processing still requires the Bridge and a real VST3 plugin. The UI does not provide native plugin editors, project persistence or render export.
+
 The current repository is no longer just a skeleton. It contains:
 
 - `@wvst/web`: TypeScript SDK exports for Bridge connection, plugin scan/list/factory metadata, instance lifecycle, parameter editing, unit/program/state helpers, MIDI adapters, device sessions, loopback AudioWorklet helpers, shared-memory transport helpers, protocol codecs, and metrics.
@@ -85,7 +100,7 @@ The Bridge uses JSON-RPC style messages over WebSocket. `WVSTClient` maps TypeSc
 
 - Bridge defaults to loopback: `127.0.0.1:35876`.
 - Loopback browser origins are allowed by default for development.
-- `WVST_TOKEN` can require a token in the `bridge.hello` handshake.
+- The standalone CLI requires `WVST_TOKEN`; both control and audio sockets must authenticate with `bridge.hello`.
 - `WVST_ALLOWED_ORIGINS` can restrict accepted browser origins.
 - Worker auto-restart and quarantine are enabled by default.
 - Low-latency browser mode requires `SharedArrayBuffer` and `crossOriginIsolated`.

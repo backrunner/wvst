@@ -102,6 +102,9 @@ export class WebSocketRpcTransport implements RpcTransport {
   }
 
   request<T = JsonValue>(method: string, params: unknown): Promise<T> {
+    if (this.socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("WVST bridge connection closed"));
+    }
     const id = this.nextId++;
     const envelope = {
       jsonrpc: "2.0",
@@ -115,14 +118,29 @@ export class WebSocketRpcTransport implements RpcTransport {
         resolve: (value) => resolve(value as T),
         reject,
       });
-      this.socket.send(JSON.stringify(envelope));
+      try {
+        this.socket.send(JSON.stringify(envelope));
+      } catch (error) {
+        this.pendingRpc.delete(String(id));
+        reject(error);
+      }
     });
   }
 
   sendBinary(frame: ArrayBuffer): Promise<ArrayBuffer> {
+    if (this.socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("WVST bridge connection closed"));
+    }
     return new Promise((resolve, reject) => {
-      this.pendingBinary.push({ resolve, reject });
-      this.socket.send(frame);
+      const pending = { resolve, reject };
+      this.pendingBinary.push(pending);
+      try {
+        this.socket.send(frame);
+      } catch (error) {
+        const index = this.pendingBinary.indexOf(pending);
+        if (index !== -1) this.pendingBinary.splice(index, 1);
+        reject(error);
+      }
     });
   }
 
@@ -158,6 +176,10 @@ export class WebSocketRpcTransport implements RpcTransport {
     try {
       response = JSON.parse(text) as RpcResponse | BridgeEventNotification;
     } catch {
+      return;
+    }
+
+    if (!response || typeof response !== "object" || Array.isArray(response)) {
       return;
     }
 

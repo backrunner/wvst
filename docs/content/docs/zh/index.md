@@ -8,6 +8,21 @@ order: 1
 
 WVST 是一个 Rust-first 的 WebAudio/VST3 桥接项目。Web 应用连接本机 loopback Bridge Server；Bridge Server 负责插件发现、worker supervision 和音频路由；浏览器侧用 AudioWorklet 与有界共享缓冲保持实时音频不阻塞。
 
+
+## 从你的任务开始
+
+| 目标 | 阅读入口 |
+| --- | --- |
+| 第一次体验本地效果器 | [快速开始](/docs/zh/getting-started)与 [Studio 指南](/docs/zh/demo-guide)。 |
+| 把插件接入自己的网页 | [Web 接入](/docs/zh/web-integration)与 [API 参考](/docs/zh/api-reference)。 |
+| 配置授权或托管站点 | [配置与部署](/docs/zh/configuration)。 |
+| 排查静音、崩溃与延迟 | [故障排查](/docs/zh/troubleshooting)与[架构](/docs/zh/architecture)。 |
+| 贡献代码或验证插件兼容性 | [开发与验证](/docs/zh/development)。 |
+
+目前采用源码构建，macOS 优先；没有已发布的二进制安装包，SDK 是私有 workspace 包。平台抽象、协议 fixture 和真实插件兼容性是不同层次的能力与证据。
+
+Studio 可先播放原音或本机生成的八秒片段。效果处理仍需要 Bridge 和真实 VST3；界面不提供原生插件编辑器、工程保存或渲染导出。
+
 当前仓库已经不只是骨架，主要能力包括：
 
 - `@wvst/web`：Bridge 连接、插件 scan/list/factory metadata、实例生命周期、参数编辑、unit/program/state helper、MIDI adapter、设备 session、loopback AudioWorklet helper、shared-memory transport helper、协议编解码和 metrics。
@@ -85,7 +100,7 @@ Bridge 使用 WebSocket 上的 JSON-RPC 风格消息。`WVSTClient` 会把 TypeS
 
 - Bridge 默认监听 loopback：`127.0.0.1:35876`。
 - 开发环境默认允许 loopback browser origins。
-- `WVST_TOKEN` 可以要求 `bridge.hello` 提供 token。
+- 独立 CLI 要求设置 `WVST_TOKEN`，控制与音频 socket 都必须完成 `bridge.hello` 授权。
 - `WVST_ALLOWED_ORIGINS` 可以限制允许的浏览器 origin。
 - worker auto-restart 与 quarantine 默认开启。
 - 低延迟浏览器模式要求 `SharedArrayBuffer` 和 `crossOriginIsolated`。

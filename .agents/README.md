@@ -20,6 +20,12 @@
 - [package-evidence-budget.example.json](package-evidence-budget.example.json)：`wvst-package-evidence` 发布包证据预算示例，可校验平台服务类型、runtime bridge/worker 文件、verify script、manifest/report 检查项一致性和必需文件角色。
 - [skills/wvst-engineering/SKILL.md](skills/wvst-engineering/SKILL.md)：后续 WVST 开发时应加载的本地 skill。
 
+- [review-2026-09-07.md](review-2026-09-07.md)：本轮 bug 审查、Svedocs 0.2.1 升级、定制主题与验证记录。
+
+- [studio-redesign-2026-09-07.md](studio-redesign-2026-09-07.md)：Live Studio 全面翻新、音频连接授权修复与浏览器回归记录。
+
+- [docs-expansion-2026-09-07.md](docs-expansion-2026-09-07.md)：双语 README、九组公共指南、授权示例修正与文档验证记录。
+
 ## 当前结论
 
 WVST 的方向可行：Web 侧使用 AudioWorklet + WASM + SharedArrayBuffer 管理 WebAudio 实时缓冲，本地 Bridge Server 负责插件发现、权限、路由和 worker 生命周期，VST3 host worker 以独立进程隔离崩溃插件。

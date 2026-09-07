@@ -1,28 +1,26 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import Check from 'phosphor-svelte/lib/Check';
-  import PlugsConnected from 'phosphor-svelte/lib/PlugsConnected';
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
-  import X from 'phosphor-svelte/lib/X';
-  import { Button, FormField, Input } from 'svedocs/theme';
   import {
     WVSTBridgeWorkerClient,
     WVSTClient,
-    configureLoopbackAudioWorkletNode,
     createLoopbackSharedBuffers,
     readLoopbackMetrics,
     type InstanceDescriptor,
-    type LoopbackSharedBuffers,
     type PluginDescriptor
   } from '@wvst/web';
   import BridgeWorker from '@wvst/web/bridge-worker?worker';
-  import loopbackProcessorUrl from '@wvst/web/loopback-processor?url';
+  import { createRackAudioGraph } from './rack-demo/audio-graph';
+  import StudioGuide from './rack-demo/StudioGuide.svelte';
+  import ConnectionPanel from './rack-demo/ConnectionPanel.svelte';
+  import StudioFooter from './rack-demo/StudioFooter.svelte';
+  import { createDemoAudioFile, readAudioPeaks } from './rack-demo/audio-file';
   import EffectRack from './rack-demo/EffectRack.svelte';
   import PlayerDeck from './rack-demo/PlayerDeck.svelte';
   import { demoCopy } from './rack-demo/copy';
   import type { DemoStatus, Prerequisites, RackParameter, RackSlot } from './rack-demo/types';
   import { allPrerequisitesMet, createId, createPluginChoices, describeError, formatParameterValue,
-    readPrerequisites, safeDisconnect, updateRackParameter } from './rack-demo/utils';
+    readPrerequisites, updateRackParameter } from './rack-demo/utils';
 
   export let locale: 'en' | 'zh' = 'en';
 
@@ -32,19 +30,10 @@
 
   let mediaElement: HTMLAudioElement | undefined;
   let fileInput: HTMLInputElement | undefined;
-  let audioContext: AudioContext | undefined;
-  let sourceNode: MediaElementAudioSourceNode | undefined;
-  let outputGain: GainNode | undefined;
-  let splitter: ChannelSplitterNode | undefined;
-  let merger: ChannelMergerNode | undefined;
-  let analysers: AnalyserNode[] = [];
-  let analyserData: Uint8Array<ArrayBuffer>[] = [];
   let client: WVSTClient | undefined;
   let workerClient: WVSTBridgeWorkerClient | undefined;
   let worker: Worker | undefined;
-  let workletModule: Promise<void> | undefined;
   let metricsTimer: number | undefined;
-  let meterFrame: number | undefined;
   let fileUrl: string | undefined;
 
   let endpoint = DEFAULT_ENDPOINT;
@@ -52,6 +41,9 @@
   let status: DemoStatus = 'idle';
   let statusMessage = '';
   let fileName = '';
+  let peaks: number[] = [];
+  let waveformBusy = false;
+  let connectionIssue = '';
   let isPlaying = false;
   let currentTime = 0;
   let duration = 0;
@@ -67,8 +59,13 @@
   let disposed = false;
   let prerequisites: Prerequisites = { secureContext: false, crossOriginIsolated: false, sharedArrayBuffer: false };
 
+  const graph = createRackAudioGraph({
+    mediaElement: () => mediaElement, rack: () => rack,
+    gain: () => muted ? 0 : volume, onLevels: (next) => { levels = next; }
+  });
+
   $: t = demoCopy[locale] ?? demoCopy.en;
-  $: connected = Boolean(client && workerClient);
+  $: connected = Boolean(client && workerClient) && status !== 'connecting';
   $: pluginChoices = createPluginChoices(plugins);
   $: selectedChoice = pluginChoices.find((choice) => choice.key === selectedChoiceKey);
   $: activeSlots = rack.filter((slot) => !slot.bypassed && slot.state === 'active').length;
@@ -99,6 +96,7 @@
     const targetEndpoint = endpoint.trim();
     const targetToken = token.trim();
     busy = true;
+    connectionIssue = '';
     status = 'connecting';
     statusMessage = t.connecting;
     try {
@@ -116,6 +114,10 @@
       worker = new BridgeWorker();
       workerClient = new WVSTBridgeWorkerClient({ worker });
       await workerClient.connect(targetEndpoint);
+      await workerClient.request('bridge.hello', {
+        ...client.createHelloRequest().params,
+        ...(targetToken ? { token: targetToken } : {})
+      });
       if (disposed) {
         await closeBridgeOnly();
         return;
@@ -127,8 +129,9 @@
     } catch (error) {
       await closeBridgeOnly();
       if (!disposed) {
-        status = 'error';
-        statusMessage = `${t.bridgeError} ${describeError(error)}`;
+        status = 'idle';
+        statusMessage = '';
+        connectionIssue = describeError(error);
       }
     } finally {
       if (!disposed) busy = false;
@@ -185,6 +188,12 @@
     if (fileUrl) URL.revokeObjectURL(fileUrl);
     fileUrl = URL.createObjectURL(file);
     fileName = file.name;
+    peaks = [];
+    waveformBusy = true;
+    const selectedUrl = fileUrl;
+    void readAudioPeaks(file).catch(() => []).then((next) => {
+      if (!disposed && fileUrl === selectedUrl) { peaks = next; waveformBusy = false; }
+    });
     currentTime = 0;
     duration = 0;
     isPlaying = false;
@@ -192,20 +201,36 @@
       mediaElement.src = fileUrl;
       mediaElement.load();
     }
+    status = connected ? 'connected' : 'idle';
     statusMessage = t.fileReady;
   }
 
   async function togglePlayback() {
     if (!mediaElement || !fileUrl) return;
-    await ensureAudioGraph();
-    await audioContext?.resume();
-    if (mediaElement.paused) {
-      await mediaElement.play();
-      isPlaying = true;
-    } else {
-      mediaElement.pause();
-      isPlaying = false;
-    }
+    try {
+      await graph.ensureAudioGraph();
+      await graph.resume();
+      if (mediaElement.paused) { await mediaElement.play(); isPlaying = true; }
+      else { mediaElement.pause(); isPlaying = false; }
+    } catch (error) { reportAudioError(error); }
+  }
+
+  function reportAudioError(error?: unknown) {
+    isPlaying = false;
+    status = 'error';
+    statusMessage = error instanceof Error ? `${t.audioError} ${error.message}` : t.audioError;
+  }
+
+  function loadSample() {
+    loadFile(createDemoAudioFile());
+    loop = true;
+    if (mediaElement) mediaElement.loop = true;
+  }
+
+  async function scanPlugins() {
+    if (busy) return;
+    busy = true;
+    try { await loadPlugins(true); } finally { busy = false; }
   }
 
   function stopPlayback() {
@@ -236,22 +261,17 @@
 
   function changeVolume(event: Event) {
     volume = Number((event.currentTarget as HTMLInputElement).value);
-    updateOutputGain();
+    graph.updateOutputGain();
   }
 
   function toggleMute() {
     muted = !muted;
-    updateOutputGain();
+    graph.updateOutputGain();
   }
 
   function toggleLoop() {
     loop = !loop;
     if (mediaElement) mediaElement.loop = loop;
-  }
-
-  function updateOutputGain() {
-    if (!outputGain || !audioContext) return;
-    outputGain.gain.setTargetAtTime(muted ? 0 : volume, audioContext.currentTime, .012);
   }
 
   async function mountSelectedEffect() {
@@ -260,9 +280,9 @@
     let instance: InstanceDescriptor | undefined;
     let node: AudioWorkletNode | undefined;
     try {
-      const context = await ensureAudioContext();
-      await ensureAudioGraph();
-      const created = await client.instances.create({
+      const context = await graph.ensureAudioContext();
+      await graph.ensureAudioGraph();
+      instance = await client.instances.create({
         pluginId: selectedChoice.pluginId,
         ...(selectedChoice.classId ? { classId: selectedChoice.classId } : {}),
         sampleRate: Math.round(context.sampleRate),
@@ -270,9 +290,9 @@
         inputChannels: CHANNELS,
         outputChannels: CHANNELS
       });
-      instance = (await client.instances.start({ instanceId: created.instanceId })).instance;
+      instance = (await client.instances.start({ instanceId: instance.instanceId })).instance;
       const buffers = createLoopbackSharedBuffers({ frames: FRAMES, inputChannels: CHANNELS, outputChannels: CHANNELS, capacityQuanta: 4 });
-      node = await createRackNode(context, buffers);
+      node = await graph.createRackNode(context, buffers);
       await workerClient.startAudioStream({
         streamId: instance.streamId,
         sampleRate: instance.sampleRate,
@@ -286,12 +306,15 @@
         id: createId(), choice: selectedChoice, instance, node, buffers,
         metrics: readLoopbackMetrics(buffers), parameters, bypassed: false, state: 'active'
       }];
-      rebuildGraph();
+      graph.rebuildGraph();
       status = 'connected';
       statusMessage = t.mounted;
     } catch (error) {
       node?.disconnect();
-      if (instance) await destroyInstance(instance);
+      if (instance) {
+        await workerClient?.stopAudioStream(instance.streamId).catch(() => undefined);
+        await destroyInstance(instance);
+      }
       status = 'error';
       statusMessage = describeError(error);
     } finally {
@@ -341,16 +364,16 @@
 
   async function removeSlot(slot: RackSlot) {
     rack = rack.map((item) => item.id === slot.id ? { ...item, state: 'removing' } : item);
-    rebuildGraph();
+    graph.rebuildGraph();
     await cleanupSlot(slot);
     rack = rack.filter((item) => item.id !== slot.id);
-    rebuildGraph();
+    graph.rebuildGraph();
     statusMessage = t.removed;
   }
 
   function toggleBypass(slot: RackSlot) {
     rack = rack.map((item) => item.id === slot.id ? { ...item, bypassed: !item.bypassed } : item);
-    rebuildGraph();
+    graph.rebuildGraph();
   }
 
   function moveSlot(index: number, direction: -1 | 1) {
@@ -361,62 +384,7 @@
     if (!slot) return;
     next.splice(nextIndex, 0, slot);
     rack = next;
-    rebuildGraph();
-  }
-
-  async function ensureAudioContext(): Promise<AudioContext> {
-    if (audioContext) return audioContext;
-    const contextCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!contextCtor) throw new Error('AudioContext is not available');
-    audioContext = new contextCtor();
-    return audioContext;
-  }
-
-  async function ensureAudioGraph() {
-    const context = await ensureAudioContext();
-    if (!mediaElement) throw new Error('Audio element is not ready');
-    sourceNode ??= context.createMediaElementSource(mediaElement);
-    if (!outputGain) {
-      outputGain = context.createGain();
-      splitter = context.createChannelSplitter(CHANNELS);
-      merger = context.createChannelMerger(CHANNELS);
-      analysers = [context.createAnalyser(), context.createAnalyser()];
-      analyserData = analysers.map((analyser) => {
-        analyser.fftSize = 256;
-        return new Uint8Array(analyser.frequencyBinCount);
-      });
-      outputGain.connect(splitter);
-      splitter.connect(analysers[0]!, 0); splitter.connect(analysers[1]!, 1);
-      analysers[0]!.connect(merger, 0, 0); analysers[1]!.connect(merger, 0, 1);
-      merger.connect(context.destination);
-      updateOutputGain();
-      startMeterLoop();
-    }
-    rebuildGraph();
-  }
-
-  function rebuildGraph() {
-    if (!sourceNode || !outputGain) return;
-    safeDisconnect(sourceNode);
-    rack.forEach((slot) => safeDisconnect(slot.node));
-    let tail: AudioNode = sourceNode;
-    for (const slot of rack) {
-      if (slot.bypassed || slot.state !== 'active') continue;
-      tail.connect(slot.node);
-      tail = slot.node;
-    }
-    tail.connect(outputGain);
-  }
-
-  async function createRackNode(context: AudioContext, buffers: LoopbackSharedBuffers): Promise<AudioWorkletNode> {
-    workletModule ??= context.audioWorklet.addModule(loopbackProcessorUrl);
-    await workletModule;
-    const node = new AudioWorkletNode(context, 'wvst-loopback', {
-      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [CHANNELS], channelCount: CHANNELS,
-      channelCountMode: 'explicit', channelInterpretation: 'speakers'
-    });
-    configureLoopbackAudioWorkletNode(node, buffers);
-    return node;
+    graph.rebuildGraph();
   }
 
   async function cleanupSlot(slot: RackSlot) {
@@ -434,7 +402,7 @@
 
   async function shutdown() {
     stopMetricsLoop();
-    stopMeterLoop();
+    graph.stopMeterLoop();
     mediaElement?.pause();
     isPlaying = false;
     for (const slot of [...rack]) await cleanupSlot(slot).catch(() => undefined);
@@ -443,20 +411,13 @@
     scanFailures = [];
     selectedChoiceKey = '';
     await closeBridgeOnly();
-    safeDisconnect(sourceNode);
-    outputGain?.disconnect();
-    splitter?.disconnect();
-    merger?.disconnect();
-    analysers.forEach((node) => node.disconnect());
-    sourceNode = undefined;
-    outputGain = undefined;
-    splitter = undefined;
-    merger = undefined;
-    analysers = [];
-    analyserData = [];
-    await audioContext?.close().catch(() => undefined);
-    audioContext = undefined;
-    workletModule = undefined;
+    // An HTMLMediaElement can only acquire one MediaElementAudioSourceNode.
+    // Keep its graph for reconnects; release it when the component is removed.
+    if (!disposed) {
+      graph.rebuildGraph();
+      return;
+    }
+    await graph.close();
     if (fileUrl) URL.revokeObjectURL(fileUrl);
     fileUrl = undefined;
     fileName = '';
@@ -484,32 +445,6 @@
     metricsTimer = undefined;
   }
 
-  function startMeterLoop() {
-    stopMeterLoop();
-    const tick = () => {
-      levels = [0, 1].map((index) => readLevel(analysers[index], analyserData[index])) as [number, number];
-      meterFrame = window.requestAnimationFrame(tick);
-    };
-    tick();
-  }
-
-  function stopMeterLoop() {
-    if (meterFrame === undefined) return;
-    window.cancelAnimationFrame(meterFrame);
-    meterFrame = undefined;
-  }
-
-  function readLevel(analyser: AnalyserNode | undefined, data: Uint8Array<ArrayBuffer> | undefined): number {
-    if (!analyser || !data) return 0;
-    analyser.getByteTimeDomainData(data);
-    let sum = 0;
-    for (const sample of data) {
-      const centered = (sample - 128) / 128;
-      sum += centered * centered;
-    }
-    return Math.min(1, Math.sqrt(sum / data.length) * 2.4);
-  }
-
   function formatPrerequisiteMessage(value: Prerequisites): string {
     const missing = [value.secureContext ? '' : t.secureContext, value.crossOriginIsolated ? '' : t.isolation, value.sharedArrayBuffer ? '' : t.sharedBuffer].filter(Boolean);
     return `${t.blocked} ${missing.join(', ')}`;
@@ -517,97 +452,33 @@
 
 </script>
 
-<section class="wvst-demo" aria-label="WVST live rack demo">
-  <header class="wvst-demo-header">
-    <div>
-      <span>WVST LIVE RACK</span>
-      <strong>{fileName || t.noFile}</strong>
+<section class="wvst-demo" aria-label="WVST live studio">
+  <header class="studio-heading">
+    <div><p class="studio-eyebrow">WVST / LIVE STUDIO <span>EXPERIMENTAL</span></p>
+      <h1>{t.studioTitle}</h1><p class="studio-intro">{t.studioIntro}</p>
     </div>
-    <div class="wvst-runtime-badge" data-state={status}>
-      {#if status === 'error' || status === 'blocked'}<WarningCircle size={17} />{:else}<PlugsConnected size={17} />{/if}
-      <span>{statusMessage || status}</span>
-    </div>
+    <a class="studio-inline-link" href={locale === 'zh' ? '/docs/zh/demo-guide' : '/docs/demo-guide'}>{t.guideLink} ↗</a>
   </header>
 
+  <StudioGuide {t} {connected} hasAudio={Boolean(fileUrl)} hasEffect={rack.length > 0} />
+  <ConnectionPanel {t} {locale} {connected} {busy} {status} {prerequisites} {connectionIssue}
+    bind:endpoint bind:token onConnect={connectBridge} onDisconnect={disconnectBridge} />
+
+  {#if status === 'error' || status === 'blocked'}
+    <div class="studio-notice" role="alert"><WarningCircle size={19} /><span>{statusMessage}</span></div>
+  {/if}
+
+  <div class="studio-workspace-heading"><span>{t.sessionNote}</span><span class="studio-live-status" class:online={connected}><i></i>{connected ? t.connected : t.offline}</span></div>
   <div class="wvst-demo-layout">
-    <PlayerDeck
-      {t}
-      bind:mediaElement
-      bind:fileInput
-      {fileUrl}
-      {fileName}
-      {isPlaying}
-      {currentTime}
-      {duration}
-      {volume}
-      {muted}
-      {loop}
-      {levels}
-      {activeSlots}
-      onChooseFile={chooseFile}
-      onFileSelected={handleFileSelected}
-      onDropFile={handleFileDrop}
-      onTogglePlayback={togglePlayback}
-      onStop={stopPlayback}
-      onSkip={skip}
-      onSeek={seek}
-      onVolume={changeVolume}
-      onToggleMute={toggleMute}
-      onToggleLoop={toggleLoop}
-      onTimeUpdate={updateTime}
-      onEnded={() => (isPlaying = false)}
-    />
-
-    <div class="wvst-demo-right">
-      <section class="wvst-bridge-panel" aria-label={t.bridgePanel}>
-        <div class="wvst-readiness">
-          {#each [
-            [t.secureContext, prerequisites.secureContext],
-            [t.isolation, prerequisites.crossOriginIsolated],
-            [t.sharedBuffer, prerequisites.sharedArrayBuffer]
-          ] as item}
-            <span class:ready={item[1]}>{#if item[1]}<Check size={15} weight="bold" />{:else}<X size={15} weight="bold" />{/if}{item[0]}</span>
-          {/each}
-        </div>
-
-        <details class="wvst-connection-settings" open={!connected}>
-          <summary>{t.settings}</summary>
-          <div class="wvst-connection-fields">
-            <FormField label={t.endpoint} for="wvst-endpoint">
-              <Input id="wvst-endpoint" bind:value={endpoint} density="sm" spellcheck="false" disabled={connected || busy} />
-            </FormField>
-            <FormField label={t.token} for="wvst-token">
-              <Input id="wvst-token" bind:value={token} density="sm" placeholder={t.tokenHint} spellcheck="false" disabled={connected || busy} />
-            </FormField>
-          </div>
-        </details>
-
-        <div class="wvst-connection-actions">
-          {#if connected}
-            <Button type="button" density="sm" on:click={disconnectBridge} disabled={busy}>{t.disconnect}</Button>
-          {:else}
-            <Button type="button" variant="primary" density="sm" on:click={connectBridge} disabled={busy || status === 'blocked'}>{t.connect}</Button>
-          {/if}
-          <span>{connected ? t.connected : status === 'connecting' ? t.connecting : t.status}</span>
-        </div>
-      </section>
-
-      <EffectRack
-        {t}
-        {pluginChoices}
-        bind:selectedChoiceKey
-        {connected}
-        {busy}
-        {rack}
-        {scanFailures}
-        onMountEffect={mountSelectedEffect}
-        onScan={() => loadPlugins(true)}
-        onMove={moveSlot}
-        onBypass={toggleBypass}
-        onRemove={removeSlot}
-        onPreviewParameter={previewParameter}
-        onCommitParameter={commitParameter}
-      />
-    </div>
+    <PlayerDeck {t} bind:mediaElement bind:fileInput {fileUrl} {fileName} {isPlaying}
+      {currentTime} {duration} {volume} {muted} {loop} {activeSlots} {peaks} {waveformBusy}
+      onChooseFile={chooseFile} onSample={loadSample} onFileSelected={handleFileSelected} onDropFile={handleFileDrop}
+      onTogglePlayback={togglePlayback} onStop={stopPlayback} onSkip={skip} onSeek={seek}
+      onVolume={changeVolume} onToggleMute={toggleMute} onToggleLoop={toggleLoop}
+      onTimeUpdate={updateTime} onEnded={() => (isPlaying = false)} onAudioError={() => reportAudioError()} />
+    <EffectRack {t} {locale} {pluginChoices} bind:selectedChoiceKey {connected} {busy} {rack} {scanFailures}
+      onMountEffect={mountSelectedEffect} onScan={scanPlugins} onMove={moveSlot} onBypass={toggleBypass}
+      onRemove={removeSlot} onPreviewParameter={previewParameter} onCommitParameter={commitParameter} />
   </div>
+  <StudioFooter {t} {locale} {rack} {fileName} {levels} {isPlaying} />
 </section>

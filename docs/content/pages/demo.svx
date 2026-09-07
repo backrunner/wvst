@@ -1,14 +1,7 @@
 ---
-title: Live Demo
-description: Route a local audio file through a real browser-side WVST rack and local VST3 bridge.
+title: Live Studio
+description: Your audio. Your native plugins. Explore a real VST3 signal chain in your browser.
+layout: studio
 ---
 
-# Live Demo
-
-<BridgeSetup locale="en" />
-
 <WVSTRackDemo locale="en" />
-
-The rack is a real integration surface. It does not simulate plugin processing. The page tries to connect to the local Bridge automatically; use Connect to retry after changing the endpoint or token.
-
-Read the [Demo Guide](/docs/demo-guide) for browser prerequisites and lifecycle details.

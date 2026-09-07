@@ -1,10 +1,23 @@
 ---
 title: Troubleshooting
 description: Diagnose browser isolation, Bridge authorization, plugin discovery, worker lifecycle, shared-memory transport, and realtime metrics.
-order: 6
+order: 8
 ---
 
 # Troubleshooting
+
+Locate the failing layer before changing settings. SDK snippets assume imported helpers and a current application session providing `client`, `instanceId`, `buffers` and related objects.
+
+| Symptom | First check |
+| --- | --- |
+| Startup reports a missing token | Set nonempty `WVST_TOKEN` for the standalone CLI. |
+| Socket cannot connect | Running Bridge, matching port and browser local-network access. |
+| Scanning works but audio keeps failing | Separate authenticated handshake on the audio Worker. |
+| Discovered plugin cannot mount | Worker executable, plugin CPU architecture, class ID and VST3 buses. |
+| Original audio works, effect is silent | Instance state, stream configuration, audio error counters and plugin capabilities. |
+| Localhost works, deployed site fails | Final COOP/COEP response, asset URLs and actual page origin. |
+
+The two-terminal setup in [Getting started](/docs/getting-started) provides a useful baseline.
 
 ## SharedArrayBuffer Is Unavailable
 
@@ -33,7 +46,10 @@ Use `npm run docs:dev` for the local docs site. A page can be on localhost and s
 Start the Bridge:
 
 ```sh
-cargo run -p wvst-bridge-server
+cargo build -p wvst-bridge-server -p wvst-host-worker
+WVST_TOKEN=local-dev-token \
+WVST_HOST_WORKER=target/debug/wvst-host-worker \
+  target/debug/wvst-bridge-server serve
 ```
 
 Default endpoint:
@@ -52,7 +68,7 @@ cargo run -p wvst-bridge-server -- diagnose
 
 ## Session Not Authorized
 
-All methods except `bridge.hello` require an authorized session. If `WVST_TOKEN` is set, pass the same token to `WVSTClient.connect({ token })`.
+The standalone CLI requires a nonempty `WVST_TOKEN`. Control methods other than `bridge.hello`, and binary audio, need an authorized connection. Pass the same token to `WVSTClient.connect({ token })`. The audio Worker owns another socket and must complete its own `bridge.hello`.
 
 If origin checks fail:
 
@@ -184,13 +200,15 @@ If the worker never launches, run `cargo run -p wvst-bridge-server -- diagnose` 
 Some VST3 plugins emit component handler restart or metadata invalidation events. Use:
 
 ```ts
-client.onEvent(async (event) => {
-  if (event.kind.type === "vst3-metadata-invalidated") {
-    await client.refreshMetadataForInvalidation(event.kind, {
-      includeParameterValues: true
-    });
+const unsubscribeMetadata = client.onMetadataInvalidated(
+  (result) => { console.log(result.refreshed); },
+  {
+    includeParameterValues: true,
+    onError: (_event, error) => { console.error(error); }
   }
-});
+);
+// On teardown:
+unsubscribeMetadata();
 ```
 
 If the refresh policy is `rebuild-audio-graph` or `reload-component`, the app should rebuild the affected graph or recreate the instance.
@@ -265,3 +283,45 @@ cargo run -p wvst-testkit --bin wvst-package-evidence -- \
 ```
 
 The `.agents/*.example.json` files provide starting fixtures for these reports.
+
+
+## Control Works but Audio Is Unauthorized
+
+`WVSTBridgeWorkerClient.connect()` only opens a WebSocket. Follow it with:
+
+```ts
+await bridgeWorker.request('bridge.hello', {
+  ...client.createHelloRequest().params,
+  token: tokenFromUser
+});
+```
+
+`createHelloRequest()` does not retain the original connection token; add it explicitly. See [Web integration](/docs/web-integration) for the full flow.
+
+## File, Playback and Reconnection Issues
+
+If autoplay is rejected, call `audioContext.resume()` in the user's play handler before media `play()`. Use the built-in loop or WAV to rule out codec problems. Studio skips waveform decoding above 50 MB to control memory use.
+
+Do not create another `MediaElementAudioSourceNode` for an existing media element. Reuse the source when reconnecting and release it when disposing the element and complete graph. Closed WebSockets require new control/Worker connections, repeated handshakes and newly mounted instances.
+
+## Deployed Assets or Local-Network Access Fail
+
+If Worker or worklet requests return `text/html`, inspect SPA fallback and asset URLs. The final page response must contain COOP/COEP; static pages do not execute SvelteKit server hooks.
+
+If isolation succeeds but the socket is blocked, inspect console errors for mixed content, local-network permissions and origin policy. Changing `ws://` to `wss://` alone does not enable TLS on the Bridge CLI. See [Configuration and deployment](/docs/configuration).
+
+## Capture Useful Diagnostics
+
+```ts
+const diagnostics = {
+  hello: client.hello,
+  metrics: await client.metrics(),
+  events: await client.events(),
+  runtime: await client.instances.runtimeSnapshot({
+    instanceId, includeRecentEvents: true
+  })
+};
+console.log(JSON.stringify(diagnostics, null, 2));
+```
+
+Keep counter deltas around the failure, reproduction steps, browser/OS versions and plugin version. Remove tokens and unnecessary personal paths before sharing. See [Development](/docs/development) for real-plugin and sustained-audio validation.

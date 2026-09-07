@@ -1,109 +1,183 @@
 <div align="center">
-  <img src="docs/static/favicon.svg" width="72" height="72" alt="WVST logo">
-  <h1>WVST</h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/static/brand/wvst-logo-dark.svg">
+    <img src="docs/static/brand/wvst-logo.svg" width="240" alt="WVST">
+  </picture>
   <p><strong>Local VST3 processing for real WebAudio graphs.</strong></p>
-  <p>
-    A Rust-first bridge that keeps browser audio responsive while native plugins run in isolated host workers.
-  </p>
+  <p>A Rust bridge, isolated native plugins, and a browser you can build on.</p>
 
   [![CI](https://github.com/backrunner/wvst/actions/workflows/ci.yml/badge.svg)](https://github.com/backrunner/wvst/actions/workflows/ci.yml)
-  ![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-11130f?logo=rust&logoColor=white)
-  ![Node.js 22](https://img.shields.io/badge/Node.js-22-50d6b3?logo=nodedotjs&logoColor=11130f)
-  ![Status](https://img.shields.io/badge/status-active_development-ff8a66?labelColor=11130f)
+  ![Rust stable](https://img.shields.io/badge/Rust-stable-343b39?logo=rust&logoColor=white)
+  ![Node.js 22](https://img.shields.io/badge/Node.js-22-985936?logo=nodedotjs&logoColor=white)
+  ![Status](https://img.shields.io/badge/status-active_development-985936)
+
+  English · [简体中文](README.zh-CN.md)
 </div>
 
-> [!IMPORTANT]
-> WVST is under active development and does not publish release binaries yet. Build the Bridge Server and host worker from source before using the demo.
+WVST connects a WebAudio graph to VST3 effects and instruments installed on the same computer. Build your interface in the browser; the Rust Bridge handles authorization, plugin discovery and routing, and supervises a separate native host worker for each instance.
 
-WVST connects browser applications to local VST3 effects and instruments. The Web SDK owns browser integration, `wvst-bridge-server` owns authorization and routing, and each third-party plugin runs outside the Bridge in a supervised `wvst-host-worker` process.
+**Current status:** source builds, macOS first. No release binaries are published yet, and `@wvst/web` is a private workspace package. Start with the repository demo before integrating the SDK into another application.
 
-## Why WVST
+## What you can do
 
-- **Real WebAudio integration** through AudioWorklet, DedicatedWorker, and bounded shared buffers.
-- **Crash isolation** because the Bridge Server never loads third-party VST code in-process.
-- **Effects and instruments** with audio, MIDI/note events, and sample-offset parameter automation.
-- **Observable realtime behavior** including latency, jitter, underflow, overflow, dropped frames, and worker recovery.
-- **Explicit security boundaries** with loopback-only defaults, origin checks, and optional token authorization.
+- Process browser audio through local VST3 effects with AudioWorklet and shared buffers.
+- Drive instrument instances with MIDI notes, controllers and sample-offset events through the SDK.
+- Create independent instances of the same plugin, edit normalized parameters and save opaque plugin state.
+- Observe queue pressure, transport failures, plugin latency and worker recovery through separate diagnostic APIs.
+- Build generic browser parameter controls while native processing stays in supervised worker processes.
 
-## Architecture
+The **Live Studio** demo provides a local file player, an eight-second generated synth loop, waveform previews, a reorderable stereo effect rack, bypass controls and real output meters. It supports original-audio preview before Bridge connection. VST processing requires the real Bridge and an installed compatible plugin.
 
-```mermaid
-flowchart LR
-  App["Web application"] --> SDK["@wvst/web"]
-  SDK --> Worklet["AudioWorklet"]
-  SDK --> WebWorker["DedicatedWorker"]
-  Worklet <-->|"SharedArrayBuffer rings"| WebWorker
-  WebWorker <-->|"Control + binary audio"| Bridge["wvst-bridge-server"]
-  Bridge <-->|"Framed IPC"| Host["wvst-host-worker"]
-  Host --> Plugin["VST3 plugin"]
-```
+## Requirements and scope
 
-The AudioWorklet never blocks on native processing. When a block is late or unavailable, WVST advances the WebAudio clock with an explicit silence/drop policy and records the event in its metrics.
+| Component | What to use |
+| --- | --- |
+| Native runtime | macOS is the first target; use a plugin build matching the host worker's CPU architecture. Windows/Linux abstractions do not establish equivalent plugin compatibility. |
+| Toolchain | Stable Rust from `rust-toolchain.toml` (workspace minimum 1.85), Node.js 22 and npm. On macOS, install Xcode Command Line Tools for the native linker. |
+| Browser | Start with current desktop Chromium. The live path requires a secure context, AudioWorklet, SharedArrayBuffer and cross-origin isolation. |
+| Plugin | Install a VST3 effect locally; a stereo 2-in/2-out effect is the simplest Studio fixture. Plugins are not bundled. |
 
-## Quick Start
+VST2, AU, AAX and CLAP are outside the current scope. Native plugin editors are not embedded in the webpage. Instrument APIs exist, while the Studio UI focuses on effects. There is no fixed or zero-latency guarantee: results depend on the browser, buffers, machine and plugin.
 
-You need Node.js 22, the Rust toolchain declared in `rust-toolchain.toml`, and a locally installed VST3 plugin.
+## Quick start
+
+Run these commands from a local checkout:
 
 ```sh
-npm install
-rustup target add wasm32-unknown-unknown
+git clone https://github.com/backrunner/wvst.git
+cd wvst
+npm ci
 cargo build -p wvst-bridge-server -p wvst-host-worker
 ```
 
-Start the local Bridge:
+In terminal A, start the Bridge with an explicit worker path and a development token:
 
 ```sh
+WVST_TOKEN=local-dev-token \
 WVST_HOST_WORKER=target/debug/wvst-host-worker \
-  cargo run -p wvst-bridge-server -- serve
+  target/debug/wvst-bridge-server serve
 ```
 
-In another terminal, start the cross-origin-isolated documentation site and rack demo:
+Keep this process running. Expect `wvst-bridge-server listening on ws://127.0.0.1:35876`. The standalone CLI requires a nonempty `WVST_TOKEN`; `local-dev-token` is an example for local development.
+
+In terminal B:
 
 ```sh
 npm run docs:dev
 ```
 
-The Bridge listens on `ws://127.0.0.1:35876` by default. The demo requires `SharedArrayBuffer` and cross-origin isolation; missing low-latency prerequisites are reported instead of silently degraded.
+Open the URL printed by the dev server (normally `http://localhost:5173`) and navigate to `/demo` or `/zh/demo`:
 
-## Repository Map
+1. Open **Advanced connection settings**, enter `local-dev-token`, then connect to `ws://127.0.0.1:35876`.
+2. Choose **Try a synth loop** or drop a local audio file.
+3. Select a compatible VST3 effect, mount it and press Play.
+4. Adjust parameters, toggle bypass and inspect **Processing details**. With no active effect, the signal path is original audio.
+
+The page initially attempts a connection without a token; an authorization error before you enter the token is expected. The docs server supplies the required COOP/COEP headers. A plain static file server may not.
+
+On macOS, scan locations include `/Library/Audio/Plug-Ins/VST3` and `~/Library/Audio/Plug-Ins/VST3`. If nothing appears, rescan and inspect the reported failures. For startup problems:
+
+```sh
+WVST_HOST_WORKER=target/debug/wvst-host-worker \
+  target/debug/wvst-bridge-server diagnose
+```
+
+See [Getting started](docs/content/docs/getting-started.md) and [Troubleshooting](docs/content/docs/troubleshooting.md) for checkpoints and recovery steps.
+
+## Integrate the SDK
+
+Use `@wvst/web` through the workspace after `npm run build:web`. Worker imports below use Vite conventions; other bundlers need equivalent worker and asset handling.
+
+```ts
+import { WVSTClient } from '@wvst/web';
+
+const client = await WVSTClient.connect({
+  endpoint: 'ws://127.0.0.1:35876',
+  token: 'local-dev-token',
+  requireLowLatency: true
+});
+try {
+  const report = await client.plugins.list({ rescan: true });
+  console.table(report.plugins.map(({ name, pluginId }) => ({ name, pluginId })));
+  console.table(report.failures);
+} finally {
+  client.close();
+}
+```
+
+This establishes control access. Audio also needs an authenticated transport worker, a started instance, shared buffers and an AudioWorklet node. The [Web integration guide](docs/content/docs/web-integration.md) covers setup and teardown together; the [API reference](docs/content/docs/api-reference.md) covers parameters, state, MIDI and diagnostics.
+
+For the smaller developer examples:
+
+```sh
+npm run example:web:effect
+# Or, in a separate run:
+npm run example:web:instrument
+```
+
+Use the URLs printed by each command and the same running Bridge/token. These examples and the Studio exercise different UI workflows.
+
+## How audio moves
+
+```mermaid
+flowchart LR
+  UI["Web UI / WVSTClient"] -->|"Authorized JSON-RPC"| Bridge["Rust Bridge"]
+  Source["WebAudio source"] --> Worklet["AudioWorklet"]
+  Worklet <-->|"SharedArrayBuffer rings"| Transport["DedicatedWorker"]
+  Transport <-->|"Authorized WebSocket / binary audio"| Bridge
+  Bridge <-->|"Native IPC"| Host["Isolated host worker"]
+  Host --> Plugin["VST3 instance"]
+  Worklet --> Output["WebAudio output"]
+```
+
+The AudioWorklet keeps the audio clock moving without waiting for native processing. The transport worker handles networking. Missing output causes silence and a counter increment. Worker supervision isolates plugin crashes from the Bridge; applications still need to handle recovery and clean up their own graphs.
+
+## Repository map
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/wvst-web` | TypeScript Web SDK, transport worker, AudioWorklet, sessions, protocol codecs, and metrics |
-| `crates/wvst-bridge-server` | Loopback control plane, stream routing, authorization, worker supervision, and diagnostics |
-| `crates/wvst-host-worker` | Isolated VST3 lifecycle, control IPC, audio processing, and runtime probing |
-| `crates/wvst-vst3-host` | VST3 ABI boundary and safe lifecycle facade |
-| `crates/wvst-protocol` | Versioned control and binary audio/event protocols |
-| `crates/wvst-shm-*` | Shared-memory layouts, mappings, cursors, and ring transport |
-| `crates/wvst-testkit` | Runtime matrices, latency snapshots, stability budgets, and evidence gates |
-| `docs` | Svedocs site, bilingual guides, and the live rack demo |
+| `packages/wvst-web` | TypeScript SDK, transport worker, AudioWorklet, sessions, codecs and metrics |
+| `packages/wvst-web-examples` | Minimal effect and instrument applications |
+| `crates/wvst-bridge-server` | Authorization, scanning, instance registry, routing and supervision |
+| `crates/wvst-host-worker`, `crates/wvst-vst3-host` | Native plugin lifecycle and VST3 ABI boundary |
+| `crates/wvst-core`, `crates/wvst-protocol` | Shared types and versioned control/audio protocols |
+| `crates/wvst-ringbuf`, `crates/wvst-shm-*` | Ring buffers, native memory mappings and transport |
+| `crates/wvst-process-supervision`, `crates/wvst-embed` | Worker process policies and embedded runtime |
+| `crates/wvst-web-wasm` | Rust-to-WASM protocol support |
+| `crates/wvst-testkit`, `crates/wvst-packager` | Runtime evidence, stability budgets and packaging tooling |
+| `docs` | Bilingual Svedocs site, custom theme, brand and Live Studio |
 
-## Development
+## Development and validation
 
-Run the same core checks used by GitHub Actions:
+Install the WASM target before the full check:
 
 ```sh
+rustup target add wasm32-unknown-unknown
+npm run check
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
-npm run check:wasm
-npm run check:web
-npm run test:web
-npm run build:web:examples
 npm run docs:check
-npm run docs:build -- --no-og
+npm run docs:build
 ```
 
-The repository also contains opt-in evidence gates for real VST3 fixtures, browser loopback runs, Bridge-to-plugin smoke tests, stability budgets, and release-package verification. Those workflows require a suitably provisioned self-hosted runner.
+`npm run check` runs Rust tests, the WASM target check, Web SDK type checks/tests and example type checks. Documentation checks/builds are separate. `npm run docs:build -- --no-og` skips OG generation when only the site build is needed.
+
+Studio browser regression uses a protocol fixture and Chromium; setup is in [docs/README.md](docs/README.md). Fixture success establishes UI/protocol behavior, not third-party plugin compatibility. Real-plugin and sustained-audio evidence workflows require installed fixtures and a provisioned machine; see [Development](docs/content/docs/development.md).
+
+For a contribution, describe the user-visible problem, make a focused change, run the relevant checks and include platform/plugin details for audio issues. Keep realtime code bounded and non-blocking; consult [engineering standards](.agents/development-standards.md) and [implementation gaps](.agents/implementation-gap-analysis.md) before changing runtime boundaries.
 
 ## Documentation
 
-- [Overview](docs/content/docs/index.md)
-- [Getting started](docs/content/docs/getting-started.md)
-- [Architecture](docs/content/docs/architecture.md)
-- [Demo guide](docs/content/docs/demo-guide.md)
-- [API reference](docs/content/docs/api-reference.md)
-- [Troubleshooting](docs/content/docs/troubleshooting.md)
-- [中文文档](docs/content/docs/zh/index.md)
+| Guide | English | 简体中文 |
+| --- | --- | --- |
+| Overview | [Read](docs/content/docs/index.md) | [阅读](docs/content/docs/zh/index.md) |
+| Getting started | [Read](docs/content/docs/getting-started.md) | [阅读](docs/content/docs/zh/getting-started.md) |
+| Live Studio | [Read](docs/content/docs/demo-guide.md) | [阅读](docs/content/docs/zh/demo-guide.md) |
+| Web integration | [Read](docs/content/docs/web-integration.md) | [阅读](docs/content/docs/zh/web-integration.md) |
+| API reference | [Read](docs/content/docs/api-reference.md) | [阅读](docs/content/docs/zh/api-reference.md) |
+| Architecture | [Read](docs/content/docs/architecture.md) | [阅读](docs/content/docs/zh/architecture.md) |
+| Configuration and deployment | [Read](docs/content/docs/configuration.md) | [阅读](docs/content/docs/zh/configuration.md) |
+| Troubleshooting | [Read](docs/content/docs/troubleshooting.md) | [阅读](docs/content/docs/zh/troubleshooting.md) |
+| Development | [Read](docs/content/docs/development.md) | [阅读](docs/content/docs/zh/development.md) |
 
-For engineering constraints and current implementation gaps, see the [agent documentation map](.agents/README.md).
+Workspace Cargo metadata declares `MIT OR Apache-2.0`. Third-party plugins retain their own licenses. VST is a trademark of Steinberg Media Technologies GmbH.

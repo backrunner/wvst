@@ -250,3 +250,11 @@ Bridge metrics include:
 - Latency histograms for route latency, interarrival jitter, and shared-memory process latency.
 
 `instance.runtime.snapshot` combines instance descriptor, metadata refresh result, shared-memory status, pump status, and optional recent events.
+
+## Two connections and latency boundaries
+
+Studio's main-thread `WVSTClient` owns control while the DedicatedWorker owns a separate audio socket. Both need `bridge.hello`; authorization on one does not authorize the other. Browser SABs and native file-mapped shared memory are separate data planes, not direct browser access to plugin memory.
+
+At 48 kHz, 128 frames represent about 2.67 ms of audio, not an entire round trip. Ring capacity is not fixed delay either. Actual round-trip time includes browser scheduling, transport, Bridge routing, plugin processing and output queues. Plugin `latencySamples` describes only plugin-declared delay; end-to-end claims require loopback measurement.
+
+See [Web integration](/docs/web-integration) for creation/cleanup order, [Configuration and deployment](/docs/configuration) for setup and [Development](/docs/development) for validation.

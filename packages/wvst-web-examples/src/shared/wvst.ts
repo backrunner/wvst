@@ -11,6 +11,7 @@ import {
 export interface BridgeClients {
   client: WVSTClient;
   worker: WVSTBridgeWorkerClient;
+  transportWorker: Worker;
 }
 
 export interface PluginClassChoice {
@@ -27,11 +28,21 @@ export async function connectBridge(
     token,
     requireLowLatency: true,
   });
-  const worker = new WVSTBridgeWorkerClient({
-    worker: new Worker(sdkAssetUrl("bridge-worker.js"), { type: "module" }),
-  });
-  await worker.connect(endpoint);
-  return { client, worker };
+  let transportWorker: Worker | undefined;
+  try {
+    transportWorker = new Worker(sdkAssetUrl("bridge-worker.js"), { type: "module" });
+    const worker = new WVSTBridgeWorkerClient({ worker: transportWorker });
+    await worker.connect(endpoint);
+    await worker.request("bridge.hello", {
+      ...client.createHelloRequest().params,
+      token,
+    });
+    return { client, worker, transportWorker };
+  } catch (error) {
+    transportWorker?.terminate();
+    client.close();
+    throw error;
+  }
 }
 
 export async function stopBridge(clients: BridgeClients | undefined): Promise<void> {
@@ -41,6 +52,7 @@ export async function stopBridge(clients: BridgeClients | undefined): Promise<vo
   try {
     await clients.worker.close();
   } finally {
+    clients.transportWorker.terminate();
     clients.client.close();
   }
 }

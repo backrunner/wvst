@@ -14,7 +14,7 @@
   }
 </script>
 
-<details class="wvst-parameters">
+<details class="wvst-parameters" open>
   <summary><SlidersHorizontal size={17} />{t.parameters}<span>{parameters.length}</span></summary>
   {#if parameters.length === 0}
     <p class="wvst-parameter-empty">{t.noParameters}</p>

@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="670" viewBox="0 0 1000 670" role="img" aria-labelledby="sheet-title">
+<title id="sheet-title">WVST identity — logo, monogram and favicon</title>
+<rect width="1000" height="670" fill="#f4f2ec"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#282c26">
+<text x="40" y="48" font-size="13" letter-spacing="2">WVST / VISUAL IDENTITY</text>
+<text x="40" y="78" font-size="14" fill="#65695f">Two signal paths. One connection.</text>
+<rect x="40" y="108" width="450" height="230" rx="8" fill="#faf9f5" stroke="#d5d7cc"/>
+<rect x="510" y="108" width="450" height="230" rx="8" fill="#1c201c"/>
+<g transform="translate(86 171) scale(1.4)">
+
+  <path fill="#282c26" d="M8 12H18L29 43L38 19L43 33L34 58H24Z"/>
+  <path fill="#a2643f" d="M36 12H46L57 43L68 12H78L62 58H52Z"/>
+  <g fill="none" stroke="#282c26" stroke-width="5.2" stroke-linecap="square" stroke-linejoin="round">
+    <path d="M102 25L109 49L118 27L127 49L134 25"/>
+    <path d="M146 25L157 49L168 25"/>
+    <path d="M199 28C194 23 179 23 179 31C179 39 198 34 198 43C198 51 183 52 177 47"/>
+    <path d="M211 25H237M224 25V49"/>
+  </g>
+</g>
+<g transform="translate(556 171) scale(1.4)">
+
+  <path fill="#ecece1" d="M8 12H18L29 43L38 19L43 33L34 58H24Z"/>
+  <path fill="#d5a079" d="M36 12H46L57 43L68 12H78L62 58H52Z"/>
+  <g fill="none" stroke="#ecece1" stroke-width="5.2" stroke-linecap="square" stroke-linejoin="round">
+    <path d="M102 25L109 49L118 27L127 49L134 25"/>
+    <path d="M146 25L157 49L168 25"/>
+    <path d="M199 28C194 23 179 23 179 31C179 39 198 34 198 43C198 51 183 52 177 47"/>
+    <path d="M211 25H237M224 25V49"/>
+  </g>
+</g>
+<text x="60" y="316" font-size="10" fill="#65695f" letter-spacing="1">PRIMARY / LIGHT SURFACE</text>
+<text x="530" y="316" font-size="10" fill="#adb4a5" letter-spacing="1">REVERSE / DARK SURFACE</text>
+<line x1="40" y1="384" x2="960" y2="384" stroke="#d5d7cc"/>
+<text x="40" y="419" font-size="11" fill="#65695f" letter-spacing="1">STANDALONE MARK</text>
+<g transform="translate(46 446) scale(1.5)">
+
+  <path fill="#282c26" d="M8 12H18L29 43L38 19L43 33L34 58H24Z"/>
+  <path fill="#a2643f" d="M36 12H46L57 43L68 12H78L62 58H52Z"/>
+</g>
+<text x="285" y="419" font-size="11" fill="#65695f" letter-spacing="1">APP ICON / 64 · 32 · 24 · 16</text>
+<g transform="translate(287 474)">
+  <rect width="64" height="64" rx="13" fill="#282c26"/>
+  <g transform="translate(2 8) scale(.7)">
+    <path fill="#ecece1" d="M8 12H18L29 43L38 19L43 33L34 58H24Z"/>
+    <path fill="#d5a079" d="M36 12H46L57 43L68 12H78L62 58H52Z"/>
+  </g>
+</g>
+<g transform="translate(382 490) scale(.5)">
+  <rect width="64" height="64" rx="13" fill="#282c26"/>
+  <g transform="translate(2 8) scale(.7)">
+    <path fill="#ecece1" d="M8 12H18L29 43L38 19L43 33L34 58H24Z"/>
+    <path fill="#d5a079" d="M36 12H46L57 43L68 12H78L62 58H52Z"/>
+  </g>
+</g>
+<g transform="translate(444 494) scale(.375)">
+  <rect width="64" height="64" rx="13" fill="#282c26"/>
+  <g transform="translate(2 8) scale(.7)">
+    <path fill="#ecece1" d="M8 12H18L29 43L38 19L43 33L34 58H24Z"/>
+    <path fill="#d5a079" d="M36 12H46L57 43L68 12H78L62 58H52Z"/>
+  </g>
+</g>
+<g transform="translate(500 498) scale(.25)">
+  <rect width="64" height="64" rx="13" fill="#282c26"/>
+  <g transform="translate(2 8) scale(.7)">
+    <path fill="#ecece1" d="M8 12H18L29 43L38 19L43 33L34 58H24Z"/>
+    <path fill="#d5a079" d="M36 12H46L57 43L68 12H78L62 58H52Z"/>
+  </g>
+</g>
+<text x="680" y="419" font-size="11" fill="#65695f" letter-spacing="1">COLOUR</text>
+<rect x="682" y="460" width="64" height="64" rx="4" fill="#282c26"/>
+<rect x="762" y="460" width="64" height="64" rx="4" fill="#a2643f"/>
+<rect x="842" y="460" width="64" height="64" rx="4" fill="#d5a079"/>
+<text x="682" y="550" font-size="11">#282C26</text><text x="762" y="550" font-size="11">#A2643F</text><text x="842" y="550" font-size="11">#D5A079</text>
+<line x1="40" y1="598" x2="960" y2="598" stroke="#d5d7cc"/>
+<text x="40" y="634" font-size="11" fill="#65695f">Custom SVG geometry · Font-independent lettering · Transparent logo assets</text>
+</g></svg>
