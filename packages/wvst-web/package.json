@@ -1,6 +1,6 @@
 {
   "name": "@wvst/web",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "private": true,
   "type": "module",
   "description": "WebAudio SDK for isolated local VST3 processing through the WVST Rust Bridge.",

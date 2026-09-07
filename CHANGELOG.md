@@ -7,6 +7,8 @@ work-in-progress versions, not published releases.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] - 2026-09-07
+
 ### Added
 
 - macOS release signing with Developer ID, hardened runtime, Apple notarization,

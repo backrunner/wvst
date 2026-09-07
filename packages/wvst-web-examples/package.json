@@ -1,6 +1,6 @@
 {
   "name": "@wvst/web-examples",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "private": true,
   "type": "module",
   "description": "Runnable WebAudio examples for the WVST Web SDK.",
