@@ -194,8 +194,8 @@ version, add user-facing changes under Unreleased, then run:
 
 ```sh
 npm run release:check
-npm run release:prepare -- 0.1.0-alpha.3 --date 2026-09-08
-npm run release:check -- --tag v0.1.0-alpha.3
+npm run release:prepare -- 0.1.0-alpha.4 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.4
 ```
 
 Use the actual next version/date. Review and push the version commit, pass CI,
@@ -205,7 +205,7 @@ prerelease. Published assets are immutable. See the [release guide](docs/content
 for verification, upgrade/rollback and the additional gates needed for stable
 releases. The workflow does not publish to npm or crates.io.
 
-Subsequent macOS releases require Developer ID signing and Apple notarization,
-with stapled DMG downloads. Configure the six Apple Secrets described in the
-[release guide](docs/content/docs/releases.md) before tagging. Published alpha.2
+The alpha.3 macOS packages passed Developer ID signing, Apple notarization,
+stapling and Gatekeeper on both architectures. Credential setup and verification
+are described in the [release guide](docs/content/docs/releases.md). Published alpha.2
 archives remain unsigned; Windows/Linux signing is not configured.

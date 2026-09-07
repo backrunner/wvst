@@ -53,3 +53,20 @@ APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY and APPLE_TEAM_ID were
 configured in backrunner/wvst using stdin. P12 and private key stayed in memory;
 the temporary helper was removed. APPLE_ID and APPLE_PASSWORD are pending user
 configuration directly in the target repository's Actions Secrets.
+
+## Alpha.3 remote release verification
+
+User configured APPLE_ID and APPLE_PASSWORD on 2026-09-07. All six Secrets
+are present; both macOS runners validated Apple ID credentials successfully.
+Release Preview run 34140196133 passed all quality/build/signing jobs at source
+5122476bf7026ab9e2856059ad0fb40becf383ba, tag v0.1.0-alpha.3.
+
+- aarch64-apple-darwin: Apple Accepted, submission 640f9400-fb5a-43ff-adb9-98ce47095e0b; final DMG SHA256 b4364762e9d051c4adb91f30faf15f4f202dcdcb5174fc731d034c70bc6597c2.
+- x86_64-apple-darwin: Apple Accepted, submission f2bdf9f3-db59-4ed8-809b-ea6ed1a05ff4; final DMG SHA256 60cdb6c9cd3146131b0b2501123e6831b169355fe63b603660a14522b52a58b8.
+
+Downloaded Release draft assets independently verified: all archive and manifest
+hashes match, source and product identity match the tag; both DMGs pass codesign,
+stapler and Gatekeeper locally (Notarized Developer ID). Both DMGs mounted
+read-only and verified binary hashes/entitlements/team; ARM programs executed
+--version successfully. Windows/Linux and SDK archives also verified.
+Windows/Linux remain unsigned and experimental. Alpha.2 assets are unchanged.

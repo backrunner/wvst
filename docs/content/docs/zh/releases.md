@@ -6,7 +6,7 @@ order: 10
 
 # 版本与发布
 
-WVST 使用统一产品版本：Rust workspace、Bridge、host worker、Web SDK、示例和文档包一起升级。当前首个打包版本为 `0.1.0-alpha.2`。文档导航显示当前构建的版本；历史源码和对应文档保留在 Git tag 中。
+WVST 使用统一产品版本：Rust workspace、Bridge、host worker、Web SDK、示例和文档包一起升级。首个公开预览版为 `0.1.0-alpha.2`，`0.1.0-alpha.3` 引入 macOS 签名发布流程。文档导航显示当前构建的版本；历史源码和对应文档保留在 Git tag 中。
 
 ## 产品版本与协议版本
 
@@ -32,14 +32,14 @@ WVST 使用统一产品版本：Rust workspace、Bridge、host worker、Web SDK�
 | `x86_64-pc-windows-msvc` | x64 Windows 实验运行包。 |
 | `wvst-web-VERSION.tgz` | 对应版本的 SDK，可用 `npm install ./wvst-web-VERSION.tgz` 安装。 |
 
-原生文件名包含版本和目标，例如 `wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz`。macOS 是优先插件运行目标；能下载 Windows/Linux 构建不代表已经验证所有第三方插件。已发布的 alpha.2 压缩包未签名。配置好仓库凭据后，后续 macOS 版本将使用 Developer ID 签名、Apple 公证的 `.dmg`；Windows/Linux 仍未签名。请以具体 Release 的附件和签名状态为准。
+原生文件名包含版本和目标，例如 `wvst-0.1.0-alpha.3-aarch64-apple-darwin.dmg`。macOS 是优先插件运行目标；能下载 Windows/Linux 构建不代表已经验证所有第三方插件。已发布的 alpha.2 压缩包未签名。`0.1.0-alpha.3` 的 macOS 包使用 Developer ID 签名、Apple 公证的 `.dmg`；Windows/Linux 仍未签名。请以具体 Release 的附件和签名状态为准。
 
 ## 校验与启动
 
 下载目标压缩包、`SHA256SUMS` 和 `release-manifest.json`。校验工具会对未下载的其他平台附件提示缺失；只比较所选文件对应行即可。macOS 可以使用：
 
 ```sh
-shasum -a 256 wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz
+shasum -a 256 wvst-0.1.0-alpha.3-aarch64-apple-darwin.dmg
 ```
 
 Linux 可使用 `sha256sum`，Windows 使用 `Get-FileHash -Algorithm SHA256`。摘要应与 `SHA256SUMS` 完全一致。`release-manifest.json` 记录来源 commit、版本、文件大小和 hash。校验和用于发现损坏，不是代码签名。
@@ -68,9 +68,9 @@ Windows 对应文件名带 `.exe`。运行包不安装系统服务；启动时�
 
 ```sh
 npm run release:check
-npm run release:prepare -- 0.1.0-alpha.3 --date 2026-09-08
-npm run release:check -- --tag v0.1.0-alpha.3
-npm run release:notes -- 0.1.0-alpha.3
+npm run release:prepare -- 0.1.0-alpha.4 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.4
+npm run release:notes -- 0.1.0-alpha.4
 ```
 
 这里的版本与日期仅为下一次发布示例，实际发布时按计划修改。prepare 会更新 Rust/npm manifests、Cargo.lock/package-lock.json、生成的 SDK 版本，并把 Unreleased 归档为带日期的发布说明。所有修改先解析验证，写入失败时尝试回滚。
@@ -82,8 +82,8 @@ npm run release:notes -- 0.1.0-alpha.3
 版本提交推送、CI 通过后，创建不可复用的注释 tag：
 
 ```sh
-git tag -a v0.1.0-alpha.3 -m 'WVST 0.1.0-alpha.3'
-git push origin v0.1.0-alpha.3
+git tag -a v0.1.0-alpha.4 -m 'WVST 0.1.0-alpha.4'
+git push origin v0.1.0-alpha.4
 ```
 
 `Release Preview` 工作流校验 tag/版本/发布说明，复用完整 CI，再构建四个原生运行包和 SDK tarball。只有全部成功才生成 SHA256SUMS、来源 manifest 和 GitHub Release 草稿。重跑可更新同一个草稿，已公开 Release 不允许覆盖。
@@ -105,7 +105,7 @@ git push origin v0.1.0-alpha.3
 | `APPLE_ID` | 有权使用该团队的 Apple 账号。 |
 | `APPLE_PASSWORD` | Apple 应用专用密码，与登录密码和 P12 密码不同。 |
 
-本机 Developer ID 身份已对 WVST 二进制完成签名验证。这不代表 GitHub Secrets 已配置或公证已通过。alpha.2 的公开附件保持不变；补齐凭据并通过签名流程后，发布新版本。
+本机 Developer ID 身份已对 WVST 二进制完成签名验证。六项仓库 Secrets 均已配置，alpha.3 发布流程已在两种 macOS 架构上通过 Apple ID 认证、公证、票据附加和 Gatekeeper 检查。alpha.2 的公开附件保持未签名状态，不予覆盖。
 
 工作流将证书导入 runner 钥匙串。Rust `notary-credentials` 命令通过 stdin 将应用专用密码交给 `notarytool`，验证账号后保存临时 profile；`bundle-macos` 通过该 profile 认证，不将密码放入命令参数。WVST 不需要 AIPass 的 CloudKit provisioning profile 或 Tauri 更新密钥。
 

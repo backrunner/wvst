@@ -180,8 +180,8 @@ Workspace 的 Cargo 元数据声明许可为 `MIT OR Apache-2.0`；第三方插�
 
 ```sh
 npm run release:check
-npm run release:prepare -- 0.1.0-alpha.3 --date 2026-09-08
-npm run release:check -- --tag v0.1.0-alpha.3
+npm run release:prepare -- 0.1.0-alpha.4 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.4
 ```
 
 版本和日期按实际计划修改。审核并推送版本提交、通过 CI 后，推送注释
@@ -190,6 +190,6 @@ npm run release:check -- --tag v0.1.0-alpha.3
 和正式版还需满足的条件见[发布指南](docs/content/docs/zh/releases.md)。
 流程不会执行 npm 或 crates.io 发布。
 
-后续 macOS 发布要求 Developer ID 签名、Apple 公证及附加票据的 DMG；
-推送标签前按[发布指南](docs/content/docs/zh/releases.md)配置六项 Apple Secrets。
+alpha.3 的两种 macOS 架构均通过 Developer ID 签名、Apple 公证、
+票据附加及 Gatekeeper 检查，配置和校验方法见[发布指南](docs/content/docs/zh/releases.md)。
 已发布的 alpha.2 压缩包仍未签名，Windows/Linux 暂未接入签名。

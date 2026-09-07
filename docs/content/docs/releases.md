@@ -6,7 +6,7 @@ order: 10
 
 # Versions and Releases
 
-WVST uses one product version for the Rust workspace, Bridge, host worker, SDK, examples and docs package. The first packaged version is `0.1.0-alpha.2`. Navigation shows the current docs build's version; Git tags retain historical source and documentation.
+WVST uses one product version for the Rust workspace, Bridge, host worker, SDK, examples and docs package. The first public preview was `0.1.0-alpha.2`; `0.1.0-alpha.3` introduces the signed macOS release pipeline. Navigation shows the current docs build's version; Git tags retain historical source and documentation.
 
 ## Product and protocol versions
 
@@ -32,14 +32,14 @@ Select an explicitly marked preview at [GitHub Releases](https://github.com/back
 | `x86_64-pc-windows-msvc` | Experimental x64 Windows runtime. |
 | `wvst-web-VERSION.tgz` | Matching SDK; install with `npm install ./wvst-web-VERSION.tgz`. |
 
-Native names include version and target, for example `wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz`. macOS is the first plugin runtime target. Windows/Linux downloads do not establish third-party compatibility. The published alpha.2 archives are unsigned. Subsequent macOS releases use Developer ID signed, notarized `.dmg` files once repository credentials are configured; Windows/Linux remain unsigned. Refer to each release’s actual files and signing status.
+Native names include version and target, for example `wvst-0.1.0-alpha.3-aarch64-apple-darwin.dmg`. macOS is the first plugin runtime target. Windows/Linux downloads do not establish third-party compatibility. The published alpha.2 archives are unsigned. `0.1.0-alpha.3` macOS packages use Developer ID signed, notarized `.dmg` files; Windows/Linux remain unsigned. Refer to each release’s actual files and signing status.
 
 ## Verify and start
 
 Download the selected archive, `SHA256SUMS` and `release-manifest.json`. Checksum tools report other platforms as missing if you have not downloaded every asset; compare the selected file's line. On macOS:
 
 ```sh
-shasum -a 256 wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz
+shasum -a 256 wvst-0.1.0-alpha.3-aarch64-apple-darwin.dmg
 ```
 
 Use `sha256sum` on Linux or `Get-FileHash -Algorithm SHA256` on Windows. The digest must exactly match `SHA256SUMS`. The release manifest records source commit, version, file sizes and hashes. Checksums detect corruption; they are not code signatures.
@@ -68,9 +68,9 @@ Your app owns plugin-state persistence. Back up snapshots and retain the origina
 
 ```sh
 npm run release:check
-npm run release:prepare -- 0.1.0-alpha.3 --date 2026-09-08
-npm run release:check -- --tag v0.1.0-alpha.3
-npm run release:notes -- 0.1.0-alpha.3
+npm run release:prepare -- 0.1.0-alpha.4 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.4
+npm run release:notes -- 0.1.0-alpha.4
 ```
 
 These are example values for a subsequent release; choose the actual version and date. Prepare updates Rust/npm manifests, both lockfiles and the generated SDK version, and archives Unreleased under dated release notes. All edits are parsed/validated before writing; failed writes attempt rollback.
@@ -82,8 +82,8 @@ Use `npm run release:sync` to repair workspace version drift without creating a 
 After pushing the version commit and passing CI, create an annotated tag:
 
 ```sh
-git tag -a v0.1.0-alpha.3 -m 'WVST 0.1.0-alpha.3'
-git push origin v0.1.0-alpha.3
+git tag -a v0.1.0-alpha.4 -m 'WVST 0.1.0-alpha.4'
+git push origin v0.1.0-alpha.4
 ```
 
 `Release Preview` validates tag/version/notes, reuses full CI, and builds four native archives plus an SDK tarball. Only after every build succeeds does it generate SHA256SUMS, a source manifest and a draft GitHub Release. Reruns can refresh that draft; published releases cannot be overwritten.
@@ -105,7 +105,7 @@ The release workflow requires the following repository Secrets in **backrunner/w
 | `APPLE_ID` | Apple account with access to that team. |
 | `APPLE_PASSWORD` | Apple app-specific password, separate from the account and P12 passwords. |
 
-The local Developer ID identity has been tested with WVST binaries. This does not configure GitHub Secrets or establish notarization. Alpha.2 remains unchanged; publish a new version after credentials and the signed workflow pass.
+The local Developer ID identity has been tested with WVST binaries. All six repository Secrets are configured. The alpha.3 release workflow passed Apple ID authentication, notarization, stapling and Gatekeeper for both macOS architectures. Alpha.2 remains unsigned and unchanged.
 
 The workflow imports the certificate into the runner Keychain. The Rust `notary-credentials` command sends the app-specific password to `notarytool` over stdin, validates the account, and stores a temporary profile. `bundle-macos` uses that profile, without a password in command arguments. No CloudKit provisioning profile or Tauri updater key is needed for WVST.
 
