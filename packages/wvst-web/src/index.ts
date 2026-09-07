@@ -16,6 +16,7 @@ export {
 export {
   WebSocketRpcTransport,
   WVSTBridgeError,
+  type WebSocketRpcTransportOptions,
   type BridgeEvent,
   type BridgeEventKind,
   type BridgeEventListener,

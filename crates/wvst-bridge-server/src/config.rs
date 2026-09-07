@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use url::{Host, Url};
 use wvst_process_supervision::DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS;
@@ -19,6 +20,7 @@ pub struct BridgeConfig {
     allowed_origins: Vec<String>,
     allow_loopback_origins: bool,
     worker_auto_restart: bool,
+    worker_load_timeout: Duration,
     max_worker_instances: usize,
     worker_quarantine_failure_threshold: u32,
     max_control_message_bytes: usize,
@@ -66,6 +68,12 @@ impl BridgeConfig {
         let worker_auto_restart = std::env::var("WVST_WORKER_AUTO_RESTART")
             .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
             .unwrap_or(true);
+        let worker_load_timeout = std::env::var("WVST_WORKER_LOAD_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_secs(120));
         let max_worker_instances = std::env::var("WVST_MAX_WORKER_INSTANCES")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
@@ -115,6 +123,7 @@ impl BridgeConfig {
             allowed_origins,
             allow_loopback_origins,
             worker_auto_restart,
+            worker_load_timeout,
             max_worker_instances,
             worker_quarantine_failure_threshold,
             max_control_message_bytes,
@@ -134,6 +143,7 @@ impl BridgeConfig {
             allowed_origins: Vec::new(),
             allow_loopback_origins: true,
             worker_auto_restart: true,
+            worker_load_timeout: Duration::from_secs(120),
             max_worker_instances: DEFAULT_MAX_WORKER_INSTANCES,
             worker_quarantine_failure_threshold: DEFAULT_WORKER_QUARANTINE_FAILURE_THRESHOLD,
             max_control_message_bytes: DEFAULT_MAX_CONTROL_MESSAGE_BYTES,
@@ -144,6 +154,15 @@ impl BridgeConfig {
             worker_linux_cgroup_cpu_quota_micros: None,
             worker_linux_cgroup_cpu_period_micros: DEFAULT_LINUX_CGROUP_CPU_PERIOD_MICROS,
         }
+    }
+
+    pub fn with_worker_load_timeout(mut self, timeout: Duration) -> Self {
+        self.worker_load_timeout = timeout.max(Duration::from_millis(1));
+        self
+    }
+
+    pub fn worker_load_timeout(&self) -> Duration {
+        self.worker_load_timeout
     }
 
     pub fn with_worker_auto_restart(mut self, enabled: bool) -> Self {

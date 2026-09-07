@@ -29,10 +29,13 @@ const client = await WVSTClient.connect({
 | `clientVersion` | `0.1.0` | App version; protocol negotiation is separate. |
 | `token` | Unset | Must match `WVST_TOKEN` for the standalone Bridge CLI. |
 | `requireLowLatency` | `true` | Check SAB and isolation before connecting. Disabling skips the check, not the need for an audio implementation. |
+| `transportOptions` | SDK defaults | WebSocket handshake, control/audio deadlines and pending-request cap; see below. |
 
 `WVSTClient.lowLatencyPrerequisites()` returns two booleans: `sharedArrayBuffer` and `crossOriginIsolated`. Apps should also check `isSecureContext` and AudioWorklet. `client.hello` holds negotiated protocol/audio-frame versions, Bridge identity and capability requirements. Ordinary RPC responses do not necessarily repeat version fields.
 
 `client.close()` closes control transport; it does not replace instance destruction, graph disconnection or Worker termination.
+
+`transportOptions` accepts `connectTimeoutMs` (10,000), `requestTimeoutMs` (180,000), `binaryTimeoutMs` (10,000) and `maxPendingRequests` (256), all positive 32-bit integers. A deadline closes that socket and rejects all its pending requests, so a late binary response cannot be assigned to the next request. These are failure deadlines, not acceptable realtime latency targets. `WVSTBridgeWorkerClient.connect(endpoint, transportOptions?)` configures the separate audio socket. Keep control and audio on separate connections; pause audio processing before a long state restore. When increasing `WVST_WORKER_LOAD_TIMEOUT_MS`, also leave sufficient headroom in `requestTimeoutMs`. Closing the browser socket does not cancel native loading or destroy an instance.
 
 ## Plugin discovery
 
@@ -114,7 +117,7 @@ Component/controller state is opaque plugin-owned base64 data. Snapshot checks c
 | `createLoopbackSharedBuffers(options)` | Allocate input/output SABs and counters; default capacity is four quanta. |
 | `configureLoopbackAudioWorkletNode(node, buffers)` | Send shared-buffer configuration to an existing node. |
 | `createLoopbackAudioWorkletNode(context, options)` | Load a processor and create a node; manage module loading centrally for multiple nodes. |
-| `WVSTBridgeWorkerClient.connect(endpoint)` | Open the worker socket; then authorize with `request('bridge.hello', params)`. |
+| `WVSTBridgeWorkerClient.connect(endpoint, transportOptions?)` | Open the worker socket; then authorize with `request('bridge.hello', params)`. |
 | `startAudioStream(options)` | Start transport using matching stream ID, sample rate, frames, channels and buffers. |
 | `stopAudioStream(streamId)` | Stop that browser audio stream. |
 | `close()` | Close worker transport; the owner of the native Worker must also call `terminate()`. |
@@ -178,3 +181,12 @@ Control-client RPC errors use `WVSTBridgeError` with `code`, `message` and optio
 | `instances.sharedMemoryPumpStart()` | `stream.sharedMemory.pump.start` |
 
 For advanced units, program data, connection notifications and event payloads, consult the exported types and [Architecture](/docs/architecture).
+
+
+### Web MIDI lifecycle and limits
+
+The adapter follows device hot-plug events and accepts `inputIds` to select inputs. Call `await adapter.stop()` before stopping the audio session; it removes listeners and sends releases for tracked notes and sustain/sostenuto/hold pedals. `await adapter.panic()` sends releases while keeping the inputs connected. Supply `onError` to display malformed-message and queue/transport failures.
+
+The worker acknowledges MIDI enqueue, not native processing. Keep audio processing active for releases to reach the plugin; immediately closing the stream can discard them. There is currently no public MIDI flush acknowledgement. When ending a session, also stop/destroy its native instance. Neither panic nor stop guarantees release delivery after a queue or transport failure.
+
+CC, pitch bend and channel aftertouch require the plugin's VST3 `IMidiMapping`. Program Change and system messages are not implemented by the native input converter; raw transport does not imply plugin support. SysEx and incomplete or concatenated short messages are rejected. `sampleOffset` is an explicit offset in the next block, not automatic conversion of Web MIDI timestamps. Overdue MIDI is applied at offset 0 in its original order to preserve note-off and pedal releases.

@@ -19,10 +19,12 @@ import {
   type BridgeMetrics,
   type JsonValue,
   type RpcTransport,
+  type WebSocketRpcTransportOptions,
   type Vst3MetadataInvalidationReason,
 } from "./transport.js";
 
 export interface ConnectOptions {
+  transportOptions?: WebSocketRpcTransportOptions;
   endpoint?: string;
   clientName?: string;
   clientVersion?: string;
@@ -137,7 +139,7 @@ export class WVSTClient {
     const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
     const clientName = options.clientName ?? "@wvst/web";
     const clientVersion = options.clientVersion ?? WVST_VERSION;
-    const transport = await WebSocketRpcTransport.connect(endpoint);
+    const transport = await WebSocketRpcTransport.connect(endpoint, options.transportOptions);
 
     try {
       const params = createHelloParams(clientName, clientVersion, options.token);

@@ -1,4 +1,4 @@
-import type { JsonValue } from "../client/transport.js";
+import type { JsonValue, WebSocketRpcTransportOptions } from "../client/transport.js";
 import type { MidiEvent, ParameterAutomationEvent } from "../protocol/index.js";
 
 export type BridgeWorkerCommand =
@@ -6,6 +6,7 @@ export type BridgeWorkerCommand =
       id: number;
       type: "connect";
       endpoint: string;
+      transportOptions?: WebSocketRpcTransportOptions;
     }
   | {
       id: number;

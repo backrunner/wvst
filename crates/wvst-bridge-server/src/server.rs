@@ -68,6 +68,7 @@ impl BridgeServer {
         host_worker: HostWorkerClient,
         events: BridgeEventBus,
     ) -> BridgeResult<Self> {
+        let host_worker = host_worker.with_load_timeout(config.worker_load_timeout());
         let listener = TcpListener::bind(config.bind_addr()).await?;
 
         events.emit(BridgeEventKind::ServerStarting);
@@ -76,6 +77,7 @@ impl BridgeServer {
         let workers = WorkerSupervisor::with_options(
             WorkerSupervisorOptions::new(host_worker.executable_path().to_path_buf())
                 .with_timeout(host_worker.timeout())
+                .with_load_timeout(config.worker_load_timeout())
                 .with_max_instances(config.max_worker_instances())
                 .with_quarantine_failure_threshold(config.worker_quarantine_failure_threshold())
                 .with_resource_limits(resource_limits)
@@ -177,6 +179,7 @@ fn worker_resource_limits(config: &BridgeConfig) -> WorkerResourceLimits {
 
 #[allow(clippy::result_large_err)]
 async fn handle_connection(stream: TcpStream, state: BridgeState) -> BridgeResult<()> {
+    stream.set_nodelay(true)?;
     let origin = Arc::new(Mutex::new(None));
     let captured_origin = Arc::clone(&origin);
     let websocket = accept_hdr_async(stream, move |request: &Request, response: Response| {

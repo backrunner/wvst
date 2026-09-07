@@ -77,6 +77,9 @@ export function createWVSTRawMidiEvent(
 }
 
 export function wvstMidiBytes(data: ArrayLike<number>): number[] {
+  if (!Number.isInteger(data.length) || data.length < 0 || data.length > 3) {
+    throw new Error("WVST supports individual short MIDI messages; SysEx and concatenated messages are unsupported");
+  }
   const bytes: number[] = [];
   for (let index = 0; index < Math.min(data.length, 3); index += 1) {
     bytes.push(validateWVSTMidiByte(`byte ${index}`, data[index] ?? 0));

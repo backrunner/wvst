@@ -719,3 +719,6 @@ fn unique_temp_dir() -> PathBuf {
         .as_nanos();
     std::env::temp_dir().join(format!("wvst-worker-supervisor-test-{suffix}"))
 }
+
+#[path = "worker_supervisor_edge_tests.rs"]
+mod edge_tests;

@@ -54,6 +54,10 @@ element("web-midi").addEventListener("click", () => run(connectWebMidi));
 element("stop").addEventListener("click", () => run(stop));
 window.addEventListener("keydown", (event) => bindKeyboard(event));
 window.addEventListener("keyup", (event) => bindKeyboard(event));
+window.addEventListener("blur", () => run(async () => {
+  await keyboard?.allNotesOff();
+  await webMidi?.panic();
+}));
 window.addEventListener("pagehide", () => void stop());
 renderKeyboard();
 
@@ -121,6 +125,7 @@ async function mount(): Promise<void> {
   await stopMounted();
   context = new AudioContext();
   await context.resume();
+  setStatus("Loading instrument; large sample libraries may take a while");
   const created = await clients.client.instances.create({
     pluginId: plugin.pluginId,
     classId,
@@ -130,6 +135,7 @@ async function mount(): Promise<void> {
     outputChannels: readInteger("outputs", 2),
     outputBusIndex: readOptionalInteger("output-bus"),
   });
+  instance = created;
   await clients.client.instances.start({ instanceId: created.instanceId });
   instance = await clients.client.instances.openStream({ instanceId: created.instanceId });
   session = await createWVSTAudioDeviceSession({
@@ -157,11 +163,11 @@ async function connectWebMidi(): Promise<void> {
   if (!session) {
     throw new Error("WVST instrument session is not mounted");
   }
-  webMidi?.stop();
+  await webMidi?.stop();
   webMidi = await createWVSTWebMidiAdapter({
     buffers: session.buffers,
     sendMidiEvents: (events) => session?.sendMidiEvents(events) ?? Promise.resolve(),
-  });
+  }, { onError: (error) => setStatus(error.message, "error") });
   setStatus("Web MIDI connected", "ok");
 }
 
@@ -209,7 +215,7 @@ async function stop(): Promise<void> {
 async function stopMounted(): Promise<void> {
   window.clearInterval(metricsTimer);
   metricsTimer = undefined;
-  webMidi?.stop();
+  await webMidi?.stop();
   webMidi = undefined;
   await keyboard?.allNotesOff();
   keyboard = undefined;

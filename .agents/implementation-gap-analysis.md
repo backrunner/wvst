@@ -140,7 +140,7 @@
 仍缺少：
 
 - MIDI/note event schema、Web/Bridge/worker 二进制数据面传输、shared-memory process-once 事件注入、VST3 `IEventList` note/poly pressure 转换，以及 CC、pitch bend、channel aftertouch 经 `IMidiMapping` 到 VST3 parameter-change path 的映射已有首版。
-- Rust worker 边界已具备 block 内 sample offset 确定性排序；Web worker 侧已加入目标 quantum 绑定、late-event 丢弃和计数策略；Web SDK 已提供 Web MIDI adapter、Web MIDI message decoder、虚拟键盘 helper 和默认键盘映射；仍缺少真实 Web MIDI / 虚拟键盘端到端调度校准。
+- Rust worker 边界已具备 block 内 sample offset 确定性排序；Web worker 侧已加入目标 quantum 绑定和计数策略；2026-09-08 起迟到 MIDI 按原顺序补发到下一处理块的 offset 0，过期参数自动化仍丢弃；Web SDK 已提供 Web MIDI adapter、Web MIDI message decoder、虚拟键盘 helper 和默认键盘映射；仍缺少真实 Web MIDI / 虚拟键盘端到端调度校准。
 - 音源 VST 的 zero-input audio buffer/session/worker plumbing 已有首版；note on/off 已能随 block 进入真实 VST3 `process()`，`runtime-probe` 已能记录 note-on/note-off 绝对 frame、首个非零输出 frame 和 note-to-audio latency，并可通过 matrix expectations 约束 `requireNoteResponse`、`maxNoteToAudioFrames` 和 `maxNoteToAudioMicros`；仍缺少真实第三方 instrument 兼容测试和浏览器端 Web MIDI / 虚拟键盘示例验证。
 
 ### 6. 嵌入式 runtime 与打包
@@ -158,3 +158,7 @@
 3. 将 framed control IPC 的批处理/多路复用能力继续扩展到更多 Bridge metadata/control 组合调用，并继续扩展错误分类。
 4. 增加 Windows/Linux 真实运行验证、worker supervision 压测、资源上限策略调优和更细粒度 server-push 事件类型。
 5. 继续把 Bridge audio sequence/late/jitter、shared-memory pump event queue 指标与 WebAudio worker/worklet underflow/overflow 指标纳入同一真实压测报告，并把 Bridge route latency 扩展到端到端 WebAudio 往返测量。
+
+## 2026-09-08 大型音源与 MIDI 边界复核
+
+详见 [plugin-edge-review-2026-09-08.md](plugin-edge-review-2026-09-08.md)。补齐独立加载预算、并发加载限额、运行期崩溃计数、迟到输出丢弃、MIDI 热插拔与释放；持续 watchdog、资源实测、原生状态恢复和 Kontakt 真机兼容仍未完成。

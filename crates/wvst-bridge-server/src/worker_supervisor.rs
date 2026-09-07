@@ -1,18 +1,19 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use wvst_process_supervision::{WorkerResourceLimits, WorkerTerminationTarget};
 
 use crate::instance_registry::InstanceRecord;
 use crate::metrics::{BridgeMetrics, WorkerShutdownAudit};
 
+const DEFAULT_LOAD_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_IPC_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_QUARANTINE_DURATION: Duration = Duration::from_secs(60);
 const DEFAULT_MAX_WORKER_INSTANCES: usize = 64;
@@ -32,6 +33,9 @@ mod worker_supervisor_hello;
 mod worker_supervisor_lifecycle;
 #[path = "worker_supervisor_options.rs"]
 mod worker_supervisor_options;
+#[path = "worker_supervisor_policy.rs"]
+mod worker_supervisor_policy;
+use worker_supervisor_policy::FailureRecord;
 #[path = "worker_supervisor_process.rs"]
 mod worker_supervisor_process;
 
@@ -49,21 +53,23 @@ use wvst_protocol::{
 pub struct WorkerSupervisor {
     executable: PathBuf,
     timeout: Duration,
+    load_timeout: Duration,
     use_audio_ipc: bool,
     max_instances: usize,
     resource_limits: WorkerResourceLimits,
     metrics: Option<Arc<BridgeMetrics>>,
-    failures: Mutex<BTreeMap<String, u32>>,
+    failures: Mutex<BTreeMap<String, FailureRecord>>,
+    instance_slots: Arc<Semaphore>,
     processes: Mutex<BTreeMap<u64, Arc<Mutex<WorkerProcess>>>>,
     quarantine_duration: Duration,
     quarantine_failure_threshold: u32,
-    quarantined: Mutex<BTreeMap<String, QuarantineRecord>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct WorkerSupervisorOptions {
     executable: PathBuf,
     timeout: Duration,
+    load_timeout: Duration,
     quarantine_duration: Duration,
     quarantine_failure_threshold: u32,
     use_audio_ipc: bool,
@@ -74,6 +80,8 @@ pub struct WorkerSupervisorOptions {
 
 #[derive(Debug)]
 struct WorkerProcess {
+    plugin_id: String,
+    _instance_slot: Option<OwnedSemaphorePermit>,
     child: Child,
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
@@ -81,12 +89,6 @@ struct WorkerProcess {
     audio: Option<WorkerAudioConnection>,
     termination_target: WorkerTerminationTarget,
     next_request_id: u64,
-}
-
-#[derive(Debug, Clone)]
-struct QuarantineRecord {
-    failures: u32,
-    release_at: Instant,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -177,15 +179,16 @@ impl WorkerSupervisor {
         Self {
             executable: options.executable,
             timeout: options.timeout,
+            load_timeout: options.load_timeout,
             use_audio_ipc: options.use_audio_ipc,
             max_instances: options.max_instances,
             resource_limits: options.resource_limits,
             metrics: options.metrics,
             failures: Mutex::new(BTreeMap::new()),
+            instance_slots: Arc::new(Semaphore::new(options.max_instances)),
             processes: Mutex::new(BTreeMap::new()),
             quarantine_duration: options.quarantine_duration,
             quarantine_failure_threshold: options.quarantine_failure_threshold,
-            quarantined: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -194,12 +197,18 @@ impl WorkerSupervisor {
         record: &InstanceRecord,
     ) -> Result<Value, WorkerSupervisorError> {
         self.reject_if_quarantined(&record.plugin_id).await?;
-        self.reject_if_instance_limit_reached().await?;
+        // Reserve before spawning: simultaneous slow loads count toward the limit.
+        let slot = Arc::clone(&self.instance_slots)
+            .try_acquire_owned()
+            .map_err(|_| WorkerSupervisorError::ResourceLimitExceeded {
+                limit: self.max_instances,
+                active: self.max_instances,
+            })?;
 
         let result = self.start_instance_inner(record).await;
         match result {
-            Ok((ready, process)) => {
-                self.clear_failures(&record.plugin_id).await;
+            Ok((ready, mut process)) => {
+                process._instance_slot = Some(slot);
                 self.processes
                     .lock()
                     .await
@@ -261,37 +270,10 @@ impl WorkerSupervisor {
             Err(error) => {
                 let audit = process.lock().await.shutdown().await;
                 self.record_shutdown(audit);
-                self.remove_process_if_same(instance_id, &process).await;
+                self.remove_failed_process(instance_id, &process).await;
                 Err(error)
             }
         }
-    }
-
-    pub async fn quarantine_failures(&self, plugin_id: &str) -> Option<u32> {
-        self.quarantine_status(plugin_id)
-            .await
-            .map(|status| status.failures)
-    }
-
-    pub async fn quarantine_status(&self, plugin_id: &str) -> Option<WorkerQuarantineStatus> {
-        self.quarantined
-            .lock()
-            .await
-            .get(plugin_id)
-            .map(quarantine_status)
-    }
-
-    pub async fn release_expired_quarantine(&self, plugin_id: &str) -> Option<u32> {
-        let mut quarantined = self.quarantined.lock().await;
-        let record = quarantined.get(plugin_id)?;
-        if Instant::now() < record.release_at {
-            return None;
-        }
-
-        let failures = record.failures;
-        quarantined.remove(plugin_id);
-        self.failures.lock().await.remove(plugin_id);
-        Some(failures)
     }
 }
 
@@ -308,6 +290,7 @@ impl WorkerSupervisor {
             self.metrics.clone(),
         )
         .await?;
+        process.plugin_id = record.plugin_id.clone();
         let hello = match process
             .request("worker.hello", json!({}), self.timeout)
             .await
@@ -330,7 +313,7 @@ impl WorkerSupervisor {
             .request(
                 "instance.create",
                 instance_create_params(record),
-                self.timeout,
+                self.load_timeout,
             )
             .await
         {
@@ -342,74 +325,20 @@ impl WorkerSupervisor {
         }
     }
 
-    async fn reject_if_quarantined(&self, plugin_id: &str) -> Result<(), WorkerSupervisorError> {
-        let mut quarantined = self.quarantined.lock().await;
-        if let Some(record) = quarantined.get(plugin_id) {
-            if Instant::now() < record.release_at {
-                return Err(WorkerSupervisorError::Quarantined {
-                    plugin_id: plugin_id.to_string(),
-                    failures: record.failures,
-                    release_after_ms: remaining_ms(record.release_at),
-                });
-            }
-        }
-        if quarantined.remove(plugin_id).is_some() {
-            drop(quarantined);
-            self.failures.lock().await.remove(plugin_id);
-        }
-
-        Ok(())
-    }
-
-    async fn reject_if_instance_limit_reached(&self) -> Result<(), WorkerSupervisorError> {
-        let active = self.processes.lock().await.len();
-        if active >= self.max_instances {
-            return Err(WorkerSupervisorError::ResourceLimitExceeded {
-                limit: self.max_instances,
-                active,
-            });
-        }
-
-        Ok(())
-    }
-
-    async fn record_failure(&self, plugin_id: &str) -> Option<u32> {
-        let mut failures = self.failures.lock().await;
-        let count = failures
-            .entry(plugin_id.to_string())
-            .and_modify(|count| *count += 1)
-            .or_insert(1);
-
-        if *count >= self.quarantine_failure_threshold {
-            self.quarantined.lock().await.insert(
-                plugin_id.to_string(),
-                QuarantineRecord {
-                    failures: *count,
-                    release_at: Instant::now() + self.quarantine_duration,
-                },
-            );
-            return Some(*count);
-        }
-
-        None
-    }
-
-    async fn clear_failures(&self, plugin_id: &str) {
-        self.failures.lock().await.remove(plugin_id);
-        self.quarantined.lock().await.remove(plugin_id);
-    }
-
     fn record_shutdown(&self, audit: WorkerShutdownAudit) {
         record_worker_shutdown(self.metrics.as_ref(), audit);
     }
 
-    async fn remove_process_if_same(&self, instance_id: u64, process: &Arc<Mutex<WorkerProcess>>) {
+    async fn remove_failed_process(&self, instance_id: u64, process: &Arc<Mutex<WorkerProcess>>) {
+        let plugin_id = process.lock().await.plugin_id.clone();
         let mut processes = self.processes.lock().await;
         if processes
             .get(&instance_id)
             .is_some_and(|current| Arc::ptr_eq(current, process))
         {
             processes.remove(&instance_id);
+            drop(processes);
+            self.record_failure(&plugin_id).await;
         }
     }
 
@@ -421,19 +350,6 @@ impl WorkerSupervisor {
         let audit = process.lock().await.shutdown().await;
         self.record_shutdown(audit);
     }
-}
-
-fn quarantine_status(record: &QuarantineRecord) -> WorkerQuarantineStatus {
-    WorkerQuarantineStatus {
-        failures: record.failures,
-        release_after_ms: remaining_ms(record.release_at),
-    }
-}
-
-fn remaining_ms(release_at: Instant) -> u128 {
-    release_at
-        .saturating_duration_since(Instant::now())
-        .as_millis()
 }
 
 fn record_worker_shutdown(metrics: Option<&Arc<BridgeMetrics>>, audit: WorkerShutdownAudit) {
@@ -470,6 +386,7 @@ impl WorkerSupervisor {
         Self::with_options(
             WorkerSupervisorOptions::new(executable)
                 .with_timeout(timeout)
+                .with_load_timeout(timeout)
                 .with_audio_ipc(false),
         )
     }
@@ -486,6 +403,7 @@ impl WorkerSupervisor {
         Self::with_options(
             WorkerSupervisorOptions::new(executable)
                 .with_timeout(timeout)
+                .with_load_timeout(timeout)
                 .with_quarantine_duration(quarantine_duration)
                 .with_audio_ipc(false),
         )

@@ -25,6 +25,8 @@ impl WorkerBackend {
         &self,
     ) -> Result<Option<Vst3UnitMetadata>, WorkerBackendError> {
         match self {
+            // A failed/absent optional-interface probe is already exposed in capabilities.
+            Self::Vst3Runtime(runtime) if !runtime.capabilities.units => Ok(None),
             Self::Vst3Runtime(runtime) => runtime
                 .component
                 .controller()

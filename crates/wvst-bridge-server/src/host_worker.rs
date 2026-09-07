@@ -15,6 +15,7 @@ const MAX_STDERR_CHARS: usize = 4096;
 pub struct HostWorkerClient {
     executable: PathBuf,
     timeout: Duration,
+    load_timeout: Duration,
 }
 
 #[derive(Debug)]
@@ -41,7 +42,13 @@ impl HostWorkerClient {
         Self {
             executable,
             timeout,
+            load_timeout: timeout,
         }
+    }
+
+    pub fn with_load_timeout(mut self, timeout: Duration) -> Self {
+        self.load_timeout = timeout;
+        self
     }
 
     pub fn from_env() -> Self {
@@ -49,7 +56,7 @@ impl HostWorkerClient {
             .map(PathBuf::from)
             .unwrap_or_else(default_worker_executable);
 
-        Self::new(executable, DEFAULT_TIMEOUT)
+        Self::new(executable, DEFAULT_TIMEOUT).with_load_timeout(Duration::from_secs(120))
     }
 
     pub async fn factory_info(
@@ -77,7 +84,7 @@ impl HostWorkerClient {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let output = match timeout(self.timeout, child.output()).await {
+        let output = match timeout(self.load_timeout, child.output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {
                 return Err(HostWorkerError::Spawn {
@@ -87,7 +94,7 @@ impl HostWorkerClient {
             }
             Err(_) => {
                 return Err(HostWorkerError::Timeout {
-                    timeout_ms: self.timeout.as_millis(),
+                    timeout_ms: self.load_timeout.as_millis(),
                 });
             }
         };

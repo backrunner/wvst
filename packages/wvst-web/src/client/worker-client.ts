@@ -1,6 +1,6 @@
 import type { LoopbackSharedBuffers } from "../audio/loopback.js";
 import type { MidiEvent, ParameterAutomationEvent } from "../protocol/index.js";
-import type { JsonValue } from "./transport.js";
+import type { JsonValue, WebSocketRpcTransportOptions } from "./transport.js";
 
 export interface BridgeWorkerClientOptions {
   worker: Worker;
@@ -52,8 +52,8 @@ export class WVSTBridgeWorkerClient {
     });
   }
 
-  connect(endpoint: string): Promise<void> {
-    return this.command("connect", { endpoint }).then(() => undefined);
+  connect(endpoint: string, transportOptions?: WebSocketRpcTransportOptions): Promise<void> {
+    return this.command("connect", { endpoint, transportOptions }).then(() => undefined);
   }
 
   request<T = JsonValue>(method: string, params: unknown): Promise<T> {

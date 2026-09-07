@@ -5,8 +5,8 @@ use std::time::Duration;
 use wvst_process_supervision::WorkerResourceLimits;
 
 use super::{
-    DEFAULT_IPC_TIMEOUT, DEFAULT_MAX_WORKER_INSTANCES, DEFAULT_QUARANTINE_DURATION,
-    DEFAULT_QUARANTINE_FAILURE_THRESHOLD, WorkerSupervisorOptions,
+    DEFAULT_IPC_TIMEOUT, DEFAULT_LOAD_TIMEOUT, DEFAULT_MAX_WORKER_INSTANCES,
+    DEFAULT_QUARANTINE_DURATION, DEFAULT_QUARANTINE_FAILURE_THRESHOLD, WorkerSupervisorOptions,
 };
 use crate::metrics::BridgeMetrics;
 
@@ -15,6 +15,7 @@ impl WorkerSupervisorOptions {
         Self {
             executable,
             timeout: DEFAULT_IPC_TIMEOUT,
+            load_timeout: DEFAULT_LOAD_TIMEOUT,
             quarantine_duration: DEFAULT_QUARANTINE_DURATION,
             quarantine_failure_threshold: DEFAULT_QUARANTINE_FAILURE_THRESHOLD,
             use_audio_ipc: true,
@@ -26,6 +27,12 @@ impl WorkerSupervisorOptions {
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Budget for plugin initialization and state/preset loading, independent of audio IPC.
+    pub fn with_load_timeout(mut self, timeout: Duration) -> Self {
+        self.load_timeout = timeout;
         self
     }
 

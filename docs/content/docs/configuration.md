@@ -40,6 +40,7 @@ Configuration is read at startup. Run `diagnose` with the same environment when 
 | `WVST_ALLOWED_ORIGINS` | Empty list | Comma-separated exact additional origins. |
 | `WVST_ALLOW_LOOPBACK_ORIGINS` | `true` | `0` or `false` disables automatic allowance of local pages. |
 | `WVST_WORKER_AUTO_RESTART` | `true` | `0` or `false` disables automatic worker restart. |
+| `WVST_WORKER_LOAD_TIMEOUT_MS` | `120000` | Plugin initialization, factory metadata and state/preset loading budget; ordinary IPC/audio keeps its separate 5-second deadline. |
 | `WVST_MAX_WORKER_INSTANCES` | `64` | Concurrent worker cap, not a performance promise for 64 realtime plugins. |
 | `WVST_WORKER_QUARANTINE_FAILURES` | `3` | Failure threshold for plugin quarantine. |
 | `WVST_MAX_CONTROL_MESSAGE_BYTES` | `16777216` (16 MiB) | JSON control message cap, including large state snapshots. |
@@ -51,6 +52,8 @@ Configuration is read at startup. Run `diagnose` with the same environment when 
 | `WVST_WORKER_LINUX_CGROUP_CPU_PERIOD_MICROS` | `100000` | Cgroup CPU quota period in microseconds. |
 
 Inspect events and worker diagnostics before adjusting limits for repeated failures. Larger limits do not fix architecture or bus-layout incompatibility.
+
+Large instruments can need more than the default 120-second initialization/state budget. Increase `WVST_WORKER_LOAD_TIMEOUT_MS` and the browser SDK's `transportOptions.requestTimeoutMs` together; its default is 180 seconds. The SDK uses independent 10-second handshake and binary-response deadlines. See [API reference](/docs/api-reference) for socket timeout behavior. Increasing a deadline does not provide load cancellation, sample-library progress, or a realtime performance guarantee.
 
 ## Browser isolation and assets
 

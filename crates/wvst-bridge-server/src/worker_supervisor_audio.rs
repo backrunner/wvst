@@ -62,7 +62,7 @@ impl WorkerSupervisor {
                 let audit = process_guard.shutdown().await;
                 self.record_shutdown(audit);
                 drop(process_guard);
-                self.remove_process_if_same(instance_id, &process).await;
+                self.remove_failed_process(instance_id, &process).await;
                 Err(error)
             }
         }
@@ -71,6 +71,30 @@ impl WorkerSupervisor {
 
 impl WorkerAudioConnection {
     async fn process_frame(
+        &mut self,
+        request_header: AudioFrameHeader,
+        frame: &[u8],
+        expected_output_channels: u16,
+        timeout_duration: std::time::Duration,
+    ) -> Result<Vec<u8>, WorkerSupervisorError> {
+        timeout(
+            timeout_duration,
+            self.process_frame_inner(
+                request_header,
+                frame,
+                expected_output_channels,
+                timeout_duration,
+            ),
+        )
+        .await
+        .map_err(|_| WorkerSupervisorError::Timeout {
+            method: "audio.processFrame",
+            timeout_ms: timeout_duration.as_millis(),
+            stderr: String::new(),
+        })?
+    }
+
+    async fn process_frame_inner(
         &mut self,
         request_header: AudioFrameHeader,
         frame: &[u8],

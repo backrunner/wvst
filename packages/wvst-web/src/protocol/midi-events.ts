@@ -91,7 +91,7 @@ export function decodeMidiEvents(
   return events;
 }
 
-function validateMidiEvent(event: MidiEvent): void {
+export function validateMidiEvent(event: MidiEvent): void {
   if (!Number.isInteger(event.sampleOffset) || event.sampleOffset < 0 || event.sampleOffset > 0xffff) {
     throw new Error(`invalid WVST MIDI sample offset: ${event.sampleOffset}`);
   }

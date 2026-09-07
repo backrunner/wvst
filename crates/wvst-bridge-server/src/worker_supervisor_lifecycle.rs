@@ -530,15 +530,16 @@ impl WorkerSupervisor {
         let result = process
             .lock()
             .await
-            .request(method, params, self.timeout)
+            .request(method, params, self.request_timeout(method))
             .await;
 
         match result {
             Ok(result) => Ok(result),
+            Err(error) if error.is_control_request_rejection() => Err(error),
             Err(error) => {
                 let audit = process.lock().await.shutdown().await;
                 self.record_shutdown(audit);
-                self.remove_process_if_same(instance_id, &process).await;
+                self.remove_failed_process(instance_id, &process).await;
                 Err(error)
             }
         }

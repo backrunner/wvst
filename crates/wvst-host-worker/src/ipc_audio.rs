@@ -33,6 +33,10 @@ pub(super) fn spawn_audio_thread(address: String, state: Arc<Mutex<WorkerIpcStat
 
 fn serve_audio_connection(address: &str, state: Arc<Mutex<WorkerIpcState>>) -> Result<(), String> {
     let mut stream = TcpStream::connect(address).map_err(|error| error.to_string())?;
+    // Audio headers and bodies must not wait for Nagle/delayed-ACK batching.
+    stream
+        .set_nodelay(true)
+        .map_err(|error| error.to_string())?;
     let mut request_body = Vec::new();
     let mut response_body = Vec::new();
 

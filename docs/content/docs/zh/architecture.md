@@ -219,7 +219,7 @@ MIDI 在协议和 Web SDK 中都有表示：
 - `PolyAftertouch`
 - `RawMidi`
 
-`createWVSTVirtualKeyboard()` 可以创建 note、CC、pitch bend、channel aftertouch 和 poly aftertouch events。`createWVSTWebMidiAdapter()` 会转换浏览器 Web MIDI message，也可以把未知消息作为 raw MIDI 传递。
+`createWVSTVirtualKeyboard()` 可以创建 note、CC、pitch bend、channel aftertouch 和 poly aftertouch events。`createWVSTWebMidiAdapter()` 会转换浏览器 Web MIDI message，也可以把有效的 Program Change 和系统短消息作为 raw MIDI 传递；原生输入转换尚未实现这些消息的动作。SysEx、不完整消息和拼接消息会拒绝。
 
 Instrument 插件可以使用 `inputChannels: 0` 并产生输出。AudioWorklet node 创建逻辑支持 no-input instance：输入 bus 数为 0，输出 bus 为 1。
 

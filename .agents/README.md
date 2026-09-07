@@ -32,6 +32,8 @@
 
 - [macos-signing-2026-09-07.md](macos-signing-2026-09-07.md)：参考 AIPass 的 Developer ID 签名、Apple ID 公证、DMG 验签与凭据配置状态。
 
+- [plugin-edge-review-2026-09-08.md](plugin-edge-review-2026-09-08.md)：大型音源慢加载、过载/崩溃与 Web MIDI 边界审查、修复及剩余限制。
+
 ## 当前结论
 
 WVST 的方向可行：Web 侧使用 AudioWorklet + WASM + SharedArrayBuffer 管理 WebAudio 实时缓冲，本地 Bridge Server 负责插件发现、权限、路由和 worker 生命周期，VST3 host worker 以独立进程隔离崩溃插件。

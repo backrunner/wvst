@@ -83,6 +83,8 @@ impl WorkerProcess {
             .ok_or(WorkerSupervisorError::MissingPipe("stderr"))?;
 
         let mut process = Self {
+            plugin_id: String::new(),
+            _instance_slot: None,
             child,
             stdin,
             stdout: BufReader::new(stdout).lines(),
@@ -107,6 +109,10 @@ impl WorkerProcess {
                     return Err(error);
                 }
             };
+            if let Err(error) = accepted.set_nodelay(true) {
+                record_worker_shutdown(metrics.as_ref(), process.shutdown().await);
+                return Err(WorkerSupervisorError::Io(error.to_string()));
+            }
             process.audio = Some(WorkerAudioConnection::new(accepted));
         }
 
@@ -114,6 +120,23 @@ impl WorkerProcess {
     }
 
     pub(super) async fn request(
+        &mut self,
+        method: &'static str,
+        params: Value,
+        timeout_duration: Duration,
+    ) -> Result<Value, WorkerSupervisorError> {
+        match timeout(
+            timeout_duration,
+            self.request_inner(method, params, timeout_duration),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(self.timeout_error(method, timeout_duration).await),
+        }
+    }
+
+    async fn request_inner(
         &mut self,
         method: &'static str,
         params: Value,
@@ -289,17 +312,20 @@ impl StderrTail {
         let buffer = Arc::clone(&tail.buffer);
 
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            // Plugins can write arbitrarily long lines. Bound reads before buffering.
+            let mut stderr = stderr;
+            let mut chunk = [0_u8; 1024];
+            while let Ok(length) = stderr.read(&mut chunk).await {
+                if length == 0 {
+                    break;
+                }
                 let mut buffer = buffer.lock().await;
-                if !buffer.is_empty() {
-                    buffer.push('\n');
+                buffer.push_str(&String::from_utf8_lossy(&chunk[..length]));
+                let mut trim = buffer.len().saturating_sub(STDERR_TAIL_BYTES);
+                while !buffer.is_char_boundary(trim) {
+                    trim += 1;
                 }
-                buffer.push_str(&line);
-
-                while buffer.len() > STDERR_TAIL_BYTES {
-                    buffer.remove(0);
-                }
+                buffer.drain(..trim);
             }
         });
 

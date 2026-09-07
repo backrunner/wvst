@@ -1,4 +1,5 @@
 import type { MidiEvent, ParameterAutomationEvent } from "../protocol/index.js";
+import { validateMidiEvent } from "../protocol/midi-events.js";
 import { LoopbackCounter } from "./loopback.js";
 
 export interface BridgeWorkerEventQueueOptions {
@@ -28,9 +29,12 @@ export class BridgeWorkerEventQueue {
       throw new Error("WVST MIDI event queue is full");
     }
 
-    const targetSequence = this.options.nextInputTargetSequence();
     for (const event of events) {
       this.validateSampleOffset("MIDI", event.sampleOffset);
+      validateMidiEvent(event);
+    }
+    const targetSequence = this.options.nextInputTargetSequence();
+    for (const event of events) {
       this.pendingMidiEvents.push({ event, targetSequence });
     }
   }
@@ -49,10 +53,12 @@ export class BridgeWorkerEventQueue {
       throw new Error("WVST parameter event queue is full");
     }
 
-    const targetSequence = this.options.nextInputTargetSequence();
     for (const event of events) {
       this.validateSampleOffset("parameter", event.sampleOffset);
       validateParameterEvent(event);
+    }
+    const targetSequence = this.options.nextInputTargetSequence();
+    for (const event of events) {
       this.pendingParameterEvents.push({ event, targetSequence });
     }
   }
@@ -62,13 +68,22 @@ export class BridgeWorkerEventQueue {
       return [];
     }
 
-    const { due, pending, late } = takeDueEvents(this.pendingMidiEvents, readSequence);
-    this.pendingMidiEvents = pending;
-    if (late > 0) {
-      Atomics.add(this.options.counters, LoopbackCounter.LateMidiEvents, late);
-      Atomics.add(this.options.counters, LoopbackCounter.DroppedMidiEvents, late);
+    // Late MIDI changes instrument state: losing note-off or pedal-up can hang voices.
+    // Preserve block/event order and apply overdue events at the start of the next block.
+    this.pendingMidiEvents.sort((left, right) =>
+      left.targetSequence - right.targetSequence || left.event.sampleOffset - right.event.sampleOffset);
+    const due: MidiEvent[] = [];
+    const pending: QueuedAudioEvent<MidiEvent>[] = [];
+    let late = 0;
+    for (const item of this.pendingMidiEvents) {
+      if (item.targetSequence > readSequence) pending.push(item);
+      else if (item.targetSequence < readSequence) {
+        late += 1;
+        due.push({ ...item.event, sampleOffset: 0 });
+      } else due.push(item.event);
     }
-    due.sort((left, right) => left.sampleOffset - right.sampleOffset);
+    this.pendingMidiEvents = pending;
+    if (late > 0) Atomics.add(this.options.counters, LoopbackCounter.LateMidiEvents, late);
     return due;
   }
 

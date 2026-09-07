@@ -4,6 +4,12 @@ use super::WorkerSupervisorError;
 use crate::error_classification::{ErrorClassification, attach_error_classification};
 
 impl WorkerSupervisorError {
+    pub(crate) fn is_control_request_rejection(&self) -> bool {
+        matches!(self, Self::WorkerRejected { data, .. }
+            if data.as_ref().and_then(|value| value.get("kind")).and_then(Value::as_str)
+                != Some("vst3-runtime-process"))
+    }
+
     pub(crate) fn is_audio_request_rejection(&self) -> bool {
         matches!(
             self,

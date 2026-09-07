@@ -39,21 +39,25 @@ describe("WVST MIDI helpers", () => {
     });
   });
 
-  it("filters channel-specific Web MIDI input and keeps raw fallback bounded", () => {
+  it("filters channel input and rejects unsupported long messages", () => {
     const { target } = captureTarget();
 
     expect(webMidiMessageToWVSTEvents([0xb2, 74, 50], target, { channel: 1 })).toEqual([]);
-    expect(webMidiMessageToWVSTEvents([0xf8, 1, 2, 3, 4], target)).toEqual([
+    expect(webMidiMessageToWVSTEvents([0xf8], target, { channel: 1 })).toEqual([
       {
         sampleOffset: 0,
         kind: MidiEventKind.RawMidi,
         channel: 8,
         data1: 248,
-        data2: 1,
-        data3: 2,
-        dataLength: 3,
+        data2: 0,
+        data3: 0,
+        dataLength: 1,
       },
     ]);
+  });
+
+  it.each([[0x90], [0x90, 60], [0x90, 60, 128], [60, 100], [0xf0, 1, 2, 0xf7]])("rejects malformed or unsupported MIDI %j", (...data) => {
+    expect(() => webMidiMessageToWVSTEvents(data, captureTarget().target)).toThrow();
   });
 
   it("generates note ids and matching note-off events for the virtual keyboard", async () => {

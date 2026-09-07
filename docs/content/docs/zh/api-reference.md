@@ -29,10 +29,13 @@ const client = await WVSTClient.connect({
 | `clientVersion` | `0.1.0` | 应用版本，不代替协议版本协商。 |
 | `token` | 未设置 | 独立 Bridge CLI 需要与 `WVST_TOKEN` 一致的值。 |
 | `requireLowLatency` | `true` | 连接前检查 SAB 与跨源隔离。关闭只跳过检查，不提供音频 fallback。 |
+| `transportOptions` | SDK 默认值 | WebSocket 握手、控制/音频截止时间与待处理请求上限，见下文。 |
 
 `WVSTClient.lowLatencyPrerequisites()` 返回 `sharedArrayBuffer` 和 `crossOriginIsolated` 两个布尔值；应用还应检查 `isSecureContext` 和 AudioWorklet。`client.hello` 保存握手协商的协议/音频帧版本、Bridge 身份和能力要求。普通 RPC response 不保证重复包含版本字段。
 
 `client.close()` 关闭控制连接，不代替实例销毁、音频节点断开或 Worker 终止。
+
+`transportOptions` 支持 `connectTimeoutMs`（10,000）、`requestTimeoutMs`（180,000）、`binaryTimeoutMs`（10,000）和 `maxPendingRequests`（256），均须为正 32 位整数。任何请求超时都会关闭该 socket 并拒绝其全部待处理请求，防止迟到的二进制响应被错配给下一次请求。这些是故障截止时间，不是可接受的实时音频延迟目标。`WVSTBridgeWorkerClient.connect(endpoint, transportOptions?)` 配置独立的音频连接。控制与音频应使用不同连接；长时间恢复 state 前应暂停音频处理。调大 `WVST_WORKER_LOAD_TIMEOUT_MS` 时，也要给 `requestTimeoutMs` 留足余量。关闭浏览器 socket 不会取消原生加载或销毁实例。
 
 ## 插件发现
 
@@ -114,7 +117,7 @@ component/controller state 是插件私有的 base64 数据。快照检查不能
 | `createLoopbackSharedBuffers(options)` | 分配输入/输出 SAB 与计数器，默认容量四个 quantum。 |
 | `configureLoopbackAudioWorkletNode(node, buffers)` | 把共享缓冲配置交给已创建节点。 |
 | `createLoopbackAudioWorkletNode(context, options)` | 加载 processor 并创建节点；多节点场景应统一管理模块加载。 |
-| `WVSTBridgeWorkerClient.connect(endpoint)` | 打开 Worker socket；随后还需 `request('bridge.hello', params)` 授权。 |
+| `WVSTBridgeWorkerClient.connect(endpoint, transportOptions?)` | 打开 Worker socket；随后还需 `request('bridge.hello', params)` 授权。 |
 | `startAudioStream(options)` | 使用匹配的 stream ID、采样率、块大小、声道与缓冲启动传输。 |
 | `stopAudioStream(streamId)` | 停止该浏览器音频流。 |
 | `close()` | 关闭 Worker 传输；持有原生 Worker 的调用方还需 `terminate()`。 |
@@ -178,3 +181,12 @@ client.close();
 | `instances.sharedMemoryPumpStart()` | `stream.sharedMemory.pump.start` |
 
 高级 units、program data、connection notification 和事件 payload 见导出的类型以及[架构](/docs/zh/architecture)。
+
+
+### Web MIDI 生命周期与限制
+
+适配器会跟随设备热插拔，可用 `inputIds` 选择输入设备。停止音频会话前应先 `await adapter.stop()`：它会解绑监听器并发送跟踪的音符与延音/选择性延音/保持踏板的释放事件。`await adapter.panic()` 可在保留连接的同时发送释放事件。通过 `onError` 展示消息解析及队列/传输错误。
+
+Worker 确认的是 MIDI 入队，不是原生处理完成。需保持音频处理运行才能把释放事件送达插件；紧接着关闭流可能丢弃事件，目前没有公开的 MIDI flush 完成确认。结束会话时也要停止/销毁原生实例。队列或传输失败后，panic/stop 均不能保证释放送达。
+
+CC、pitch bend 与 channel aftertouch 依赖插件的 VST3 `IMidiMapping`。原生输入转换尚未实现 Program Change 和系统消息动作；raw 传输不代表插件支持。SysEx、不完整或拼接的短消息会明确拒绝。`sampleOffset` 是下一块内的显式偏移，不会自动转换 Web MIDI 时间戳。迟到 MIDI 按原顺序在下一处理块 offset 0 应用，以保留松键及踏板释放。

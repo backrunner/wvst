@@ -219,7 +219,7 @@ MIDI support is represented in the protocol and Web SDK:
 - `PolyAftertouch`
 - `RawMidi`
 
-`createWVSTVirtualKeyboard()` creates note, CC, pitch bend, channel aftertouch, and poly aftertouch events. `createWVSTWebMidiAdapter()` converts browser Web MIDI messages and can optionally pass unknown messages as raw MIDI.
+`createWVSTVirtualKeyboard()` creates note, CC, pitch bend, channel aftertouch, and poly aftertouch events. `createWVSTWebMidiAdapter()` converts browser Web MIDI messages and can optionally pass valid Program Change and system short messages as raw MIDI; native input actions for those messages are not yet implemented. SysEx, incomplete messages and concatenated messages are rejected.
 
 Instrument plugins can use `inputChannels: 0` while still producing output. AudioWorklet node creation handles no-input instances by creating zero input buses and one output bus.
 

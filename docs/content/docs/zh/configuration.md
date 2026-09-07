@@ -40,6 +40,7 @@ Origin 检查针对浏览器来源；无 Origin 的原生客户端不被这条�
 | `WVST_ALLOWED_ORIGINS` | 空列表 | 逗号分隔、精确匹配的额外 origin。 |
 | `WVST_ALLOW_LOOPBACK_ORIGINS` | `true` | `0` 或 `false` 关闭自动允许本地网页。 |
 | `WVST_WORKER_AUTO_RESTART` | `true` | `0` 或 `false` 关闭 worker 自动重启。 |
+| `WVST_WORKER_LOAD_TIMEOUT_MS` | `120000` | 插件初始化、factory metadata 与 state/preset 加载预算；普通 IPC/音频仍使用独立的 5 秒截止时间。 |
 | `WVST_MAX_WORKER_INSTANCES` | `64` | 并发 worker 上限，不是可实时承载 64 个插件的性能保证。 |
 | `WVST_WORKER_QUARANTINE_FAILURES` | `3` | 插件进入隔离前的失败阈值。 |
 | `WVST_MAX_CONTROL_MESSAGE_BYTES` | `16777216`（16 MiB） | JSON 控制消息大小上限；大状态快照也受影响。 |
@@ -51,6 +52,8 @@ Origin 检查针对浏览器来源；无 Origin 的原生客户端不被这条�
 | `WVST_WORKER_LINUX_CGROUP_CPU_PERIOD_MICROS` | `100000` | cgroup CPU 配额周期，单位微秒。 |
 
 若插件频繁失败，先查看事件和 worker 诊断，再决定是否调整限制。提高上限无法修复插件的架构或总线不兼容。
+
+大型音源可能超过默认 120 秒的初始化/state 加载预算。需同时调整 `WVST_WORKER_LOAD_TIMEOUT_MS` 与浏览器 SDK 的 `transportOptions.requestTimeoutMs`（默认 180 秒）。SDK 的握手和二进制响应另有独立的 10 秒截止时间，连接超时行为见 [API 参考](/docs/zh/api-reference)。延长截止时间不会提供加载取消、采样库进度或实时性能保证。
 
 ## 浏览器隔离与资源
 

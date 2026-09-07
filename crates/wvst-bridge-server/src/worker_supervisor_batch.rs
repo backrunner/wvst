@@ -33,18 +33,20 @@ impl WorkerSupervisor {
             return Err(WorkerSupervisorError::WorkerMissing { instance_id });
         };
 
-        let result = process
-            .lock()
-            .await
-            .request_batch(&requests, self.timeout)
-            .await;
+        let timeout = requests
+            .iter()
+            .map(|request| self.request_timeout(request.method))
+            .max()
+            .unwrap_or(self.timeout);
+        let result = process.lock().await.request_batch(&requests, timeout).await;
 
         match result {
             Ok(result) => Ok(result),
+            Err(error) if error.is_control_request_rejection() => Err(error),
             Err(error) => {
                 let audit = process.lock().await.shutdown().await;
                 self.record_shutdown(audit);
-                self.remove_process_if_same(instance_id, &process).await;
+                self.remove_failed_process(instance_id, &process).await;
                 Err(error)
             }
         }
@@ -53,6 +55,22 @@ impl WorkerSupervisor {
 
 impl WorkerProcess {
     async fn request_batch(
+        &mut self,
+        requests: &[WorkerBatchRequest],
+        timeout_duration: Duration,
+    ) -> Result<Vec<Value>, WorkerSupervisorError> {
+        match timeout(
+            timeout_duration,
+            self.request_batch_inner(requests, timeout_duration),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(self.timeout_error("control.batch", timeout_duration).await),
+        }
+    }
+
+    async fn request_batch_inner(
         &mut self,
         requests: &[WorkerBatchRequest],
         timeout_duration: Duration,
