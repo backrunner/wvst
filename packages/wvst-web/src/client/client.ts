@@ -1,3 +1,4 @@
+import { WVST_VERSION } from "../version.js";
 import { AUDIO_FRAME_VERSION } from "../protocol/index.js";
 import type {
   InstanceApi,
@@ -135,7 +136,7 @@ export class WVSTClient {
 
     const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
     const clientName = options.clientName ?? "@wvst/web";
-    const clientVersion = options.clientVersion ?? "0.1.0";
+    const clientVersion = options.clientVersion ?? WVST_VERSION;
     const transport = await WebSocketRpcTransport.connect(endpoint);
 
     try {

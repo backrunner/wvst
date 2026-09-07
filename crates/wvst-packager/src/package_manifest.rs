@@ -15,6 +15,7 @@ pub(crate) const VERIFY_REPORT_FILE_NAME: &str = "wvst-verify-report.json";
 pub(crate) struct PackageEvidenceManifest {
     pub schema_version: u16,
     pub package_name: String,
+    pub package_version: &'static str,
     pub platform: PackagePlatform,
     pub install: PackageInstallEvidence,
     pub runtime: PackageRuntimeEvidence,
@@ -87,6 +88,7 @@ pub(crate) fn write_package_manifest(
 pub(crate) fn macos_package_manifest(config: &MacosPackageConfig) -> PackageEvidenceManifest {
     PackageEvidenceManifest {
         schema_version: 1,
+        package_version: env!("CARGO_PKG_VERSION"),
         package_name: "wvst-macos".to_string(),
         platform: PackagePlatform::Macos,
         install: PackageInstallEvidence {
@@ -143,6 +145,7 @@ pub(crate) fn macos_package_manifest(config: &MacosPackageConfig) -> PackageEvid
 pub(crate) fn linux_package_manifest(config: &LinuxPackageConfig) -> PackageEvidenceManifest {
     PackageEvidenceManifest {
         schema_version: 1,
+        package_version: env!("CARGO_PKG_VERSION"),
         package_name: "wvst-linux".to_string(),
         platform: PackagePlatform::Linux,
         install: PackageInstallEvidence {
@@ -192,6 +195,7 @@ pub(crate) fn linux_package_manifest(config: &LinuxPackageConfig) -> PackageEvid
 pub(crate) fn windows_package_manifest(config: &WindowsPackageConfig) -> PackageEvidenceManifest {
     PackageEvidenceManifest {
         schema_version: 1,
+        package_version: env!("CARGO_PKG_VERSION"),
         package_name: "wvst-windows".to_string(),
         platform: PackagePlatform::Windows,
         install: PackageInstallEvidence {

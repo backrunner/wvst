@@ -8,7 +8,7 @@ order: 4
 
 [Open Studio](/demo) to process browser audio through local VST3 effects. The guide follows “connect the Bridge → choose audio → build the effect chain.” You can preview original audio before adding plugins.
 
-For first-time setup, build the Bridge and host worker using [Getting started](/docs/getting-started). Source builds are the current installation path; no release binaries are published yet.
+For first-time setup, build the Bridge and host worker using [Getting started](/docs/getting-started). You can also use a published portable preview following [Versions and releases](/docs/releases).
 
 ## Connect the local Bridge
 

@@ -19,7 +19,7 @@ WVST 是一个 Rust-first 的 WebAudio/VST3 桥接项目。Web 应用连接本�
 | 排查静音、崩溃与延迟 | [故障排查](/docs/zh/troubleshooting)与[架构](/docs/zh/architecture)。 |
 | 贡献代码或验证插件兼容性 | [开发与验证](/docs/zh/development)。 |
 
-目前采用源码构建，macOS 优先；没有已发布的二进制安装包，SDK 是私有 workspace 包。平台抽象、协议 fixture 和真实插件兼容性是不同层次的能力与证据。
+macOS 优先，可采用源码构建或[发布指南](/docs/zh/releases)中的已公开便携预览包。SDK 在 workspace 内保持 private，也可用 Release tarball 分发。平台抽象、协议 fixture 和真实插件兼容性是不同层次的能力与证据。
 
 Studio 可先播放原音或本机生成的八秒片段。效果处理仍需要 Bridge 和真实 VST3；界面不提供原生插件编辑器、工程保存或渲染导出。
 
@@ -112,3 +112,7 @@ Bridge 使用 WebSocket 上的 JSON-RPC 风格消息。`WVSTClient` 会把 TypeS
 - [Demo Guide](/docs/zh/demo-guide)
 - [API Reference](/docs/zh/api-reference)
 - [故障排查](/docs/zh/troubleshooting)
+
+## 版本管理
+
+[版本与发布](/docs/zh/releases)说明统一产品版本、预览产物、校验、升级回退及维护者发布流程。

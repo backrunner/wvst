@@ -8,7 +8,7 @@ order: 4
 
 [打开 Studio](/zh/demo)，把浏览器音频送入本机 VST3 效果器。界面按「连接 Bridge → 选择音频 → 构建效果链」引导；也可以先试听原音，再接入插件。
 
-首次安装请按[快速开始](/docs/zh/getting-started)构建 Bridge 与 host worker。当前使用源码构建，没有已发布的二进制安装包。
+首次安装请按[快速开始](/docs/zh/getting-started)构建 Bridge 与 host worker。也可以按照[版本与发布](/docs/zh/releases)使用已公开的便携预览包。
 
 ## 连接本地 Bridge
 

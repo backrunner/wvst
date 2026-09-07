@@ -2,6 +2,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub mod release;
+
 mod linux;
 mod macos_scripts;
 mod package_manifest;

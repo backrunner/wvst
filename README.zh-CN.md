@@ -11,7 +11,7 @@
 
 WVST 把浏览器的 WebAudio 音频图连接到同一台电脑上的 VST3 效果器和音源。网页负责交互，Rust Bridge 负责授权、扫描和路由，每个插件实例由独立的 host worker 进程运行和监督。
 
-**当前状态：源码构建，macOS 优先。** 目前没有已发布的二进制安装包，`@wvst/web` 也是私有 workspace 包。建议先跑通仓库内的 Live Studio，再接入自己的应用。
+**当前阶段：alpha 预览，macOS 优先。** 预览产物通过 [GitHub Releases](https://github.com/backrunner/wvst/releases) 管理，草稿在正式公开前仅维护者可见。源码构建继续可用；SDK 以 Release tarball 分发，不发布到 npm registry。
 
 ## 能做什么
 
@@ -170,3 +170,22 @@ Studio 浏览器回归使用协议 fixture 和 Chromium，启动方法见 [docs/
 - [开发与验证](docs/content/docs/zh/development.md) · [英文文档](docs/content/docs/index.md)
 
 Workspace 的 Cargo 元数据声明许可为 `MIT OR Apache-2.0`；第三方插件遵循各自许可。VST 是 Steinberg Media Technologies GmbH 的商标。
+
+[![Release](https://img.shields.io/github/v/release/backrunner/wvst?include_prereleases)](https://github.com/backrunner/wvst/releases)
+
+## 版本管理
+
+产品版本统一来源于 `Cargo.toml`，协议/schema 独立演进。变更记录见
+[CHANGELOG.md](CHANGELOG.md)。先在 Unreleased 记录用户可见变化，再执行：
+
+```sh
+npm run release:check
+npm run release:prepare -- 0.1.0-alpha.2 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.2
+```
+
+版本和日期按实际计划修改。审核并推送版本提交、通过 CI 后，推送注释
+`vVERSION` tag。工作流构建四个平台的便携运行包、SDK tarball、SHA256SUMS
+和来源 manifest，生成 prerelease 草稿。公开附件不可覆盖。校验、升级回退
+和正式版还需满足的条件见[发布指南](docs/content/docs/zh/releases.md)。
+流程不会执行 npm 或 crates.io 发布。

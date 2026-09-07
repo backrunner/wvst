@@ -12,7 +12,7 @@ npm run docs:build
 
 The site requires Node.js 22. Workspace installation is reproducible with `npm ci`; no adjacent Svedocs checkout is required.
 
-The live rack demo uses real WVST bridge processing. No release binaries are published yet; build both local binaries before connecting:
+The live rack demo uses real WVST bridge processing. Developer previews are managed through [GitHub Releases](https://github.com/backrunner/wvst/releases); only published releases expose downloads. For source development, build both binaries before connecting:
 
 ```sh
 cargo build --release -p wvst-bridge-server -p wvst-host-worker
@@ -187,3 +187,13 @@ Deployments are currently direct uploads. A Git push runs repository CI and does
 not automatically publish the site. No Cloudflare credentials belong in this
 repository. The browser still needs the user's local Bridge and its token to
 process VST3 audio.
+
+## Product version and release docs
+
+WVST product versions are synchronized from the Rust workspace by
+`npm run release:prepare`; the generated SDK `WVST_VERSION` drives navigation
+and Studio handshake identity. Svedocs dependency versions and wire/schema
+versions are separate. See [Versions and releases](content/docs/releases.md)
+and [版本与发布](content/docs/zh/releases.md). The site tracks the current
+checkout; Git tags retain older source/doc versions. Deploy the docs explicitly
+after publishing a preview so visible version and release instructions agree.

@@ -16,7 +16,7 @@
   <div class="bridge-install-step">
     <span class="install-number">A</span>
     <div><h3>{zh ? '获取本地 Bridge' : 'Get the local Bridge'}</h3>
-      <p>{zh ? '目前请从源码构建；后续安装包会发布在 Releases。' : 'Build from source for now; future packages will appear in Releases.'}</p>
+      <p>{zh ? '从 Releases 选择已发布的便携预览包，或从源码构建。' : 'Choose a published portable preview from Releases, or build from source.'}</p>
       <a class="studio-button small" href="https://github.com/backrunner/wvst/releases" target="_blank" rel="noreferrer"><DownloadSimple size={15} />{zh ? '查看 Releases' : 'View releases'} ↗</a>
     </div>
   </div>

@@ -63,7 +63,7 @@ WVST_HOST_WORKER=target/release/wvst-host-worker \
   target/release/wvst-bridge-server serve
 ```
 
-No release binaries are published yet. Check [Releases](https://github.com/backrunner/wvst/releases) for future availability; use source builds now.
+For published portable previews, check [Releases](https://github.com/backrunner/wvst/releases) and follow [Versions and releases](/docs/releases) to select and verify an archive. Drafts are not public downloads. The source-build instructions above remain available.
 
 ## 3. Start the docs and Studio
 

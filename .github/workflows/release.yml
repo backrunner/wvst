@@ -1,0 +1,190 @@
+name: Release Preview
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate tag, manifests and release notes
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cargo run --quiet --locked -p wvst-packager --bin wvst-release -- check --tag "$RELEASE_TAG" > version.json
+          jq -r '"version=\(.version)", "prerelease=\(.prerelease)"' version.json >> "$GITHUB_OUTPUT"
+          if [ "$(jq -r .prerelease version.json)" != true ]; then
+            echo 'This workflow produces unsigned previews. Stable releases require signing and real-plugin evidence gates.' >&2
+            exit 1
+          fi
+
+  quality:
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  native:
+    needs: [validate, quality]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build locked native runtime
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          rustup target add "$RELEASE_TARGET"
+          cargo build --locked --release --target "$RELEASE_TARGET" -p wvst-bridge-server -p wvst-host-worker
+      - name: Verify versions and create portable package
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          ARCHIVE_EXTENSION: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+          cargo run --quiet --locked --release -p wvst-packager --bin wvst-release -- bundle \
+            "$RELEASE_TARGET" "target/$RELEASE_TARGET/release" staging "$GITHUB_SHA"
+          mkdir -p artifacts
+          package="wvst-$RELEASE_VERSION-$RELEASE_TARGET"
+          if [ "$ARCHIVE_EXTENSION" = zip ]; then
+            export WVST_ARCHIVE_ROOT="staging/$package"
+            export WVST_ARCHIVE_OUTPUT="artifacts/$package.zip"
+            # PowerShell expands these environment variables, not Bash.
+            # shellcheck disable=SC2016
+            pwsh -NoProfile -Command 'Compress-Archive -Path $env:WVST_ARCHIVE_ROOT -DestinationPath $env:WVST_ARCHIVE_OUTPUT'
+          else
+            tar -czf "artifacts/$package.tar.gz" -C staging "$package"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  sdk:
+    needs: [validate, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:web
+      - name: Pack SDK without publishing to npm
+        run: |
+          mkdir -p artifacts
+          npm pack --workspace @wvst/web --ignore-scripts --pack-destination "$PWD/artifacts"
+      - name: Verify SDK tarball in an isolated application
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          archive="$PWD/artifacts/wvst-web-$RELEASE_VERSION.tgz"
+          application=$(mktemp -d)
+          cd "$application"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund "$archive"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { access } from "node:fs/promises";
+            import { WVST_VERSION } from "@wvst/web";
+            assert.equal(WVST_VERSION, process.env.RELEASE_VERSION);
+            for (const name of ["@wvst/web/bridge-worker", "@wvst/web/loopback-processor"]) {
+              await access(new URL(import.meta.resolve(name)));
+            }
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-web-sdk
+          path: artifacts/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  draft:
+    needs: [validate, native, sdk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+      - name: Require all assets and generate checksums
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          cargo run --quiet --locked -p wvst-packager --bin wvst-release -- checksums artifacts "$GITHUB_SHA"
+          cargo run --quiet --locked -p wvst-packager --bin wvst-release -- notes "$RELEASE_VERSION" > release-notes.md
+          cat >> release-notes.md <<'NOTES'
+
+          ## Downloads and verification
+
+          Choose the archive matching your CPU and OS, verify SHA256SUMS, then extract
+          the entire directory and follow its README. Native bundles are portable,
+          unsigned developer previews; no service is installed. macOS is the first
+          plugin target; Windows/Linux builds are experimental. No Developer ID
+          notarization, Authenticode or third-party plugin certification is claimed.
+
+          The SDK tarball can be installed from a local file with npm; no npm registry
+          publication occurs. release-manifest.json records hashes and the exact
+          source commit. Keep Bridge and host worker from the same archive when updating.
+
+          中文发布与升级指南：https://wvst-docs.pages.dev/docs/zh/releases
+          English release guide: https://wvst-docs.pages.dev/docs/releases
+          NOTES
+          cd artifacts
+          sha256sum --check SHA256SUMS
+      - name: Create or refresh draft; never replace a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft > existing-release.json 2>/dev/null; then
+            test "$(jq -r .isDraft existing-release.json)" = true || { echo 'Published releases are immutable.' >&2; exit 1; }
+            gh release edit "$RELEASE_TAG" --notes-file release-notes.md
+            gh release upload "$RELEASE_TAG" artifacts/* --clobber
+          else
+            gh release create "$RELEASE_TAG" artifacts/* --verify-tag --draft --prerelease \
+              --title "WVST $RELEASE_TAG" --notes-file release-notes.md
+          fi

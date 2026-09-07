@@ -16,7 +16,7 @@
 
 WVST connects a WebAudio graph to VST3 effects and instruments installed on the same computer. Build your interface in the browser; the Rust Bridge handles authorization, plugin discovery and routing, and supervises a separate native host worker for each instance.
 
-**Current status:** source builds, macOS first. No release binaries are published yet, and `@wvst/web` is a private workspace package. Start with the repository demo before integrating the SDK into another application.
+**Current stage:** alpha previews, macOS first. Preview artifacts are managed through [GitHub Releases](https://github.com/backrunner/wvst/releases); drafts remain private until published. Source builds remain available. The SDK uses a release tarball rather than npm registry publication.
 
 ## What you can do
 
@@ -183,3 +183,24 @@ Live site: [Documentation](https://wvst-docs.pages.dev/docs) · [Live Studio](ht
 | Development | [Read](docs/content/docs/development.md) | [阅读](docs/content/docs/zh/development.md) |
 
 Workspace Cargo metadata declares `MIT OR Apache-2.0`. Third-party plugins retain their own licenses. VST is a trademark of Steinberg Media Technologies GmbH.
+
+[![Release](https://img.shields.io/github/v/release/backrunner/wvst?include_prereleases)](https://github.com/backrunner/wvst/releases)
+
+## Version management
+
+Product versions are synchronized from `Cargo.toml`; wire/schema versions are
+independent. [CHANGELOG.md](CHANGELOG.md) records changes. Before preparing a
+version, add user-facing changes under Unreleased, then run:
+
+```sh
+npm run release:check
+npm run release:prepare -- 0.1.0-alpha.2 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.2
+```
+
+Use the actual next version/date. Review and push the version commit, pass CI,
+then push an annotated `vVERSION` tag. The release workflow produces four native
+portable archives, an SDK tarball, SHA256SUMS and a source manifest in a draft
+prerelease. Published assets are immutable. See the [release guide](docs/content/docs/releases.md)
+for verification, upgrade/rollback and the additional gates needed for stable
+releases. The workflow does not publish to npm or crates.io.

@@ -4,6 +4,7 @@
   import {
     WVSTBridgeWorkerClient,
     WVSTClient,
+    WVST_VERSION,
     createLoopbackSharedBuffers,
     readLoopbackMetrics,
     type InstanceDescriptor,
@@ -103,7 +104,7 @@
       client = await WVSTClient.connect({
         endpoint: targetEndpoint,
         clientName: 'wvst-docs-demo',
-        clientVersion: '0.1.0',
+        clientVersion: WVST_VERSION,
         requireLowLatency: true,
         token: targetToken || undefined
       });

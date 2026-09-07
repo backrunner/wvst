@@ -1,3 +1,4 @@
+export { WVST_VERSION } from "./version.js";
 export {
   WVSTClient,
   type BridgeHelloResult,

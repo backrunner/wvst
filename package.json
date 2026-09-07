@@ -1,6 +1,6 @@
 {
   "name": "wvst",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -10,7 +10,7 @@
   "scripts": {
     "build:web": "npm --workspace @wvst/web run build",
     "build:web:examples": "npm run build:web && npm --workspace @wvst/web-examples run build",
-    "check": "cargo test --all && npm run check:wasm && npm run check:web && npm run test:web && npm run check:web:examples",
+    "check": "npm run release:check && cargo test --all && npm run check:wasm && npm run check:web && npm run test:web && npm run check:web:examples",
     "check:wasm": "RUSTC=\"$(rustup which rustc)\" cargo check -p wvst-web-wasm --target wasm32-unknown-unknown",
     "check:web": "npm --workspace @wvst/web run check",
     "check:web:examples": "npm run build:web && npm --workspace @wvst/web-examples run check",
@@ -24,7 +24,11 @@
     "docs:dev": "npm run build:web && npm --workspace @wvst/docs run dev",
     "docs:build": "npm run build:web && npm --workspace @wvst/docs run build --",
     "docs:check": "npm run build:web && npm --workspace @wvst/docs run check",
-    "docs:deploy": "npm run docs:check && npm run docs:build && npm --workspace @wvst/docs run deploy"
+    "docs:deploy": "npm run docs:check && npm run docs:build && npm --workspace @wvst/docs run deploy",
+    "release:check": "cargo run --quiet --locked -p wvst-packager --bin wvst-release -- check",
+    "release:sync": "cargo run --quiet --locked -p wvst-packager --bin wvst-release -- sync",
+    "release:prepare": "cargo run --quiet --locked -p wvst-packager --bin wvst-release -- prepare",
+    "release:notes": "cargo run --quiet --locked -p wvst-packager --bin wvst-release -- notes"
   },
   "devDependencies": {
     "rollup": "^4.0.0",

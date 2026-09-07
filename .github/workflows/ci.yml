@@ -6,6 +6,7 @@ on:
     branches:
       - main
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   rust:
@@ -20,6 +21,9 @@ jobs:
 
       - name: Install Rust WASM target
         run: rustup target add wasm32-unknown-unknown
+
+      - name: Check product version consistency
+        run: cargo run --quiet --locked -p wvst-packager --bin wvst-release -- check
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check

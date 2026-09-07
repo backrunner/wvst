@@ -63,7 +63,7 @@ WVST_HOST_WORKER=target/release/wvst-host-worker \
   target/release/wvst-bridge-server serve
 ```
 
-目前没有已发布的二进制安装包。[Releases](https://github.com/backrunner/wvst/releases) 用于查看后续发布，当前请使用源码构建。
+已公开的便携预览包在 [Releases](https://github.com/backrunner/wvst/releases) 获取，按[版本与发布](/docs/zh/releases)选择并校验。草稿尚不能公开下载；上面的源码构建方式继续可用。
 
 ## 3. 启动文档与 Studio
 

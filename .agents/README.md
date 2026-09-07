@@ -28,6 +28,8 @@
 
 - [deployment-2026-09-07.md](deployment-2026-09-07.md)：Cloudflare Pages 部署配置、正式站点地址与干净 CI / Windows 编译修正。
 
+- [versioning-2026-09-07.md](versioning-2026-09-07.md)：统一产品版本、SemVer/CHANGELOG 管理、跨平台预览产物与草稿发布流程。
+
 ## 当前结论
 
 WVST 的方向可行：Web 侧使用 AudioWorklet + WASM + SharedArrayBuffer 管理 WebAudio 实时缓冲，本地 Bridge Server 负责插件发现、权限、路由和 worker 生命周期，VST3 host worker 以独立进程隔离崩溃插件。

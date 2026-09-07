@@ -9,6 +9,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     match args.first().map(String::as_str) {
+        Some("--version" | "-V") => {
+            println!("wvst-bridge-server {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         None | Some("serve") => serve().await,
         Some("diagnose" | "diagnostics") => print_diagnostics(),
         Some("--help" | "-h" | "help") => {

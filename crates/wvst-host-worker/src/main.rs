@@ -26,6 +26,10 @@ fn main() {
 
 fn run(args: Vec<String>) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("--version" | "-V") => {
+            println!("wvst-host-worker {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Some("describe") => describe(args.get(1)),
         Some("factory-info") => factory_info(args.get(1)),
         Some("factory-probe") => factory_probe(args.get(1)),

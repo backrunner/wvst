@@ -19,7 +19,7 @@ WVST is a Rust-first bridge between browser audio graphs and local VST3 plugins.
 | Diagnose silence, crashes or latency | [Troubleshooting](/docs/troubleshooting) and [Architecture](/docs/architecture). |
 | Contribute or validate plugin compatibility | [Development](/docs/development). |
 
-Current installation uses source builds, with macOS first. There are no published release binaries and the SDK is a private workspace package. Platform abstractions, protocol fixtures and real-plugin compatibility represent different capabilities and evidence.
+macOS is the first target. Use source builds or published portable previews from [Releases](/docs/releases). The SDK remains a private workspace package and can also be distributed as a release tarball. Platform abstractions, protocol fixtures and real-plugin compatibility represent different capabilities and evidence.
 
 Studio can preview original audio or a locally generated eight-second loop. Effect processing still requires the Bridge and a real VST3 plugin. The UI does not provide native plugin editors, project persistence or render export.
 
@@ -112,3 +112,7 @@ The Bridge uses JSON-RPC style messages over WebSocket. `WVSTClient` maps TypeSc
 - [Demo Guide](/docs/demo-guide)
 - [API Reference](/docs/api-reference)
 - [Troubleshooting](/docs/troubleshooting)
+
+## Version management
+
+[Versions and releases](/docs/releases) covers product versions, preview artifacts, verification, upgrades, rollback and the maintainer workflow.
