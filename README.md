@@ -194,8 +194,8 @@ version, add user-facing changes under Unreleased, then run:
 
 ```sh
 npm run release:check
-npm run release:prepare -- 0.1.0-alpha.2 --date 2026-09-08
-npm run release:check -- --tag v0.1.0-alpha.2
+npm run release:prepare -- 0.1.0-alpha.3 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.3
 ```
 
 Use the actual next version/date. Review and push the version commit, pass CI,

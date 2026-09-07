@@ -22,7 +22,7 @@ authors = ["BackRunner <dev@backrunner.top>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

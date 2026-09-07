@@ -67,6 +67,20 @@ fn detects_drift_and_tag_mismatch() {
     assert!(check(&f.0, None).is_ok());
 }
 #[test]
+fn accepts_windows_line_endings_but_rejects_changed_sdk_version() {
+    let f = Fixture::new();
+    let path = "packages/wvst-web/src/version.ts";
+    let crlf = f.read(path).replace('\n', "\r\n");
+    f.write(path, &crlf);
+    assert!(check(&f.0, None).is_ok());
+    f.write(path, &crlf.replace("0.1.0", "0.2.0"));
+    assert_eq!(
+        check(&f.0, None).unwrap_err(),
+        "generated SDK version drift"
+    );
+}
+
+#[test]
 fn prepares_prerelease_and_preserves_dependency_versions() {
     let f = Fixture::new();
     prepare(&f.0, "0.1.0-alpha.1", "2026-09-07").unwrap();

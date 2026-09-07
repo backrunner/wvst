@@ -6,14 +6,14 @@ order: 10
 
 # Versions and Releases
 
-WVST uses one product version for the Rust workspace, Bridge, host worker, SDK, examples and docs package. The first packaged version is `0.1.0-alpha.1`. Navigation shows the current docs build's version; Git tags retain historical source and documentation.
+WVST uses one product version for the Rust workspace, Bridge, host worker, SDK, examples and docs package. The first packaged version is `0.1.0-alpha.2`. Navigation shows the current docs build's version; Git tags retain historical source and documentation.
 
 ## Product and protocol versions
 
 | Identifier | Purpose |
 | --- | --- |
-| `0.1.0-alpha.1` | SemVer product version; alpha/beta/rc identify preview stages. |
-| `v0.1.0-alpha.1` | Git tag connecting a source commit to a GitHub Release. |
+| `0.1.0-alpha.2` | SemVer product version; alpha/beta/rc identify preview stages. |
+| `v0.1.0-alpha.2` | Git tag connecting a source commit to a GitHub Release. |
 | Control, audio-frame and worker IPC versions | Independently evolving wire compatibility; not incremented for every product update. |
 | State snapshot and diagnostic schemas | Compatibility of specific data structures, not SDK version numbers. |
 | Svedocs version | Documentation framework dependency, independent of WVST. |
@@ -32,14 +32,14 @@ Select an explicitly marked preview at [GitHub Releases](https://github.com/back
 | `x86_64-pc-windows-msvc` | Experimental x64 Windows runtime. |
 | `wvst-web-VERSION.tgz` | Matching SDK; install with `npm install ./wvst-web-VERSION.tgz`. |
 
-Native names include version and target, for example `wvst-0.1.0-alpha.1-aarch64-apple-darwin.tar.gz`. macOS is the first plugin runtime target. Windows/Linux downloads do not establish third-party compatibility. Previews have no Developer ID notarization or Authenticode signature, so OS policy may block execution; use a source build where unsigned previews are unsuitable.
+Native names include version and target, for example `wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz`. macOS is the first plugin runtime target. Windows/Linux downloads do not establish third-party compatibility. Previews have no Developer ID notarization or Authenticode signature, so OS policy may block execution; use a source build where unsigned previews are unsuitable.
 
 ## Verify and start
 
 Download the selected archive, `SHA256SUMS` and `release-manifest.json`. Checksum tools report other platforms as missing if you have not downloaded every asset; compare the selected file's line. On macOS:
 
 ```sh
-shasum -a 256 wvst-0.1.0-alpha.1-aarch64-apple-darwin.tar.gz
+shasum -a 256 wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz
 ```
 
 Use `sha256sum` on Linux or `Get-FileHash -Algorithm SHA256` on Windows. The digest must exactly match `SHA256SUMS`. The release manifest records source commit, version, file sizes and hashes. Checksums detect corruption; they are not code signatures.
@@ -68,9 +68,9 @@ Your app owns plugin-state persistence. Back up snapshots and retain the origina
 
 ```sh
 npm run release:check
-npm run release:prepare -- 0.1.0-alpha.2 --date 2026-09-08
-npm run release:check -- --tag v0.1.0-alpha.2
-npm run release:notes -- 0.1.0-alpha.2
+npm run release:prepare -- 0.1.0-alpha.3 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.3
+npm run release:notes -- 0.1.0-alpha.3
 ```
 
 These are example values for a subsequent release; choose the actual version and date. Prepare updates Rust/npm manifests, both lockfiles and the generated SDK version, and archives Unreleased under dated release notes. All edits are parsed/validated before writing; failed writes attempt rollback.
@@ -82,8 +82,8 @@ Use `npm run release:sync` to repair workspace version drift without creating a 
 After pushing the version commit and passing CI, create an annotated tag:
 
 ```sh
-git tag -a v0.1.0-alpha.2 -m 'WVST 0.1.0-alpha.2'
-git push origin v0.1.0-alpha.2
+git tag -a v0.1.0-alpha.3 -m 'WVST 0.1.0-alpha.3'
+git push origin v0.1.0-alpha.3
 ```
 
 `Release Preview` validates tag/version/notes, reuses full CI, and builds four native archives plus an SDK tarball. Only after every build succeeds does it generate SHA256SUMS, a source manifest and a draft GitHub Release. Reruns can refresh that draft; published releases cannot be overwritten.

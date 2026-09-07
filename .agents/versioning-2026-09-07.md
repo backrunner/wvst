@@ -52,3 +52,14 @@ occurs. Its tarball is installed and checked in an isolated app by the workflow.
 No claim of third-party plugin compatibility or platform signing is made by
 these checks. Public release state is determined by GitHub Releases, not by
 manifest version values or existence of a private draft.
+
+## First remote packaging validation
+
+The alpha.1 source commit passed main CI. Its tag workflow exposed Windows
+CRLF conversion in generated SDK text: the exact byte comparison incorrectly
+reported version drift. Normalize only CRLF for that comparison, retain actual
+version drift rejection, add a regression test and check versions on macOS and
+Windows in normal CI. The alpha.1 tag remains unchanged; no release was created.
+The corrected candidate is alpha.2. A Linux test fixture also hit transient
+ETXTBSY while spawning a temporary Python worker; rerunning the failed quality
+job passed. No runtime retry or test suppression was introduced.

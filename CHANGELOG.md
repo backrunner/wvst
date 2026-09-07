@@ -7,6 +7,26 @@ work-in-progress versions, not published releases.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2026-09-07
+
+### Added
+
+- First distributable developer preview of the Bridge, isolated VST3 worker,
+  WebAudio SDK and bilingual Live Studio documented below in alpha.1.
+
+### Fixed
+
+- Accept Windows CRLF checkouts when checking the generated SDK version,
+  while continuing to reject actual version drift. Check product versions on
+  macOS and Windows in normal CI before attempting release packaging.
+
+### Release history
+
+- The alpha.1 tag is retained for traceability, but its Windows packaging gate
+  failed and no release was published. This version replaces that attempt.
+- Preview limitations listed below still apply: unsigned native binaries,
+  macOS-first plugin support, and experimental Windows/Linux builds.
+
 ## [0.1.0-alpha.1] - 2026-09-07
 
 ### Added

@@ -872,7 +872,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "wvst-bridge-server"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "futures-util",
  "getrandom",
@@ -892,11 +892,11 @@ dependencies = [
 
 [[package]]
 name = "wvst-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 
 [[package]]
 name = "wvst-embed"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "wvst-host-worker"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "base64",
  "serde",
@@ -921,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "wvst-packager"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "semver",
  "serde",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "wvst-process-supervision"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "rustix",
  "tokio",
@@ -943,18 +943,18 @@ dependencies = [
 
 [[package]]
 name = "wvst-protocol"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "wvst-core",
 ]
 
 [[package]]
 name = "wvst-ringbuf"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 
 [[package]]
 name = "wvst-scanner"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "wvst-shm-mmap"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "memmap2",
  "wvst-shm-transport",
@@ -970,14 +970,14 @@ dependencies = [
 
 [[package]]
 name = "wvst-shm-transport"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "wvst-testkit"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "wvst-vst3-host"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "core-foundation-sys",
  "libloading",
@@ -998,7 +998,7 @@ dependencies = [
 
 [[package]]
 name = "wvst-web-wasm"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "wasm-bindgen",
  "wvst-core",

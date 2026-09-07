@@ -110,7 +110,8 @@ pub fn check(root: &Path, tag: Option<&str>) -> Result<Version, String> {
             return Err(format!("Cargo.lock {name} version drift"));
         }
     }
-    if read(&root.join(SDK_VERSION))? != sdk_version(&version) {
+    // Git may check text files out with CRLF on Windows; this is not version drift.
+    if read(&root.join(SDK_VERSION))?.replace("\r\n", "\n") != sdk_version(&version) {
         return Err("generated SDK version drift".into());
     }
     Ok(version)

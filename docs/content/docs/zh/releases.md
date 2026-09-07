@@ -6,14 +6,14 @@ order: 10
 
 # 版本与发布
 
-WVST 使用统一产品版本：Rust workspace、Bridge、host worker、Web SDK、示例和文档包一起升级。当前首个打包版本为 `0.1.0-alpha.1`。文档导航显示当前构建的版本；历史源码和对应文档保留在 Git tag 中。
+WVST 使用统一产品版本：Rust workspace、Bridge、host worker、Web SDK、示例和文档包一起升级。当前首个打包版本为 `0.1.0-alpha.2`。文档导航显示当前构建的版本；历史源码和对应文档保留在 Git tag 中。
 
 ## 产品版本与协议版本
 
 | 标识 | 用途 |
 | --- | --- |
-| `0.1.0-alpha.1` | 产品版本，采用 SemVer。alpha/beta/rc 表示预览阶段。 |
-| `v0.1.0-alpha.1` | Git tag，与具体源码提交、GitHub Release 对应。 |
+| `0.1.0-alpha.2` | 产品版本，采用 SemVer。alpha/beta/rc 表示预览阶段。 |
+| `v0.1.0-alpha.2` | Git tag，与具体源码提交、GitHub Release 对应。 |
 | 控制协议、音频帧、worker IPC 版本 | 数据兼容性，按协议变化独立演进；不随每次产品升级增加。 |
 | 状态快照与诊断 schema | 对应数据结构的兼容性，不等于 SDK 版本。 |
 | Svedocs 版本 | 文档框架依赖，独立于 WVST 产品版本。 |
@@ -32,14 +32,14 @@ WVST 使用统一产品版本：Rust workspace、Bridge、host worker、Web SDK�
 | `x86_64-pc-windows-msvc` | x64 Windows 实验运行包。 |
 | `wvst-web-VERSION.tgz` | 对应版本的 SDK，可用 `npm install ./wvst-web-VERSION.tgz` 安装。 |
 
-原生文件名包含版本和目标，例如 `wvst-0.1.0-alpha.1-aarch64-apple-darwin.tar.gz`。macOS 是优先插件运行目标；能下载 Windows/Linux 构建不代表已经验证所有第三方插件。预览包未做 Developer ID 公证或 Authenticode 签名，操作系统策略可能阻止运行；不适合此类预览包的环境可继续从源码构建。
+原生文件名包含版本和目标，例如 `wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz`。macOS 是优先插件运行目标；能下载 Windows/Linux 构建不代表已经验证所有第三方插件。预览包未做 Developer ID 公证或 Authenticode 签名，操作系统策略可能阻止运行；不适合此类预览包的环境可继续从源码构建。
 
 ## 校验与启动
 
 下载目标压缩包、`SHA256SUMS` 和 `release-manifest.json`。校验工具会对未下载的其他平台附件提示缺失；只比较所选文件对应行即可。macOS 可以使用：
 
 ```sh
-shasum -a 256 wvst-0.1.0-alpha.1-aarch64-apple-darwin.tar.gz
+shasum -a 256 wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz
 ```
 
 Linux 可使用 `sha256sum`，Windows 使用 `Get-FileHash -Algorithm SHA256`。摘要应与 `SHA256SUMS` 完全一致。`release-manifest.json` 记录来源 commit、版本、文件大小和 hash。校验和用于发现损坏，不是代码签名。
@@ -68,9 +68,9 @@ Windows 对应文件名带 `.exe`。运行包不安装系统服务；启动时�
 
 ```sh
 npm run release:check
-npm run release:prepare -- 0.1.0-alpha.2 --date 2026-09-08
-npm run release:check -- --tag v0.1.0-alpha.2
-npm run release:notes -- 0.1.0-alpha.2
+npm run release:prepare -- 0.1.0-alpha.3 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.3
+npm run release:notes -- 0.1.0-alpha.3
 ```
 
 这里的版本与日期仅为下一次发布示例，实际发布时按计划修改。prepare 会更新 Rust/npm manifests、Cargo.lock/package-lock.json、生成的 SDK 版本，并把 Unreleased 归档为带日期的发布说明。所有修改先解析验证，写入失败时尝试回滚。
@@ -82,8 +82,8 @@ npm run release:notes -- 0.1.0-alpha.2
 版本提交推送、CI 通过后，创建不可复用的注释 tag：
 
 ```sh
-git tag -a v0.1.0-alpha.2 -m 'WVST 0.1.0-alpha.2'
-git push origin v0.1.0-alpha.2
+git tag -a v0.1.0-alpha.3 -m 'WVST 0.1.0-alpha.3'
+git push origin v0.1.0-alpha.3
 ```
 
 `Release Preview` 工作流校验 tag/版本/发布说明，复用完整 CI，再构建四个原生运行包和 SDK tarball。只有全部成功才生成 SHA256SUMS、来源 manifest 和 GitHub Release 草稿。重跑可更新同一个草稿，已公开 Release 不允许覆盖。

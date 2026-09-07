@@ -55,6 +55,9 @@ jobs:
       - name: Check Rust workspace
         run: cargo check --workspace --all-targets --all-features
 
+      - name: Check product version consistency
+        run: cargo run --quiet --locked -p wvst-packager --bin wvst-release -- check
+
       - name: Run Rust tests
         run: cargo test --workspace
 

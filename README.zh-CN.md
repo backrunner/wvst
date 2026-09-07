@@ -180,8 +180,8 @@ Workspace 的 Cargo 元数据声明许可为 `MIT OR Apache-2.0`；第三方插�
 
 ```sh
 npm run release:check
-npm run release:prepare -- 0.1.0-alpha.2 --date 2026-09-08
-npm run release:check -- --tag v0.1.0-alpha.2
+npm run release:prepare -- 0.1.0-alpha.3 --date 2026-09-08
+npm run release:check -- --tag v0.1.0-alpha.3
 ```
 
 版本和日期按实际计划修改。审核并推送版本提交、通过 CI 后，推送注释
