@@ -38,8 +38,8 @@ when replacing components so search, locale navigation and theme switching work.
 
 Both `npm run docs:build` and `npm run docs:build -- --no-og` are supported. The
 OG endpoint uses automatic prerendering because the CLI can generate the same URLs
-as static assets before SvelteKit runs. A production `site.url` still needs to be
-configured in `svedocs.config.ts` once the deployment domain is chosen.
+as static assets before SvelteKit runs. The production `site.url` is
+`https://wvst-docs.pages.dev`, configured in `svedocs.config.ts`.
 
 ## Live Studio
 
@@ -152,11 +152,38 @@ put deeper explanations in the guides and expandable processing details.
    tables, heading anchors, dark mode and narrow-screen overflow.
 4. Verify COOP/COEP on the final page response and JavaScript responses for
    Worker/worklet assets. Prerendered HTML does not execute server hooks.
-5. Set the real `site.url` once a production domain is chosen. Keep the existing
-   warning explicit until then; do not invent a deployment address.
+5. Keep `site.url` aligned with the production domain when moving to a custom
+   domain; it currently points to `https://wvst-docs.pages.dev`.
 
 The default build uses the Cloudflare adapter. For another static host run
 `npm run build:web` followed by `npm --workspace @wvst/docs run build:static`
 and deploy `docs/build`, configuring the required headers on that host. See
 [configuration](content/docs/configuration.md) / [配置与部署](content/docs/zh/configuration.md)
 for the full local-runtime and web-hosting distinction.
+
+## Production deployment
+
+The Cloudflare Pages project is `wvst-docs`, production branch `main`:
+
+- English: https://wvst-docs.pages.dev/
+- Chinese: https://wvst-docs.pages.dev/zh
+- Studio: https://wvst-docs.pages.dev/demo
+
+`wrangler.jsonc` declares the Pages output and compatibility date; Wrangler is
+pinned in this workspace. After `wrangler login` with an account that can deploy
+to the project, run from the repository root:
+
+```sh
+npm run docs:deploy
+```
+
+This checks and builds the site, then uploads the Cloudflare adapter output.
+Wrangler selects the deployment environment from the Git branch: `main` updates
+production; other branches produce previews. To deploy an already checked build,
+run `npm --workspace @wvst/docs run deploy`. Inspect the reported deployment URL
+and the production alias, including COOP/COEP on `/demo` and deep article URLs.
+
+Deployments are currently direct uploads. A Git push runs repository CI and does
+not automatically publish the site. No Cloudflare credentials belong in this
+repository. The browser still needs the user's local Bridge and its token to
+process VST3 audio.

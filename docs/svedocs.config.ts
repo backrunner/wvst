@@ -3,6 +3,7 @@ import { defineConfig } from 'svedocs/config';
 export default defineConfig({
   site: {
     name: 'WVST',
+    url: 'https://wvst-docs.pages.dev',
     title: 'WVST Docs',
     description: 'Run isolated local VST3 plugins inside real WebAudio graphs through a Rust bridge.'
   },

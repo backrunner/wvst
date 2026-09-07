@@ -26,6 +26,8 @@
 
 - [docs-expansion-2026-09-07.md](docs-expansion-2026-09-07.md)：双语 README、九组公共指南、授权示例修正与文档验证记录。
 
+- [deployment-2026-09-07.md](deployment-2026-09-07.md)：Cloudflare Pages 部署配置、正式站点地址与干净 CI / Windows 编译修正。
+
 ## 当前结论
 
 WVST 的方向可行：Web 侧使用 AudioWorklet + WASM + SharedArrayBuffer 管理 WebAudio 实时缓冲，本地 Bridge Server 负责插件发现、权限、路由和 worker 生命周期，VST3 host worker 以独立进程隔离崩溃插件。

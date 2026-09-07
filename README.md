@@ -166,6 +166,8 @@ Studio browser regression uses a protocol fixture and Chromium; setup is in [doc
 
 For a contribution, describe the user-visible problem, make a focused change, run the relevant checks and include platform/plugin details for audio issues. Keep realtime code bounded and non-blocking; consult [engineering standards](.agents/development-standards.md) and [implementation gaps](.agents/implementation-gap-analysis.md) before changing runtime boundaries.
 
+Live site: [Documentation](https://wvst-docs.pages.dev/docs) · [Live Studio](https://wvst-docs.pages.dev/demo).
+
 ## Documentation
 
 | Guide | English | 简体中文 |

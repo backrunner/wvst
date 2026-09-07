@@ -23,7 +23,8 @@
     "test:web": "npm --workspace @wvst/web run test",
     "docs:dev": "npm run build:web && npm --workspace @wvst/docs run dev",
     "docs:build": "npm run build:web && npm --workspace @wvst/docs run build --",
-    "docs:check": "npm run build:web && npm --workspace @wvst/docs run check"
+    "docs:check": "npm run build:web && npm --workspace @wvst/docs run check",
+    "docs:deploy": "npm run docs:check && npm run docs:build && npm --workspace @wvst/docs run deploy"
   },
   "devDependencies": {
     "rollup": "^4.0.0",

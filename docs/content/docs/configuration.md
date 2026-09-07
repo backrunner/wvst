@@ -99,7 +99,9 @@ The static adapter's default output is `docs/build`. Do not upload an edge build
 | Cloudflare assets | Asset rules in `docs/_headers`. |
 | Other static hosting | Configure the host or reverse proxy; static pages do not execute server hooks. |
 
-Once the production domain is chosen, set the real `site.url` in `docs/svedocs.config.ts` for canonical, sitemap and OG URLs. No production domain is configured yet, so the build reports a `site.url` warning.
+The production site is `https://wvst-docs.pages.dev`. Its `site.url` is configured in `docs/svedocs.config.ts` for canonical, sitemap and OG URLs. Update that value when adopting a custom domain.
+
+The Cloudflare Pages project is `wvst-docs`, with production branch `main`. After authenticating Wrangler, run `npm run docs:deploy` from the repository root to check, build and upload. The project uses direct uploads: Git pushes run CI but do not automatically deploy. Other Git branches produce preview deployments.
 
 ## Verify after deployment
 

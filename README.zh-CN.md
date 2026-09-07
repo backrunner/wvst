@@ -159,6 +159,8 @@ Studio 浏览器回归使用协议 fixture 和 Chromium，启动方法见 [docs/
 
 贡献时请描述具体问题、保持改动聚焦并运行相关检查；音频问题应附上平台、插件和复现步骤。修改运行时前阅读[开发规范](.agents/development-standards.md)与[实现差距](.agents/implementation-gap-analysis.md)，保持实时路径有界、非阻塞。
 
+在线站点：[中文文档](https://wvst-docs.pages.dev/docs/zh) · [Live Studio](https://wvst-docs.pages.dev/zh/demo)。
+
 ## 文档入口
 
 - [概览](docs/content/docs/zh/index.md) · [快速开始](docs/content/docs/zh/getting-started.md)

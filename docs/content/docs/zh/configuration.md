@@ -99,7 +99,9 @@ npm --workspace @wvst/docs run build:static
 | Cloudflare 资产 | `docs/_headers` 的资产规则。 |
 | 其他静态托管 | 在平台或反向代理上自行配置，静态页面不会执行 server hook。 |
 
-准备正式域名后，在 `docs/svedocs.config.ts` 的 `site` 中设置实际 `url`，用于 canonical、sitemap 和 OG 地址。当前没有预设生产域名，因此构建会提示 `site.url` 未设置。
+生产站点为 `https://wvst-docs.pages.dev`，已在 `docs/svedocs.config.ts` 配置 `site.url`，用于 canonical、sitemap 和 OG 地址。以后绑定自定义域名时同步修改这个值。
+
+Cloudflare Pages 项目名为 `wvst-docs`，生产分支为 `main`。登录 Wrangler 后，在仓库根目录执行 `npm run docs:deploy`，即可检查、构建并上传。当前采用直接上传：Git push 会触发 CI，但不会自动部署；其他 Git 分支会生成预览部署。
 
 ## 部署后验收
 
