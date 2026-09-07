@@ -204,3 +204,8 @@ portable archives, an SDK tarball, SHA256SUMS and a source manifest in a draft
 prerelease. Published assets are immutable. See the [release guide](docs/content/docs/releases.md)
 for verification, upgrade/rollback and the additional gates needed for stable
 releases. The workflow does not publish to npm or crates.io.
+
+Subsequent macOS releases require Developer ID signing and Apple notarization,
+with stapled DMG downloads. Configure the six Apple Secrets described in the
+[release guide](docs/content/docs/releases.md) before tagging. Published alpha.2
+archives remain unsigned; Windows/Linux signing is not configured.

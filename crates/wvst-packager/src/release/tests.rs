@@ -157,6 +157,8 @@ fn checksums_require_the_complete_versioned_artifact_set() {
     for target in release_targets() {
         let ext = if target.contains("windows") {
             "zip"
+        } else if target.contains("apple") {
+            "dmg"
         } else {
             "tar.gz"
         };

@@ -32,7 +32,7 @@ Select an explicitly marked preview at [GitHub Releases](https://github.com/back
 | `x86_64-pc-windows-msvc` | Experimental x64 Windows runtime. |
 | `wvst-web-VERSION.tgz` | Matching SDK; install with `npm install ./wvst-web-VERSION.tgz`. |
 
-Native names include version and target, for example `wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz`. macOS is the first plugin runtime target. Windows/Linux downloads do not establish third-party compatibility. Previews have no Developer ID notarization or Authenticode signature, so OS policy may block execution; use a source build where unsigned previews are unsuitable.
+Native names include version and target, for example `wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz`. macOS is the first plugin runtime target. Windows/Linux downloads do not establish third-party compatibility. The published alpha.2 archives are unsigned. Subsequent macOS releases use Developer ID signed, notarized `.dmg` files once repository credentials are configured; Windows/Linux remain unsigned. Refer to each release’s actual files and signing status.
 
 ## Verify and start
 
@@ -44,7 +44,7 @@ shasum -a 256 wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz
 
 Use `sha256sum` on Linux or `Get-FileHash -Algorithm SHA256` on Windows. The digest must exactly match `SHA256SUMS`. The release manifest records source commit, version, file sizes and hashes. Checksums detect corruption; they are not code signatures.
 
-Extract the entire directory and follow its README. `bin` holds the matching Bridge and worker; `wvst-runtime.json` identifies the bundle. Inspect versions without starting a service:
+For a signed macOS release, open the DMG and copy its entire WVST folder to a writable local directory, then eject the image. For tar/zip downloads, extract the entire directory. Follow the included README. `bin` holds the matching Bridge and worker; `wvst-runtime.json` identifies the bundle. Inspect versions without starting a service:
 
 ```sh
 ./bin/wvst-bridge-server --version
@@ -91,3 +91,43 @@ git push origin v0.1.0-alpha.3
 Download/verify the assets and review platform limitations and migrations before publishing the draft as a prerelease. The workflow accepts preview tags only. Stable releases need platform signing/notarization and real-plugin/sustained-audio evidence for the source commit; successful compilation is not compatibility certification.
 
 Registry publication is separate: this workflow runs neither `npm publish` nor `cargo publish`. Update the docs separately with `npm run docs:deploy`. See [Development](/docs/development) for evidence boundaries.
+
+## Maintainers: macOS signing setup
+
+The release workflow requires the following repository Secrets in **backrunner/wvst**, configured before pushing a new version tag. AIPass is a workflow reference; its repository Secrets cannot be read back or automatically shared.
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64-encoded P12 containing the selected Developer ID Application certificate and its private key. |
+| `APPLE_CERTIFICATE_PASSWORD` | Password protecting that P12 export. |
+| `APPLE_SIGNING_IDENTITY` | Full Developer ID Application identity, matching the certificate. |
+| `APPLE_TEAM_ID` | Developer team ID matching the certificate. |
+| `APPLE_ID` | Apple account with access to that team. |
+| `APPLE_PASSWORD` | Apple app-specific password, separate from the account and P12 passwords. |
+
+The local Developer ID identity has been tested with WVST binaries. This does not configure GitHub Secrets or establish notarization. Alpha.2 remains unchanged; publish a new version after credentials and the signed workflow pass.
+
+The workflow imports the certificate into the runner Keychain. The Rust `notary-credentials` command sends the app-specific password to `notarytool` over stdin, validates the account, and stores a temporary profile. `bundle-macos` uses that profile, without a password in command arguments. No CloudKit provisioning profile or Tauri updater key is needed for WVST.
+
+Bridge and worker both use hardened runtime and a secure timestamp. Only the worker receives `com.apple.security.cs.disable-library-validation`, because third-party VST libraries belong to other developers. The Bridge retains library validation. Neither binary gets debugging or JIT permissions; plugins requiring additional exceptions need separate compatibility testing.
+
+The packager hashes binaries **after signing**, checks their versions and CPU architecture, signs a DMG, requires an explicit Apple `Accepted` result, staples/validates the ticket, and runs Gatekeeper assessment. It then mounts the DMG read-only and verifies the packaged binaries, metadata and licenses against staging. The workflow retains a `signing-TARGET` verification report, with submission ID, source commit and the final DMG hash. Missing credentials, rejected notarization and failed verification stop release creation.
+
+Use an existing local `notarytool` Keychain profile for manual packaging:
+
+```sh
+# Set APPLE_SIGNING_IDENTITY, APPLE_TEAM_ID and WVST_NOTARY_PROFILE locally.
+# Build both runtime binaries for the target first.
+cargo run --locked -p wvst-packager --bin wvst-release -- bundle-macos \
+  aarch64-apple-darwin target/aarch64-apple-darwin/release output/release FULL_COMMIT_SHA
+```
+
+The command requires a fresh `.wvst-macos-TARGET` staging directory and refuses to overwrite a DMG. Do not put credential values in source, command history or chat. To verify a downloaded DMG on macOS:
+
+```sh
+codesign --verify --strict --verbose=2 /path/to/wvst-VERSION-TARGET.dmg
+xcrun stapler validate /path/to/wvst-VERSION-TARGET.dmg
+spctl --assess --type open --context context:primary-signature --verbose=4 /path/to/wvst-VERSION-TARGET.dmg
+```
+
+The portable binaries themselves cannot carry a stapled ticket; distribute and retain the DMG. Signing and notarization are distribution checks, separate from real-plugin and audio-stability evidence. The release manifest’s `signingPolicy` records required distribution policy; SHA256SUMS alone does not verify Apple signatures.

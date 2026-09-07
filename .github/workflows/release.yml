@@ -19,6 +19,22 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
+      - name: Require macOS signing and notarization credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_ID APPLE_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository secret: $name"
+              exit 1
+            fi
+          done
       - name: Validate tag, manifests and release notes
         id: version
         env:
@@ -28,7 +44,7 @@ jobs:
           cargo run --quiet --locked -p wvst-packager --bin wvst-release -- check --tag "$RELEASE_TAG" > version.json
           jq -r '"version=\(.version)", "prerelease=\(.prerelease)"' version.json >> "$GITHUB_OUTPUT"
           if [ "$(jq -r .prerelease version.json)" != true ]; then
-            echo 'This workflow produces unsigned previews. Stable releases require signing and real-plugin evidence gates.' >&2
+            echo 'Stable releases require platform signing coverage and real-plugin evidence gates.' >&2
             exit 1
           fi
 
@@ -44,10 +60,10 @@ jobs:
         include:
           - os: macos-15
             target: aarch64-apple-darwin
-            archive: tar.gz
+            archive: dmg
           - os: macos-15-intel
             target: x86_64-apple-darwin
-            archive: tar.gz
+            archive: dmg
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
@@ -68,6 +84,7 @@ jobs:
           rustup target add "$RELEASE_TARGET"
           cargo build --locked --release --target "$RELEASE_TARGET" -p wvst-bridge-server -p wvst-host-worker
       - name: Verify versions and create portable package
+        if: runner.os != 'macOS'
         env:
           RELEASE_TARGET: ${{ matrix.target }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
@@ -87,6 +104,39 @@ jobs:
           else
             tar -czf "artifacts/$package.tar.gz" -C staging "$package"
           fi
+      - name: Import Developer ID identity
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Validate and store Apple notarization credentials
+        if: runner.os == 'macOS'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WVST_NOTARY_PROFILE: wvst-release-${{ github.run_id }}-${{ github.run_attempt }}
+        run: cargo run --quiet --locked --release -p wvst-packager --bin wvst-release -- notary-credentials
+      - name: Sign, notarize, staple and verify macOS DMG
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WVST_NOTARY_PROFILE: wvst-release-${{ github.run_id }}-${{ github.run_attempt }}
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          cargo run --quiet --locked --release -p wvst-packager --bin wvst-release -- bundle-macos \
+            "$RELEASE_TARGET" "target/$RELEASE_TARGET/release" artifacts "$GITHUB_SHA"
+      - name: Retain macOS verification evidence
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signing-${{ matrix.target }}
+          path: .wvst-macos-${{ matrix.target }}/verification.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
@@ -160,10 +210,12 @@ jobs:
           ## Downloads and verification
 
           Choose the archive matching your CPU and OS, verify SHA256SUMS, then extract
-          the entire directory and follow its README. Native bundles are portable,
-          unsigned developer previews; no service is installed. macOS is the first
-          plugin target; Windows/Linux builds are experimental. No Developer ID
-          notarization, Authenticode or third-party plugin certification is claimed.
+          the entire directory and follow its README. For macOS, open the Developer ID
+          signed and notarized DMG and copy its entire WVST folder to a local directory.
+          DMGs carry stapled Apple tickets and pass Gatekeeper; only the host worker
+          permits third-party plugin libraries. Windows/Linux archives are unsigned
+          and experimental. No service is installed and no third-party plugin
+          certification is claimed.
 
           The SDK tarball can be installed from a local file with npm; no npm registry
           publication occurs. release-manifest.json records hashes and the exact
@@ -180,11 +232,11 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" --json isDraft > existing-release.json 2>/dev/null; then
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft > existing-release.json 2>/dev/null; then
             test "$(jq -r .isDraft existing-release.json)" = true || { echo 'Published releases are immutable.' >&2; exit 1; }
-            gh release edit "$RELEASE_TAG" --notes-file release-notes.md
-            gh release upload "$RELEASE_TAG" artifacts/* --clobber
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+            gh release upload "$RELEASE_TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$RELEASE_TAG" artifacts/* --verify-tag --draft --prerelease \
+            gh release create "$RELEASE_TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft --prerelease \
               --title "WVST $RELEASE_TAG" --notes-file release-notes.md
           fi

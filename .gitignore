@@ -7,3 +7,4 @@
 /docs/static/og/
 /.playwright-cli/
 /.DS_Store
+/.wvst-macos-*/

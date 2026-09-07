@@ -23,7 +23,7 @@ fn valid_commit(commit: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn digest(path: &Path) -> Result<String, String> {
+pub(super) fn digest(path: &Path) -> Result<String, String> {
     let mut input = File::open(path).map_err(|e| e.to_string())?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 32768];
@@ -36,7 +36,7 @@ fn digest(path: &Path) -> Result<String, String> {
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
-fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+pub(super) fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     fs::write(path, format!("{text}\n")).map_err(|e| e.to_string())
 }
@@ -48,6 +48,17 @@ pub fn bundle(
     binaries: &Path,
     out: &Path,
     commit: &str,
+) -> Result<PathBuf, String> {
+    bundle_with_team(root, target, binaries, out, commit, None)
+}
+
+pub(super) fn bundle_with_team(
+    root: &Path,
+    target: &str,
+    binaries: &Path,
+    out: &Path,
+    commit: &str,
+    team: Option<&str>,
 ) -> Result<PathBuf, String> {
     let version = check(root, None)?;
     valid_commit(commit)?;
@@ -104,15 +115,31 @@ pub fn bundle(
     } else {
         "export WVST_TOKEN=\"$(openssl rand -hex 24)\"\nexport WVST_HOST_WORKER=\"$PWD/bin/wvst-host-worker\"\n./bin/wvst-bridge-server serve"
     };
-    let readme = format!(
+    let mut readme = format!(
         "# WVST {version}\n\nTarget: `{target}`. Commit: `{commit}`.\n\nThis is an unsigned developer preview. macOS is the first plugin runtime target;\nWindows/Linux archives are experimental and do not establish third-party plugin\ncompatibility. No Developer ID notarization or Authenticode signing is claimed.\n\n## Run\n\nExtract the entire archive. In a terminal, change to this directory and run:\n\n```\n{start}\n```\n\nKeep this terminal open. Enter this locally generated WVST_TOKEN in Studio's\nadvanced settings. The endpoint is ws://127.0.0.1:35876. Install a matching-CPU\nVST3 plugin separately. Native security policy may block unsigned downloads;\nuse a source build if you cannot run this preview under your local policy.\n\nThis portable package installs no service and modifies no system configuration.\nStop it with Ctrl+C. To update, stop the old runtime and replace the entire\nfolder so Bridge and worker remain the same version; keep the previous folder\nfor rollback. Preserve application state backups separately.\n\nDocs: https://wvst-docs.pages.dev/docs\n中文: https://wvst-docs.pages.dev/docs/zh\nReleases: https://github.com/backrunner/wvst/releases\n\nValidate the downloaded archive against SHA256SUMS before extracting. Checksums\ndetect corruption; they are not code signatures. See release-manifest.json for\nartifact hashes and source identity.\n"
     );
+    if let Some(team) = team {
+        readme = readme.replace(
+            "This is an unsigned developer preview.",
+            &format!("This developer preview uses Developer ID signed binaries (team {team})."),
+        ).replace(
+            "No Developer ID notarization or Authenticode signing is claimed.",
+            "The release DMG must pass Apple notarization, ticket stapling and Gatekeeper.\nSigning does not certify third-party plugin compatibility.",
+        ).replace(
+            "Extract the entire archive.",
+            "Open the DMG and copy the entire WVST folder to a writable local directory.\nEject the disk image after copying; do not run from its read-only volume.",
+        ).replace(
+            "Native security policy may block unsigned downloads;\nuse a source build if you cannot run this preview under your local policy.",
+            "The worker permits third-party plugin libraries; the Bridge retains library validation.",
+        );
+    }
     fs::write(destination.join("README.md"), readme).map_err(|e| e.to_string())?;
     write_json(
         &destination.join("wvst-runtime.json"),
         &json!({
             "schemaVersion":1,"version":version.to_string(),"target":target,"commit":commit,
-            "kind":"portable","signature":"unsigned","files":files,
+            "kind":"portable","signature":if team.is_some() { "developer-id" } else { "unsigned" },
+            "teamId":team,"files":files,
             "protocol":{"major":wvst_core::CURRENT_PROTOCOL_VERSION.major,"minor":wvst_core::CURRENT_PROTOCOL_VERSION.minor},
             "audioFrameVersion":wvst_protocol::AUDIO_FRAME_VERSION
         }),
@@ -125,6 +152,8 @@ fn expected_names(version: &str) -> Vec<String> {
         .map(|target| {
             let extension = if target.contains("windows") {
                 "zip"
+            } else if target.contains("apple") {
+                "dmg"
             } else {
                 "tar.gz"
             };
@@ -176,7 +205,8 @@ pub fn checksums(root: &Path, directory: &Path, commit: &str) -> Result<(), Stri
     write_json(
         &manifest,
         &json!({
-            "schemaVersion":1,"version":version,"commit":commit,"signature":"unsigned",
+            "schemaVersion":2,"version":version,"commit":commit,
+            "signingPolicy":{"macos":"developer-id-notarized-dmg","windows":"unsigned","linux":"unsigned"},
             "artifacts":artifacts,"targets":TARGETS,
             "compatibility":"macOS-first; Windows/Linux experimental; no real-plugin certification implied"
         }),

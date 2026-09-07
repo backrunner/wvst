@@ -30,6 +30,8 @@
 
 - [versioning-2026-09-07.md](versioning-2026-09-07.md)：统一产品版本、SemVer/CHANGELOG 管理、跨平台预览产物与草稿发布流程。
 
+- [macos-signing-2026-09-07.md](macos-signing-2026-09-07.md)：参考 AIPass 的 Developer ID 签名、Apple ID 公证、DMG 验签与凭据配置状态。
+
 ## 当前结论
 
 WVST 的方向可行：Web 侧使用 AudioWorklet + WASM + SharedArrayBuffer 管理 WebAudio 实时缓冲，本地 Bridge Server 负责插件发现、权限、路由和 worker 生命周期，VST3 host worker 以独立进程隔离崩溃插件。

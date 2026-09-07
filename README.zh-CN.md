@@ -189,3 +189,7 @@ npm run release:check -- --tag v0.1.0-alpha.3
 和来源 manifest，生成 prerelease 草稿。公开附件不可覆盖。校验、升级回退
 和正式版还需满足的条件见[发布指南](docs/content/docs/zh/releases.md)。
 流程不会执行 npm 或 crates.io 发布。
+
+后续 macOS 发布要求 Developer ID 签名、Apple 公证及附加票据的 DMG；
+推送标签前按[发布指南](docs/content/docs/zh/releases.md)配置六项 Apple Secrets。
+已发布的 alpha.2 压缩包仍未签名，Windows/Linux 暂未接入签名。

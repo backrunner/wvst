@@ -7,6 +7,14 @@ work-in-progress versions, not published releases.
 
 ## [Unreleased]
 
+### Added
+
+- macOS release signing with Developer ID, hardened runtime, Apple notarization,
+  stapled DMG tickets, Gatekeeper assessment and mounted-content verification.
+- Worker-only third-party library entitlement; Bridge keeps library validation.
+- Required Apple signing/notarization credentials are checked before release
+  builds. The published alpha.2 archives remain unsigned and unchanged.
+
 ## [0.1.0-alpha.2] - 2026-09-07
 
 ### Added

@@ -32,7 +32,7 @@ WVST 使用统一产品版本：Rust workspace、Bridge、host worker、Web SDK�
 | `x86_64-pc-windows-msvc` | x64 Windows 实验运行包。 |
 | `wvst-web-VERSION.tgz` | 对应版本的 SDK，可用 `npm install ./wvst-web-VERSION.tgz` 安装。 |
 
-原生文件名包含版本和目标，例如 `wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz`。macOS 是优先插件运行目标；能下载 Windows/Linux 构建不代表已经验证所有第三方插件。预览包未做 Developer ID 公证或 Authenticode 签名，操作系统策略可能阻止运行；不适合此类预览包的环境可继续从源码构建。
+原生文件名包含版本和目标，例如 `wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz`。macOS 是优先插件运行目标；能下载 Windows/Linux 构建不代表已经验证所有第三方插件。已发布的 alpha.2 压缩包未签名。配置好仓库凭据后，后续 macOS 版本将使用 Developer ID 签名、Apple 公证的 `.dmg`；Windows/Linux 仍未签名。请以具体 Release 的附件和签名状态为准。
 
 ## 校验与启动
 
@@ -44,7 +44,7 @@ shasum -a 256 wvst-0.1.0-alpha.2-aarch64-apple-darwin.tar.gz
 
 Linux 可使用 `sha256sum`，Windows 使用 `Get-FileHash -Algorithm SHA256`。摘要应与 `SHA256SUMS` 完全一致。`release-manifest.json` 记录来源 commit、版本、文件大小和 hash。校验和用于发现损坏，不是代码签名。
 
-解压整个目录，按照包内 README 启动。包中 `bin` 包含同一版本的 Bridge 和 worker，`wvst-runtime.json` 记录运行包身份。程序可在不启动服务的情况下报告版本：
+对于已签名 macOS 版本，打开 DMG，将其中整个 WVST 文件夹复制到本地可写目录，再推出磁盘映像；tar/zip 则解压整个目录。按照包内 README 启动。包中 `bin` 包含同一版本的 Bridge 和 worker，`wvst-runtime.json` 记录运行包身份。程序可在不启动服务的情况下报告版本：
 
 ```sh
 ./bin/wvst-bridge-server --version
@@ -91,3 +91,43 @@ git push origin v0.1.0-alpha.3
 维护者下载附件校验、确认平台说明和迁移内容后，将草稿发布为 prerelease。当前流水线只接受预览版 tag；正式版本还需要接入平台签名、公证和对应源码提交的真实插件/长期稳定性证据，不能把“CI 编译通过”当成正式兼容性认证。
 
 源码与 npm registry 发布是独立动作；本流程不会执行 `npm publish` 或 `cargo publish`。文档站更新通过 `npm run docs:deploy` 单独执行。[开发与验证](/docs/zh/development)说明不同证据的覆盖范围。
+
+## 维护者：配置 macOS 签名
+
+推送新版本标签之前，在 **backrunner/wvst** 仓库配置以下 Actions Secrets。AIPass 仅作为流程参考：GitHub 不允许读回它的 Secret 值，也不会自动在两个仓库间共享。
+
+| Secret | 内容 |
+| --- | --- |
+| `APPLE_CERTIFICATE` | 指定 Developer ID Application 证书及配对私钥的 P12，经过 base64 编码。 |
+| `APPLE_CERTIFICATE_PASSWORD` | 这份 P12 的导出密码。 |
+| `APPLE_SIGNING_IDENTITY` | 与证书一致的完整 Developer ID Application 身份名称。 |
+| `APPLE_TEAM_ID` | 与证书一致的开发者团队 ID。 |
+| `APPLE_ID` | 有权使用该团队的 Apple 账号。 |
+| `APPLE_PASSWORD` | Apple 应用专用密码，与登录密码和 P12 密码不同。 |
+
+本机 Developer ID 身份已对 WVST 二进制完成签名验证。这不代表 GitHub Secrets 已配置或公证已通过。alpha.2 的公开附件保持不变；补齐凭据并通过签名流程后，发布新版本。
+
+工作流将证书导入 runner 钥匙串。Rust `notary-credentials` 命令通过 stdin 将应用专用密码交给 `notarytool`，验证账号后保存临时 profile；`bundle-macos` 通过该 profile 认证，不将密码放入命令参数。WVST 不需要 AIPass 的 CloudKit provisioning profile 或 Tauri 更新密钥。
+
+Bridge 和 worker 都使用 hardened runtime 和安全时间戳。只有 worker 获得 `com.apple.security.cs.disable-library-validation`，以加载其他开发者的 VST 动态库；Bridge 保持库校验。两者都不授予调试或 JIT 权限，需要额外例外的插件须单独验证。
+
+打包工具在**签名后**计算二进制哈希，并校验版本和 CPU 架构。随后签名 DMG、要求 Apple 明确返回 `Accepted`、附加并验证公证票据、执行 Gatekeeper 检查，再只读挂载 DMG，将实际包内的程序、元数据和许可证与打包目录比对。工作流保留 `signing-TARGET` 报告，记录公证提交 ID、来源 commit 和最终 DMG 哈希。缺少凭据、公证拒绝或任何校验失败都会阻止创建 Release。
+
+本地手动打包可使用已有的 `notarytool` 钥匙串 profile：
+
+```sh
+# 在本机配置 APPLE_SIGNING_IDENTITY、APPLE_TEAM_ID、WVST_NOTARY_PROFILE。
+# 先构建对应架构的两个运行程序。
+cargo run --locked -p wvst-packager --bin wvst-release -- bundle-macos \
+  aarch64-apple-darwin target/aarch64-apple-darwin/release output/release FULL_COMMIT_SHA
+```
+
+命令需要新的 `.wvst-macos-TARGET` 暂存目录，并拒绝覆盖已有 DMG。不要将凭据写入源码、命令历史或聊天。下载 DMG 后，可在 macOS 验证：
+
+```sh
+codesign --verify --strict --verbose=2 /path/to/wvst-VERSION-TARGET.dmg
+xcrun stapler validate /path/to/wvst-VERSION-TARGET.dmg
+spctl --assess --type open --context context:primary-signature --verbose=4 /path/to/wvst-VERSION-TARGET.dmg
+```
+
+裸命令行程序不能附加公证票据，因此分发和保留 DMG。签名、公证验证分发身份，不替代真实插件兼容性及音频稳定性测试。来源清单的 `signingPolicy` 表示发布要求；仅校验 SHA256SUMS 不能验证 Apple 签名。
